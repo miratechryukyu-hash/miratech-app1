@@ -1,0 +1,6 @@
+streamlit
+streamlit-gsheets
+pandas
+qrcode
+google-generativeai
+Pillow
