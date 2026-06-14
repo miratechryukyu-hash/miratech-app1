@@ -980,66 +980,52 @@ with tabs[4]:
 
         with st.form("direct_reg_form"):
             man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
-            man_cat = st.text_input(
-                "機器種類 (カテゴリ) (必須)",
-                value=st.session_state.get("reg_man_cat", ""),
-                placeholder="例: シリンジポンプ",
-            )
-            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014-06-12")
+            
+            st.write("▼ 機器種類（カテゴリ）※必須")
+            sel_cat = st.selectbox("① 過去のリストから選ぶ", [""] + history_categories)
+            txt_cat = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
+            
+            st.write("▼ 購入業者")
+            sel_vendor = st.selectbox("① 過去のリストから選ぶ", [""] + history_vendors)
+            txt_vendor = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
+            
+            st.markdown("---")
+            man_model = st.text_input("型式 (機種)", placeholder="例: TE-131A")
+            man_sn = st.text_input("製造番号 (S/N)", placeholder="例: 12345678")
+            man_year = st.text_input("製造年", placeholder="例: 2014")
             man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
-            man_vendor = st.text_input(
-                "購入業者",
-                value=st.session_state.get("reg_man_vendor", ""),
-                placeholder="例: 〇〇医療器",
-            )
-            # 導入形態と購入金額の追加
+            
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
-
-            man_delivery = st.date_input("納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            man_delivery = st.date_input("納入日", value=date.today())
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
-                if not man_me_no or not man_cat:
+                # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
+                final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
+                final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
+
+                if not man_me_no or not final_cat:
                     st.error("ME No. と 機器種類 は必須です！")
                 else:
-                    man_cat = clean_data_str(man_cat)
-                    man_vendor = clean_data_str(man_vendor)
                     try:
-                        df_master_reg = safe_read_worksheet(conn, "機器マスター")
-                        clean_db_me_reg = clean_series(df_master_reg["ME No."])
+                        new_master_row = pd.DataFrame([{
+                            "ME No.": protect_zeros(man_me_no),
+                            "カテゴリ": final_cat,
+                            "機種": f"{final_cat}({man_model})",
+                            "製造番号": protect_zeros(man_sn),
+                            "製造年": man_year,
+                            "設置場所": man_location,
+                            "購入業者": final_vendor,
+                            "導入形態": man_acq_type,
+                            "購入金額": man_price,
+                            "納入日": str(man_delivery),
+                            "最終点検日": "", "最終判定": "", "最終実施者": ""
+                        }])
+                        updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
+                        conn.update(worksheet="機器マスター", data=updated_master_reg)
                         
-                        if clean_data_str(man_me_no) in clean_db_me_reg.values:
-                            st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
-                        else:
-                            new_master_row = pd.DataFrame([{
-                                "ME No.": protect_zeros(man_me_no),
-                                "カテゴリ": man_cat,
-                                "機種": f"{man_cat}({man_model})",
-                                "製造番号": protect_zeros(man_sn),
-                                "製造年": man_year,
-                                "設置場所": man_location,
-                                "購入業者": man_vendor,
-                                "導入形態": man_acq_type,
-                                "購入金額": man_price,
-                                "納入日": str(man_delivery),
-                                "最終点検日": "",
-                                "最終判定": "",
-                                "最終実施者": ""
-                            }])
-                            updated_master_reg = pd.concat([df_master_reg, new_master_row], ignore_index=True)
-                            conn.update(worksheet="機器マスター", data=updated_master_reg)
-                            
-                            write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
-                            st.success(f"{man_me_no} を機器マスターに登録しました！「点検入力」タブから検索して点検を行えます。")
-                            
-                            st.session_state["scan_model"] = None 
-                            st.session_state["scan_sn"] = None 
-                            st.session_state["scan_year"] = None 
-                            st.session_state["reg_man_cat"] = ""
-                            st.session_state["reg_man_vendor"] = ""
-                            st.rerun()
+                        st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」もプルダウンの候補に表示されます。")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
 
