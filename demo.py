@@ -177,20 +177,21 @@ if "GEMINI_API_KEY" in st.secrets:
 # 共通データベースの取得（購入業者プルダウン用）
 conn = st.connection("gsheets", type=GSheetsConnection)
 df_master_global = safe_read_worksheet(conn, "機器マスター")
-existing_vendors = []
+# 機器マスターに登録済みの購入業者・機器種類を候補に反映
+vendor_options = []
 if not df_master_global.empty and "購入業者" in df_master_global.columns:
-    # 登録済みの業者を抽出し、空白を除外
-    existing_vendors = [v for v in df_master_global["購入業者"].unique() if str(v).strip() != "" and str(v).lower() != "nan"]
-vendor_options = existing_vendors + ["新規追加(手入力)"]
+    vendor_options = sorted({
+        clean_data_str(v) for v in df_master_global["購入業者"].unique()
+        if clean_data_str(v)
+    })
 
-# 手入力で登録された機器種類をプルダウンに反映（購入業者と同様）
 saved_categories = []
 if not df_master_global.empty and "カテゴリ" in df_master_global.columns:
     saved_categories = sorted({
         clean_data_str(c) for c in df_master_global["カテゴリ"].unique()
         if clean_data_str(c) and clean_data_str(c) not in BASE_CATEGORIES
     })
-category_options = BASE_CATEGORIES + saved_categories + ["その他(手入力)"]
+category_options = sorted(set(BASE_CATEGORIES + saved_categories))
 
 # ==========================================
 # 【ルートB】QRコードを読み取った場合（トラブル報告画面へ直行）
@@ -703,18 +704,7 @@ with tabs[1]:
                         new_year = st.text_input("製造年", value=clean_data_str(target_row.get("製造年", "")))
                         
                         new_location = st.text_input("設置場所", value=clean_data_str(target_row.get("設置場所", "")))
-                        
-                        # 業者をプルダウン + 手入力対応
-                        saved_vendor = clean_data_str(target_row.get("購入業者", ""))
-                        if saved_vendor and saved_vendor not in vendor_options:
-                            vendor_options.insert(0, saved_vendor)
-                        
-                        sel_idx = vendor_options.index(saved_vendor) if saved_vendor in vendor_options else 0
-                        edit_vendor_sel = st.selectbox("購入業者", vendor_options, index=sel_idx)
-                        if edit_vendor_sel == "新規追加(手入力)":
-                            new_vendor = st.text_input("購入業者を新規入力")
-                        else:
-                            new_vendor = edit_vendor_sel
+                        new_vendor = st.text_input("購入業者", value=clean_data_str(target_row.get("購入業者", "")))
 
                         # 導入形態と購入金額の追加
                         saved_acq = clean_data_str(target_row.get("導入形態", "購入"))
@@ -938,27 +928,47 @@ with tabs[4]:
         show_form = False 
 
     if show_form:
+        if "reg_man_cat" not in st.session_state:
+            st.session_state["reg_man_cat"] = ""
+        if "reg_man_vendor" not in st.session_state:
+            st.session_state["reg_man_vendor"] = ""
+
+        if category_options:
+            picked_cat = st.selectbox(
+                "登録済みの機器種類から選ぶ（任意）",
+                options=[""] + category_options,
+                format_func=lambda x: "選択しない（下の欄に直接入力）" if x == "" else x,
+                key="reg_cat_pick",
+            )
+            if picked_cat:
+                st.session_state["reg_man_cat"] = picked_cat
+
+        if vendor_options:
+            picked_vendor = st.selectbox(
+                "登録済みの購入業者から選ぶ（任意）",
+                options=[""] + vendor_options,
+                format_func=lambda x: "選択しない（下の欄に直接入力）" if x == "" else x,
+                key="reg_vendor_pick",
+            )
+            if picked_vendor:
+                st.session_state["reg_man_vendor"] = picked_vendor
+
         with st.form("direct_reg_form"):
             man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
-            
-            cat_selection = st.selectbox("機器種類 (カテゴリ)", category_options)
-            if cat_selection == "その他(手入力)":
-                man_cat = st.text_input("機器種類を入力してください", placeholder="例: シリンジポンプ")
-            else:
-                man_cat = cat_selection
-                
+            man_cat = st.text_input(
+                "機器種類 (カテゴリ) (必須)",
+                value=st.session_state.get("reg_man_cat", ""),
+                placeholder="例: シリンジポンプ",
+            )
             man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
             man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
             man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014-06-12")
             man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
-            
-            # 購入業者のプルダウン + 手入力対応
-            vendor_selection = st.selectbox("購入業者", vendor_options)
-            if vendor_selection == "新規追加(手入力)":
-                man_vendor = st.text_input("購入業者を入力してください", placeholder="例: 〇〇医療器")
-            else:
-                man_vendor = vendor_selection
-                
+            man_vendor = st.text_input(
+                "購入業者",
+                value=st.session_state.get("reg_man_vendor", ""),
+                placeholder="例: 〇〇医療器",
+            )
             # 導入形態と購入金額の追加
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
@@ -970,6 +980,7 @@ with tabs[4]:
                     st.error("ME No. と 機器種類 は必須です！")
                 else:
                     man_cat = clean_data_str(man_cat)
+                    man_vendor = clean_data_str(man_vendor)
                     try:
                         df_master_reg = safe_read_worksheet(conn, "機器マスター")
                         clean_db_me_reg = clean_series(df_master_reg["ME No."])
@@ -1001,6 +1012,8 @@ with tabs[4]:
                             st.session_state["scan_model"] = None 
                             st.session_state["scan_sn"] = None 
                             st.session_state["scan_year"] = None 
+                            st.session_state["reg_man_cat"] = ""
+                            st.session_state["reg_man_vendor"] = ""
                             st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
