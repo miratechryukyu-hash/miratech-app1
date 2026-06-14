@@ -846,7 +846,7 @@ with tabs[2]:
 # ====== タブ4：新規機器の登録 ======
 with tabs[4]:
     st.subheader("新規機器の直接登録")
-    st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。")
+    st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
     
     reg_mode = st.radio("入力方法を選択してください", ["AI銘板スキャナー", "手動で情報を入力"], horizontal=True)
     
@@ -855,60 +855,6 @@ with tabs[4]:
     history_categories = sorted({clean_data_str(c) for c in df_m_reg["カテゴリ"].unique() if clean_data_str(c)})
     history_vendors = sorted({clean_data_str(v) for v in df_m_reg["購入業者"].unique() if clean_data_str(v)})
 
-    if reg_mode == "AI銘板スキャナー":
-        # ... (AIスキャナー部分はそのまま) ...
-        img_file = st.camera_input("銘板（シール）を撮影してください", key="ai_camera")
-        # ... (省略: 前のコードと同じ内容) ...
-
-    with st.form("direct_reg_form"):
-        man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
-        
-        # 記憶してプルダウンで選べる入力欄
-        man_cat = st.selectbox("機器種類 (カテゴリ) (必須)", [""] + history_categories, editable=True)
-        man_vendor = st.selectbox("購入業者", [""] + history_vendors, editable=True)
-        
-        man_model = st.text_input("型式 (機種)", placeholder="例: TE-131A")
-        man_sn = st.text_input("製造番号 (S/N)", placeholder="例: 12345678")
-        man_year = st.text_input("製造年", placeholder="例: 2014")
-        man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
-        
-        man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
-        man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
-        man_delivery = st.date_input("納入日", value=date.today())
-        
-        if st.form_submit_button("機器マスターに登録する", type="primary"):
-            if not man_me_no or not man_cat:
-                st.error("ME No. と 機器種類 は必須です！")
-            else:
-                try:
-                    # (登録処理はそのまま)
-                    new_master_row = pd.DataFrame([{
-                        "ME No.": protect_zeros(man_me_no),
-                        "カテゴリ": man_cat,
-                        "機種": f"{man_cat}({man_model})",
-                        "製造番号": protect_zeros(man_sn),
-                        "製造年": man_year,
-                        "設置場所": man_location,
-                        "購入業者": man_vendor,
-                        "導入形態": man_acq_type,
-                        "購入金額": man_price,
-                        "納入日": str(man_delivery),
-                        "最終点検日": "", "最終判定": "", "最終実施者": ""
-                    }])
-                    updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
-                    conn.update(worksheet="機器マスター", data=updated_master_reg)
-                    st.success(f"{man_me_no} を登録しました！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"登録エラー: {e}")
-
-# ====== タブ5：新規機器の登録 ======
-with tabs[4]:
-    st.subheader("新規機器の直接登録")
-    st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
-    
-    reg_mode = st.radio("入力方法を選択してください", ["AI銘板スキャナー", "手動で情報を入力"], horizontal=True)
-    
     if reg_mode == "AI銘板スキャナー":
         st.info("新しい機器の銘板を撮影すると、AIが情報を読み取ってくれます。")
         if ai_model is None:
@@ -953,31 +899,6 @@ with tabs[4]:
         show_form = False 
 
     if show_form:
-        if "reg_man_cat" not in st.session_state:
-            st.session_state["reg_man_cat"] = ""
-        if "reg_man_vendor" not in st.session_state:
-            st.session_state["reg_man_vendor"] = ""
-
-        if category_options:
-            picked_cat = st.selectbox(
-                "登録済みの機器種類から選ぶ（任意）",
-                options=[""] + category_options,
-                format_func=lambda x: "選択しない（下の欄に直接入力）" if x == "" else x,
-                key="reg_cat_pick",
-            )
-            if picked_cat:
-                st.session_state["reg_man_cat"] = picked_cat
-
-        if vendor_options:
-            picked_vendor = st.selectbox(
-                "登録済みの購入業者から選ぶ（任意）",
-                options=[""] + vendor_options,
-                format_func=lambda x: "選択しない（下の欄に直接入力）" if x == "" else x,
-                key="reg_vendor_pick",
-            )
-            if picked_vendor:
-                st.session_state["reg_man_vendor"] = picked_vendor
-
         with st.form("direct_reg_form"):
             man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
             
@@ -990,9 +911,9 @@ with tabs[4]:
             txt_vendor = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
             
             st.markdown("---")
-            man_model = st.text_input("型式 (機種)", placeholder="例: TE-131A")
-            man_sn = st.text_input("製造番号 (S/N)", placeholder="例: 12345678")
-            man_year = st.text_input("製造年", placeholder="例: 2014")
+            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
             man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
             
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
@@ -1007,29 +928,43 @@ with tabs[4]:
                 if not man_me_no or not final_cat:
                     st.error("ME No. と 機器種類 は必須です！")
                 else:
+                    final_cat = clean_data_str(final_cat)
+                    final_vendor = clean_data_str(final_vendor)
                     try:
-                        new_master_row = pd.DataFrame([{
-                            "ME No.": protect_zeros(man_me_no),
-                            "カテゴリ": final_cat,
-                            "機種": f"{final_cat}({man_model})",
-                            "製造番号": protect_zeros(man_sn),
-                            "製造年": man_year,
-                            "設置場所": man_location,
-                            "購入業者": final_vendor,
-                            "導入形態": man_acq_type,
-                            "購入金額": man_price,
-                            "納入日": str(man_delivery),
-                            "最終点検日": "", "最終判定": "", "最終実施者": ""
-                        }])
-                        updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
-                        conn.update(worksheet="機器マスター", data=updated_master_reg)
+                        clean_db_me_reg = clean_series(df_m_reg["ME No."])
                         
-                        st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」もプルダウンの候補に表示されます。")
-                        st.rerun()
+                        if clean_data_str(man_me_no) in clean_db_me_reg.values:
+                            st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
+                        else:
+                            new_master_row = pd.DataFrame([{
+                                "ME No.": protect_zeros(man_me_no),
+                                "カテゴリ": final_cat,
+                                "機種": f"{final_cat}({man_model})",
+                                "製造番号": protect_zeros(man_sn),
+                                "製造年": man_year,
+                                "設置場所": man_location,
+                                "購入業者": final_vendor,
+                                "導入形態": man_acq_type,
+                                "購入金額": man_price,
+                                "納入日": str(man_delivery),
+                                "最終点検日": "",
+                                "最終判定": "",
+                                "最終実施者": ""
+                            }])
+                            updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
+                            conn.update(worksheet="機器マスター", data=updated_master_reg)
+                            
+                            write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
+                            st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」もプルダウンの候補に表示されます。")
+                            
+                            st.session_state["scan_model"] = None 
+                            st.session_state["scan_sn"] = None 
+                            st.session_state["scan_year"] = None 
+                            st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
 
-# ====== 追加：タブ6：ユーザー・ログ管理 ======
+# ====== タブ5：ユーザー・ログ管理 ======
 try:
     df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
     
