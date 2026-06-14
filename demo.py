@@ -161,7 +161,7 @@ if not check_auth():
 # --- ログイン後の変数 ---
 facility_name = st.session_state["logged_in_facility"]
 url_me_no = st.query_params.get("me_no", "")
-categories_list = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装置", "ネブライザー", "透視装置","無影灯","血圧計","超音波診断装置","超音波プローブ",
+BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装置", "ネブライザー", "透視装置","無影灯","血圧計","超音波診断装置","超音波プローブ",
                    "ドプラ","検診台","血液ガス分析装置","吸引器類","加湿器類","分娩台","ベビーコット","哺乳瓶消毒器","煮沸消毒器","パルスオキシメーター",
                    "聴力検査器","光線治療器","酸素モニタ","電気メス","麻酔器","生体情報モニタ","手術台","子宮鏡","滅菌装置", "その他"]
 
@@ -182,6 +182,15 @@ if not df_master_global.empty and "購入業者" in df_master_global.columns:
     # 登録済みの業者を抽出し、空白を除外
     existing_vendors = [v for v in df_master_global["購入業者"].unique() if str(v).strip() != "" and str(v).lower() != "nan"]
 vendor_options = existing_vendors + ["新規追加(手入力)"]
+
+# 手入力で登録された機器種類をプルダウンに反映（購入業者と同様）
+saved_categories = []
+if not df_master_global.empty and "カテゴリ" in df_master_global.columns:
+    saved_categories = sorted({
+        clean_data_str(c) for c in df_master_global["カテゴリ"].unique()
+        if clean_data_str(c) and clean_data_str(c) not in BASE_CATEGORIES
+    })
+category_options = BASE_CATEGORIES + saved_categories + ["その他(手入力)"]
 
 # ==========================================
 # 【ルートB】QRコードを読み取った場合（トラブル報告画面へ直行）
@@ -932,9 +941,9 @@ with tabs[4]:
         with st.form("direct_reg_form"):
             man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
             
-            cat_selection = st.selectbox("機器種類 (カテゴリ)", categories_list + ["その他(手入力)"])
+            cat_selection = st.selectbox("機器種類 (カテゴリ)", category_options)
             if cat_selection == "その他(手入力)":
-                man_cat = st.text_input("機器種類を入力してください", placeholder="例: 保育器")
+                man_cat = st.text_input("機器種類を入力してください", placeholder="例: シリンジポンプ")
             else:
                 man_cat = cat_selection
                 
@@ -960,6 +969,7 @@ with tabs[4]:
                 if not man_me_no or not man_cat:
                     st.error("ME No. と 機器種類 は必須です！")
                 else:
+                    man_cat = clean_data_str(man_cat)
                     try:
                         df_master_reg = safe_read_worksheet(conn, "機器マスター")
                         clean_db_me_reg = clean_series(df_master_reg["ME No."])
@@ -991,6 +1001,7 @@ with tabs[4]:
                             st.session_state["scan_model"] = None 
                             st.session_state["scan_sn"] = None 
                             st.session_state["scan_year"] = None 
+                            st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
 
