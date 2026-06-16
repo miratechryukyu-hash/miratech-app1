@@ -918,7 +918,7 @@ with tabs[4]:
             
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
-            man_delivery = st.date_input("納入日", value=date.today())
+            man_delivery = st.date_input("納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
                 # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
