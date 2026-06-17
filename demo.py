@@ -204,7 +204,7 @@ if url_me_no:
     
     with st.form("nurse_report_form"):
         rep_date = st.date_input("発生日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
-        rep_dept = st.selectbox("あなたの部署", ["選択してください", "外来", "一般病棟", "療養病棟", "オペ室", "透析室", "その他"])
+        rep_dept = st.selectbox("あなたの部署", ["選択してください", "外来", "一般病棟", "オペ室"])
         rep_name = st.text_input("報告者名", value=st.session_state.get("current_user_name", ""))
         c1, c2 = st.columns(2)
         with c1:
@@ -237,7 +237,7 @@ if url_me_no:
                 new_report = pd.DataFrame([{
                     "報告日": str(date.today()),
                     "発生日": str(rep_date),
-                    "ME No.": url_me_no,
+                    "管理番号": url_me_no,
                     "機種": "不明な機器",
                     "報告者": rep_name,
                     "部署": rep_dept,
@@ -550,10 +550,10 @@ with tabs[0]:
 
                     data_dict = {
                         "点検日": str(check_date), 
-                        "ME No.": safe_final_me_no, 
+                        "管理番号": safe_final_me_no, 
                         "カテゴリ": device_category,
                         "製造番号": safe_final_sn, 
-                        "製造年": scan_year_val, 
+                        "製造年月日": scan_year_val, 
                         "機種": f"{device_category}({device_model})", 
                         "実施者": inspector, 
                         "判定": result, 
@@ -581,11 +581,11 @@ with tabs[0]:
                         existing_price = clean_data_str(master_row.get("購入金額", ""))
 
                     new_master_entry = pd.DataFrame([{
-                        "ME No.": safe_final_me_no,
+                        "管理番号": safe_final_me_no,
                         "カテゴリ": device_category,
                         "機種": f"{device_category}({device_model})",
                         "製造番号": safe_final_sn,
-                        "製造年": scan_year_val,
+                        "製造年月日": scan_year_val,
                         "設置場所": existing_location,
                         "購入業者": existing_vendor,
                         "導入形態": existing_acq_type,
@@ -729,7 +729,7 @@ with tabs[1]:
                             df_master_edit.loc[mask_m, "カテゴリ"] = new_cat
                             df_master_edit.loc[mask_m, "機種"] = new_model
                             df_master_edit.loc[mask_m, "製造番号"] = safe_new_sn
-                            df_master_edit.loc[mask_m, "製造年"] = new_year
+                            df_master_edit.loc[mask_m, "製造年月日"] = new_year
                             df_master_edit.loc[mask_m, "設置場所"] = new_location
                             df_master_edit.loc[mask_m, "購入業者"] = new_vendor
                             df_master_edit.loc[mask_m, "導入形態"] = new_acq_type
@@ -937,11 +937,11 @@ with tabs[4]:
                             st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
                         else:
                             new_master_row = pd.DataFrame([{
-                                "ME No.": protect_zeros(man_me_no),
+                                "管理番号": protect_zeros(man_me_no),
                                 "カテゴリ": final_cat,
                                 "機種": f"{final_cat}({man_model})",
                                 "製造番号": protect_zeros(man_sn),
-                                "製造年": man_year,
+                                "製造年月日": man_year,
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
                                 "導入形態": man_acq_type,
