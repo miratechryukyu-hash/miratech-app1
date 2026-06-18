@@ -286,8 +286,8 @@ with tabs[0]:
     master_row = None
     if input_keyword and not df_master_global.empty:
         clean_keyword = clean_data_str(input_keyword)
-        clean_db_me = clean_series(df_master_global["ME No."])
-        clean_db_sn = clean_series(df_master_global["製造番号"])
+        clean_db_me = clean_series(df_master_global["管理番号"])
+        clean_db_sn = clean_series(df_master_global["シリアルNo"])
         
         matched_me = df_master_global[clean_db_me == clean_keyword]
         if not matched_me.empty:
@@ -301,12 +301,25 @@ with tabs[0]:
 
     if master_row is not None:
         st.success("登録済みの機器が見つかりました。情報を自動出現させます。")
-        final_me_no = clean_data_str(master_row.get("ME No.", ""))
-        final_sn = clean_data_str(master_row.get("製造番号", ""))
+        final_me_no = clean_data_str(master_row.get("管理番号", ""))
+        final_sn = clean_data_str(master_row.get("シリアルNo", ""))
         def_category = clean_data_str(master_row.get("カテゴリ", "その他"))
         full_meshun = clean_data_str(master_row.get("機種", ""))
         def_model = full_meshun.replace(f"{def_category}(", "").replace(")", "")
-        scan_year_val = clean_data_str(master_row.get("製造年", ""))
+        scan_year_val = clean_data_str(master_row.get("製造年月日", ""))
+
+        # 【追加】1年経過アラート機能
+        last_check_str = clean_data_str(master_row.get("最終点検日", ""))
+        if last_check_str:
+            try:
+                last_check_date = pd.to_datetime(last_check_str).date()
+                days_passed = (date.today() - last_check_date).days
+                if days_passed > 365:
+                    st.error(f"⚠️ 警告: 最終点検日（{last_check_str}）から1年以上経過しています！（経過日数: {days_passed}日）")
+                else:
+                    st.info(f"最終点検日: {last_check_str} (経過日数: {days_passed}日)")
+            except:
+                pass
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -584,7 +597,7 @@ with tabs[0]:
                         "管理番号": safe_final_me_no,
                         "カテゴリ": device_category,
                         "機種": f"{device_category}({device_model})",
-                        "製造番号": safe_final_sn,
+                        "シリアルNo": safe_final_sn,
                         "製造年月日": scan_year_val,
                         "設置場所": existing_location,
                         "購入業者": existing_vendor,
@@ -700,8 +713,8 @@ with tabs[1]:
                         
                         new_cat = st.text_input("カテゴリ", value=clean_data_str(target_row.get("カテゴリ", "")))
                         new_model = st.text_input("機種 (例: 輸液ポンプ(TE-131A))", value=clean_data_str(target_row.get("機種", "")))
-                        new_sn = st.text_input("製造番号 (S/N)", value=clean_data_str(target_row.get("製造番号", "")))
-                        new_year = st.text_input("製造年", value=clean_data_str(target_row.get("製造年", "")))
+                        new_sn = st.text_input("シリアルNo", value=clean_data_str(target_row.get("製造番号", "")))
+                        new_year = st.text_input("製造年月日", value=clean_data_str(target_row.get("製造年", "")))
                         
                         new_location = st.text_input("設置場所", value=clean_data_str(target_row.get("設置場所", "")))
                         new_vendor = st.text_input("購入業者", value=clean_data_str(target_row.get("購入業者", "")))
@@ -745,8 +758,8 @@ with tabs[1]:
                                     if mask_h.any():
                                         df_hist_edit.loc[mask_h, "カテゴリ"] = new_cat
                                         df_hist_edit.loc[mask_h, "機種"] = new_model
-                                        df_hist_edit.loc[mask_h, "製造番号"] = safe_new_sn
-                                        df_hist_edit.loc[mask_h, "製造年"] = new_year
+                                        df_hist_edit.loc[mask_h, "シリアルNo"] = safe_new_sn
+                                        df_hist_edit.loc[mask_h, "製造年月日"] = new_year
                                         conn.update(worksheet="点検履歴", data=df_hist_edit)
                             except Exception:
                                 pass 
@@ -898,68 +911,72 @@ with tabs[4]:
     if reg_mode == "AI銘板スキャナー" and st.session_state.get("scan_model") is None:
         show_form = False 
 
+   # ====== タブ4：新規機器の登録 ======
+# ... (前半のAIスキャナー部分などはそのまま) ...
+
     if show_form:
         with st.form("direct_reg_form"):
-            man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
+            man_me_no = st.text_input("管理番号 (必須)", placeholder="例: Y0001")
             
             st.write("▼ 機器種類（カテゴリ）※必須")
             sel_cat = st.selectbox("① 過去のリストから選ぶ", [""] + history_categories)
             txt_cat = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
             
+            st.markdown("---")
+            # 【追加】メーカーの入力
+            man_maker = st.text_input("メーカー", placeholder="例: テルモ")
+            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
+            
+            # 【追加】耐用年数の入力
+            man_life = st.number_input("耐用年数（年）", min_value=0, value=6, step=1)
+            
+            man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
+            
             st.write("▼ 購入業者")
             sel_vendor = st.selectbox("① 過去のリストから選ぶ", [""] + history_vendors)
             txt_vendor = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
-            
-            st.markdown("---")
-            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
-            man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
             
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
             man_delivery = st.date_input("納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
-                # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
                 final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
 
                 if not man_me_no or not final_cat:
-                    st.error("ME No. と 機器種類 は必須です！")
+                    st.error("管理番号 と 機器種類 は必須です！")
                 else:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
                     try:
-                        clean_db_me_reg = clean_series(df_m_reg["ME No."])
+                        clean_db_me_reg = clean_series(df_m_reg["管理番号"]) # ME No.から修正
                         
                         if clean_data_str(man_me_no) in clean_db_me_reg.values:
-                            st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
+                            st.error(f"{man_me_no} は既に登録されています。別の管理番号を指定してください。")
                         else:
                             new_master_row = pd.DataFrame([{
                                 "管理番号": protect_zeros(man_me_no),
                                 "カテゴリ": final_cat,
+                                "メーカー": man_maker, # 【追加】
                                 "機種": f"{final_cat}({man_model})",
-                                "製造番号": protect_zeros(man_sn),
+                                "シリアルNo": protect_zeros(man_sn),
                                 "製造年月日": man_year,
+                                "耐用年数": man_life, # 【追加】
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
                                 "導入形態": man_acq_type,
                                 "購入金額": man_price,
                                 "納入日": str(man_delivery),
-                                "最終点検日": "",
-                                "最終判定": "",
-                                "最終実施者": ""
+                                "最終点検日": "", "最終判定": "", "最終実施者": ""
                             }])
                             updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
                             conn.update(worksheet="機器マスター", data=updated_master_reg)
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
-                            st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」もプルダウンの候補に表示されます。")
-                            
-                            st.session_state["scan_model"] = None 
-                            st.session_state["scan_sn"] = None 
-                            st.session_state["scan_year"] = None 
+                            st.success(f"{man_me_no} を登録しました！")
                             st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
