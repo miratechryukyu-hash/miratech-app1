@@ -787,7 +787,7 @@ with tabs[2]:
 
         sub_tab1, sub_tab2 = st.tabs(["機器カルテ（ワンタッチ照合）", "日次点検実績（グラフ）"])
 
-       with sub_tab1:
+        with sub_tab1:
             st.write("下の一覧表から、詳細を見たい機器の行をタップ（クリック）してください")
             if not df_master.empty:
                 selection_event = st.dataframe(
@@ -800,71 +800,77 @@ with tabs[2]:
                 
                 if len(selection_event.selection.rows) > 0:
                     idx = selection_event.selection.rows[0]
-                    target_me = clean_data_str(df_master.iloc[idx].get("ME No.", ""))
+                    # 列名が「管理番号」か「ME No.」どちらでも対応できるように取得
+                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", df_master.iloc[idx].get("ME No.", "")))
                     model_name = clean_data_str(df_master.iloc[idx].get("機種", "不明な機器"))
                     
                     st.markdown("---")
-                    st.markdown(f"### {model_name} (ME No: {target_me}) のカルテ")
+                    st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
                     
-                    if not df_history.empty and "ME No." in df_history.columns:
-                        clean_hist_search_me = clean_series(df_history["ME No."])
-                        hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
+                    # 履歴の検索（列名の揺れに対応）
+                    hist_df = pd.DataFrame()
+                    if not df_history.empty:
+                        if "管理番号" in df_history.columns:
+                            clean_hist_search_me = clean_series(df_history["管理番号"])
+                            hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
+                        elif "ME No." in df_history.columns:
+                            clean_hist_search_me = clean_series(df_history["ME No."])
+                            hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
                         
-                        if not hist_df.empty:
-                            st.write("#### 過去の点検・修理履歴")
-                            st.dataframe(hist_df, use_container_width=True, hide_index=True)
+                    if not hist_df.empty:
+                        st.write("#### 過去の点検・修理履歴")
+                        st.dataframe(hist_df, use_container_width=True, hide_index=True)
+                        
+                        # 🖨️ 報告書の再発行（印刷）機能
+                        st.markdown("---")
+                        st.write("#### 🖨️ 報告書の再発行（印刷）")
+                        st.write("履歴から特定の日の報告書をキレイなレイアウトで表示・印刷できます。")
+                        
+                        selected_date = st.selectbox("印刷したい点検日を選択してください", hist_df["点検日"].tolist())
+                        
+                        if selected_date:
+                            report_data = hist_df[hist_df["点検日"] == selected_date].iloc[0]
                             
-                            # 【追加】報告書の再発行（印刷）機能
-                            st.markdown("---")
-                            st.write("#### 🖨️ 報告書の再発行（印刷）")
-                            st.write("履歴から特定の日の報告書をキレイなレイアウトで表示・印刷できます。")
-                            
-                            selected_date = st.selectbox("印刷したい点検日を選択してください", hist_df["点検日"].tolist())
-                            
-                            if selected_date:
-                                report_data = hist_df[hist_df["点検日"] == selected_date].iloc[0]
-                                
-                                # HTMLで報告書レイアウトを作成
-                                html_report = f"""
-                                <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px;">
-                                    <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px;">医療機器 点検報告書</h2>
-                                    <div style="text-align: right; margin-bottom: 20px;">点検日: {report_data.get('点検日', '-')}</div>
-                                    <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; width: 30%; background-color: #f0f0f0;"><b>ME No.</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa;">{target_me}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>機種名</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa;">{model_name}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>総合判定</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa; font-size: 18px;"><b>{report_data.get('判定', '-')}</b></td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>実施者</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('実施者', '-')}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>詳細・点検項目</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('詳細データ', '-')}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>備考・報告</b></td>
-                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('備考', '-')}</td>
-                                        </tr>
-                                    </table>
-                                    <br>
-                                    <p style="text-align: right; font-size: 12px; color: gray;">出力システム: miratech 琉球 医療機器管理システム</p>
-                                </div>
-                                """
-                                st.markdown(html_report, unsafe_allow_html=True)
-                                st.info("💡 上記の報告書をPDF化・紙に印刷するには、ブラウザの印刷機能（キーボードの `Ctrl + P` または `Cmd + P`）を使用してください。")
-                        else:
-                            st.info("この機器の点検・修理履歴はありません。")
+                            html_report = f"""
+                            <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px;">
+                                <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px;">医療機器 点検報告書</h2>
+                                <div style="text-align: right; margin-bottom: 20px;">点検日: {report_data.get('点検日', '-')}</div>
+                                <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; width: 30%; background-color: #f0f0f0;"><b>管理番号</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa;">{target_me}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>機種名</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa;">{model_name}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>総合判定</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa; font-size: 18px;"><b>{report_data.get('判定', '-')}</b></td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>実施者</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('実施者', '-')}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>詳細・点検項目</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('詳細データ', '-')}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>備考・報告</b></td>
+                                        <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('備考', '-')}</td>
+                                    </tr>
+                                </table>
+                                <br>
+                                <p style="text-align: right; font-size: 12px; color: gray;">出力システム: miratech 琉球 医療機器管理システム</p>
+                            </div>
+                            """
+                            st.markdown(html_report, unsafe_allow_html=True)
+                            st.info("💡 上記の報告書をPDF化・紙に印刷するには、ブラウザの印刷機能（キーボードの `Ctrl + P` または `Cmd + P`）を使用してください。")
                     else:
-                        st.info("点検履歴データがありません。")
+                        st.info("この機器の点検・修理履歴はありません。")
+                else:
+                    st.info("点検履歴データがありません。")
             else:
                 st.info("機器マスターにまだデータがありません。")
 
