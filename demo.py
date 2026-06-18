@@ -281,7 +281,7 @@ tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
 with tabs[0]:
-    input_keyword = st.text_input("ME No. または 製造番号(S/N) を入力して検索", placeholder="例: Y0001 または 12345678").strip()
+    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: Y0001 または 12345678").strip()
 
     master_row = None
     if input_keyword and not df_master_global.empty:
@@ -307,17 +307,17 @@ with tabs[0]:
         full_meshun = clean_data_str(master_row.get("機種", ""))
         def_model = full_meshun.replace(f"{def_category}(", "").replace(")", "")
         scan_year_val = clean_data_str(master_row.get("製造年月日", ""))
-
+        
         # 【追加】1年経過アラート機能
         last_check_str = clean_data_str(master_row.get("最終点検日", ""))
         if last_check_str:
             try:
-                last_check_date = pd.to_datetime(last_check_str).date()
+                last_check_date = datetime.strptime(last_check_str, "%Y-%m-%d").date()
                 days_passed = (date.today() - last_check_date).days
-                if days_passed > 365:
-                    st.error(f"⚠️ 警告: 最終点検日（{last_check_str}）から1年以上経過しています！（経過日数: {days_passed}日）")
+                if days_passed >= 365:
+                    st.error(f"⚠️ 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
                 else:
-                    st.info(f"最終点検日: {last_check_str} (経過日数: {days_passed}日)")
+                    st.info(f"💡 前回点検日: {last_check_str} (経過: {days_passed}日)")
             except:
                 pass
         
@@ -340,6 +340,8 @@ with tabs[0]:
         if input_keyword:
             st.info("該当する機器が見つかりません。新規登録が必要な場合は「新規機器登録」タブから登録してください。")
             st.stop() 
+
+# --- （この下にある check_type = st.radio("点検区分"... 以降のコードはそのまま残してください） ---
 
     if master_row is not None:
         st.markdown("---")
@@ -785,7 +787,7 @@ with tabs[2]:
 
         sub_tab1, sub_tab2 = st.tabs(["機器カルテ（ワンタッチ照合）", "日次点検実績（グラフ）"])
 
-        with sub_tab1:
+       with sub_tab1:
             st.write("下の一覧表から、詳細を見たい機器の行をタップ（クリック）してください")
             if not df_master.empty:
                 selection_event = st.dataframe(
@@ -812,9 +814,53 @@ with tabs[2]:
                             st.write("#### 過去の点検・修理履歴")
                             st.dataframe(hist_df, use_container_width=True, hide_index=True)
                             
-                            last_date = clean_data_str(hist_df.iloc[0].get("点検日", "-"))
-                            last_result = clean_data_str(hist_df.iloc[0].get("判定", "-"))
-                            st.success(f"最新の点検日: {last_date} ／ 判定: {last_result}")
+                            # 【追加】報告書の再発行（印刷）機能
+                            st.markdown("---")
+                            st.write("#### 🖨️ 報告書の再発行（印刷）")
+                            st.write("履歴から特定の日の報告書をキレイなレイアウトで表示・印刷できます。")
+                            
+                            selected_date = st.selectbox("印刷したい点検日を選択してください", hist_df["点検日"].tolist())
+                            
+                            if selected_date:
+                                report_data = hist_df[hist_df["点検日"] == selected_date].iloc[0]
+                                
+                                # HTMLで報告書レイアウトを作成
+                                html_report = f"""
+                                <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px;">
+                                    <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px;">医療機器 点検報告書</h2>
+                                    <div style="text-align: right; margin-bottom: 20px;">点検日: {report_data.get('点検日', '-')}</div>
+                                    <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; width: 30%; background-color: #f0f0f0;"><b>ME No.</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa;">{target_me}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>機種名</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa;">{model_name}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>総合判定</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa; font-size: 18px;"><b>{report_data.get('判定', '-')}</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>実施者</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('実施者', '-')}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>詳細・点検項目</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('詳細データ', '-')}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>備考・報告</b></td>
+                                            <td style="padding: 10px; border: 1px solid #aaa;">{report_data.get('備考', '-')}</td>
+                                        </tr>
+                                    </table>
+                                    <br>
+                                    <p style="text-align: right; font-size: 12px; color: gray;">出力システム: miratech 琉球 医療機器管理システム</p>
+                                </div>
+                                """
+                                st.markdown(html_report, unsafe_allow_html=True)
+                                st.info("💡 上記の報告書をPDF化・紙に印刷するには、ブラウザの印刷機能（キーボードの `Ctrl + P` または `Cmd + P`）を使用してください。")
                         else:
                             st.info("この機器の点検・修理履歴はありません。")
                     else:
@@ -905,57 +951,52 @@ with tabs[4]:
             
             if st.session_state.get("scan_model") is not None:
                 st.success("AIの読み取りが完了しました！以下の内容を確認し、追加情報を入れて登録してください。")
-
-    # 共通の登録フォーム
+ # ====== タブ4：新規機器の登録 ======
+   # 共通の登録フォーム
     show_form = True
     if reg_mode == "AI銘板スキャナー" and st.session_state.get("scan_model") is None:
         show_form = False 
 
-   # ====== タブ4：新規機器の登録 ======
-# ... (前半のAIスキャナー部分などはそのまま) ...
-
     if show_form:
         with st.form("direct_reg_form"):
-            man_me_no = st.text_input("管理番号 (必須)", placeholder="例: Y0001")
+            man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
             
             st.write("▼ 機器種類（カテゴリ）※必須")
             sel_cat = st.selectbox("① 過去のリストから選ぶ", [""] + history_categories)
             txt_cat = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
             
-            st.markdown("---")
-            # 【追加】メーカーの入力
-            man_maker = st.text_input("メーカー", placeholder="例: テルモ")
-            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
-            
-            # 【追加】耐用年数の入力
-            man_life = st.number_input("耐用年数（年）", min_value=0, value=6, step=1)
-            
-            man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
-            
             st.write("▼ 購入業者")
             sel_vendor = st.selectbox("① 過去のリストから選ぶ", [""] + history_vendors)
             txt_vendor = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
             
+            st.markdown("---")
+            # 【追加】メーカーと耐用年数
+            man_maker = st.text_input("メーカー", placeholder="例: テルモ")
+            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
+            man_life = st.number_input("耐用年数（年）", min_value=0, value=6, step=1)
+            
+            man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
             man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
             man_delivery = st.date_input("納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
+                # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
                 final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
 
                 if not man_me_no or not final_cat:
-                    st.error("管理番号 と 機器種類 は必須です！")
+                    st.error("ME No. と 機器種類 は必須です！")
                 else:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
                     try:
-                        clean_db_me_reg = clean_series(df_m_reg["管理番号"]) # ME No.から修正
+                        clean_db_me_reg = clean_series(df_m_reg["ME No."])
                         
                         if clean_data_str(man_me_no) in clean_db_me_reg.values:
-                            st.error(f"{man_me_no} は既に登録されています。別の管理番号を指定してください。")
+                            st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
                         else:
                             new_master_row = pd.DataFrame([{
                                 "管理番号": protect_zeros(man_me_no),
@@ -963,7 +1004,7 @@ with tabs[4]:
                                 "メーカー": man_maker, # 【追加】
                                 "機種": f"{final_cat}({man_model})",
                                 "シリアルNo": protect_zeros(man_sn),
-                                "製造年月日": man_year,
+                                "製造年": man_year,
                                 "耐用年数": man_life, # 【追加】
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
@@ -976,7 +1017,11 @@ with tabs[4]:
                             conn.update(worksheet="機器マスター", data=updated_master_reg)
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
-                            st.success(f"{man_me_no} を登録しました！")
+                            st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」も候補に表示されます。")
+                            
+                            st.session_state["scan_model"] = None 
+                            st.session_state["scan_sn"] = None 
+                            st.session_state["scan_year"] = None 
                             st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
