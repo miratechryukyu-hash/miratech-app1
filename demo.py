@@ -567,7 +567,7 @@ with tabs[0]:
                         "点検日": str(check_date), 
                         "管理番号": safe_final_me_no, 
                         "カテゴリ": device_category,
-                        "製造番号": safe_final_sn, 
+                        "シリアルNo": safe_final_sn, 
                         "製造年月日": scan_year_val, 
                         "機種": f"{device_category}({device_model})", 
                         "実施者": inspector, 
@@ -965,11 +965,11 @@ with tabs[4]:
 
     if show_form:
         with st.form("direct_reg_form"):
-            man_me_no = st.text_input("ME No. (必須)", placeholder="例: Y0001")
+            man_me_no = st.text_input("①管理番号 (必須)", placeholder="例: Y0001")
             
-            st.write("▼ 機器種類（カテゴリ）※必須")
-            sel_cat = st.selectbox("① 過去のリストから選ぶ", [""] + history_categories)
-            txt_cat = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
+            st.write("▼ ②機器種類（カテゴリ）※必須")
+            sel_cat = st.selectbox(" 過去のリストから選ぶ", [""] + history_categories)
+            txt_cat = st.text_input(" リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
             
             st.write("▼ 購入業者")
             sel_vendor = st.selectbox("過去のリストから選ぶ", [""] + history_vendors)
@@ -977,16 +977,16 @@ with tabs[4]:
             
             st.markdown("---")
             # 【追加】メーカーと耐用年数
-            man_maker = st.text_input("①メーカー", placeholder="例: テルモ")
-            man_model = st.text_input("②型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("③シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("④製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
-            man_life = st.number_input("⑤耐用年数（年）", min_value=0, value=6, step=1)
+            man_maker = st.text_input("③メーカー", placeholder="例: テルモ")
+            man_model = st.text_input("④型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("⑤シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("⑥製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
+            man_life = st.number_input("⑦耐用年数（年）", min_value=0, value=6, step=1)
             
-            man_location = st.text_input("⑥設置場所", placeholder="例: 一般病棟")
-            man_acq_type = st.selectbox("⑦導入形態", ["購入", "リース", "レンタル", "その他"])
-            man_price = st.text_input("⑧購入金額", placeholder="例: 1500000")
-            man_delivery = st.date_input("⑨納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            man_location = st.text_input("⑧設置場所", placeholder="例: 一般病棟")
+            man_acq_type = st.selectbox("⑨導入形態", ["購入", "リース", "レンタル", "その他"])
+            man_price = st.text_input("⑩購入金額", placeholder="例: 1500000")
+            man_delivery = st.date_input("⑪納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
                 # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
