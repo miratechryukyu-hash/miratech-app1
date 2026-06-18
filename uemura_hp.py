@@ -14,7 +14,7 @@ import time
 # ==========================================
 # 設定
 # ==========================================
-APP_URL = "https://miratech-app-bwyle23rwce9hxkpvh3rk8.streamlit.app"
+APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
