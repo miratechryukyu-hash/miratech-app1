@@ -972,21 +972,21 @@ with tabs[4]:
             txt_cat = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
             
             st.write("▼ 購入業者")
-            sel_vendor = st.selectbox("① 過去のリストから選ぶ", [""] + history_vendors)
-            txt_vendor = st.text_input("② リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
+            sel_vendor = st.selectbox("過去のリストから選ぶ", [""] + history_vendors)
+            txt_vendor = st.text_input("リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
             
             st.markdown("---")
             # 【追加】メーカーと耐用年数
-            man_maker = st.text_input("メーカー", placeholder="例: テルモ")
-            man_model = st.text_input("型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("製造番号 (S/N)", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("製造年", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
-            man_life = st.number_input("耐用年数（年）", min_value=0, value=6, step=1)
+            man_maker = st.text_input("①メーカー", placeholder="例: テルモ")
+            man_model = st.text_input("②型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("③シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("④製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
+            man_life = st.number_input("⑤耐用年数（年）", min_value=0, value=6, step=1)
             
-            man_location = st.text_input("設置場所", placeholder="例: 一般病棟")
-            man_acq_type = st.selectbox("導入形態", ["購入", "リース", "レンタル", "その他"])
-            man_price = st.text_input("購入金額(円)", placeholder="例: 1500000")
-            man_delivery = st.date_input("納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            man_location = st.text_input("⑥設置場所", placeholder="例: 一般病棟")
+            man_acq_type = st.selectbox("⑦導入形態", ["購入", "リース", "レンタル", "その他"])
+            man_price = st.text_input("⑧購入金額", placeholder="例: 1500000")
+            man_delivery = st.date_input("⑨納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
                 # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
@@ -994,7 +994,7 @@ with tabs[4]:
                 final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
 
                 if not man_me_no or not final_cat:
-                    st.error("ME No. と 機器種類 は必須です！")
+                    st.error("管理番号 と 機器種類 は必須です！")
                 else:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
