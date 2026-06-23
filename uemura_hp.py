@@ -908,7 +908,43 @@ with tabs[2]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ4：新規機器の登録 ======
+# ====== タブ4：QRコード発行機能 ======
+with tabs[3]:
+    st.subheader("機器用QRコードの作成")
+    st.write("対象の「管理番号」を入力すると、機器に貼り付ける用のQRコードが作成されます。")
+    
+    target_qr_me = st.text_input("QRコードを作りたい「管理番号」を入力", placeholder="例: Y0001")
+    
+    if st.button("QRコードを作成する"):
+        if target_qr_me:
+            # URLの末尾の「/」を調整してキレイなリンクを作る
+            clean_url = APP_URL.rstrip('/')
+            final_url = f"{clean_url}/?me_no={target_qr_me}"
+            
+            qr = qrcode.QRCode(version=1, box_size=10, border=4)
+            qr.add_data(final_url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            byte_im = buf.getvalue()
+            
+            st.success(f"「{target_qr_me}」専用のQRコードができました！")
+            
+            b64 = base64.b64encode(byte_im).decode()
+            html_img = f'''
+            <a href="data:image/png;base64,{b64}" download="QR_{target_qr_me}.png">
+                <img src="data:image/png;base64,{b64}" width="200" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
+            </a>
+            <br>
+            <p style="font-size: 14px; color: gray;">QRコードを<b>タップ（クリック）</b>すると直接ダウンロードされます。<br>スマホの場合は<b>長押しして「画像を保存」</b>も可能です。</p>
+            '''
+            st.markdown(html_img, unsafe_allow_html=True)
+        else:
+            st.warning("管理番号を入力してください。")
+
+# ====== タブ5：新規機器の登録 ======
 with tabs[4]:
     st.subheader("新規機器の直接登録")
     st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
