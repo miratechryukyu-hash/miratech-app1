@@ -932,6 +932,10 @@ with tabs[3]:
             
             st.success(f"「{target_qr_me}」専用のQRコードができました！")
             
+            # 【追加】テプラ用にURLをテキスト表示（コピーボタン付き）
+            st.write("▼ テプラ等にコピーして使うためのURL")
+            st.code(final_url, language="text")
+            
             b64 = base64.b64encode(byte_im).decode()
             html_img = f'''
             <a href="data:image/png;base64,{b64}" download="QR_{target_qr_me}.png">
