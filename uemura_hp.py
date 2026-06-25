@@ -281,7 +281,7 @@ tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
 with tabs[0]:
-    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: Y0001 または 12345678").strip()
+    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: INP0001 または 12345678").strip()
 
     master_row = None
     if input_keyword and not df_master_global.empty:
@@ -323,10 +323,10 @@ with tabs[0]:
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            st.text_input("ME No.", value=final_me_no, disabled=True)
+            st.text_input("管理番号", value=final_me_no, disabled=True)
             st.text_input("機器の種類", value=def_category, disabled=True)
         with col_m2:
-            st.text_input("製造番号 (S/N)", value=final_sn, disabled=True)
+            st.text_input("シリアルNo", value=final_sn, disabled=True)
             st.text_input("型式", value=def_model, disabled=True)
 
         device_category = def_category
@@ -355,7 +355,7 @@ with tabs[0]:
             with col_form1: 
                 check_date = st.date_input("作業日", value=st.session_state["last_check_date"], min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             with col_form2: 
-                st.text_input("対象機器 (確認用)", value=f"ME No: {final_me_no} / SN: {final_sn}" if is_registered or input_keyword else "", disabled=True)
+                st.text_input("対象機器 (確認用)", value=f"管理番号: {final_me_no} / シリアルNo: {final_sn}" if is_registered or input_keyword else "", disabled=True)
             
             chk_e1=chk_e2=chk_e3=chk_e4=chk_e5=chk_e6=chk_e7 = False
             chk_a1=chk_a2=chk_a3=chk_a4 = False
@@ -534,7 +534,7 @@ with tabs[0]:
 
         if submitted:
             if not final_me_no:
-                st.warning("ME No. が入力されていません。")
+                st.warning("管理番号が入力されていません。")
             else:
                 try:
                     existing_data = safe_read_worksheet(conn, "点検履歴")
@@ -611,7 +611,7 @@ with tabs[0]:
                         "最終実施者": inspector
                     }])
 
-                    if not master_df.empty and "ME No." in master_df.columns:
+                    if not master_df.empty and "管理番号" in master_df.columns:
                         clean_master_df_me = clean_series(master_df["ME No."])
                         master_df = master_df[clean_master_df_me != clean_data_str(final_me_no)]
                     
@@ -620,7 +620,8 @@ with tabs[0]:
                     
                     st.session_state["last_check_date"] = check_date
                     
-                    write_log(inspector, f"{final_me_no} の点検データを保存({check_type})")
+                    current_user = st.session_state.get("current_user_name", "不明")
+                    write_log(current_user, f"{final_me_no} の点検データを保存({check_type} / 実施者: {inspector})")
                     
                     st.success(f"{final_me_no} の点検記録と、機器マスター台帳の更新が完了しました！")
 
