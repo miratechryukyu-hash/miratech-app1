@@ -22,7 +22,8 @@ st.set_page_config(page_title="miratech 医療機器管理システム", layout=
 def safe_read_worksheet(conn, worksheet_name, default_columns=None):
     for i in range(3):
         try:
-            df = conn.read(worksheet=worksheet_name, ttl=0)
+            # 💡 【修正】ttl=15 にして、Googleのアクセス制限(429エラー)を回避します
+            df = conn.read(worksheet=worksheet_name, ttl=15)
             if df is not None:
                 return df.dropna(how="all").fillna("")
         except Exception:
@@ -327,6 +328,7 @@ with tabs[0]:
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
+            # 💡 【修正】ラベルを "ME No." から "管理番号" に統一
             st.text_input("管理番号", value=final_me_no, disabled=True)
             st.text_input("機器の種類", value=def_category, disabled=True)
         with col_m2:
@@ -344,8 +346,6 @@ with tabs[0]:
         if input_keyword:
             st.info("該当する機器が見つかりません。新規登録が必要な場合は「新規機器登録」タブから登録してください。")
             st.stop() 
-
-# --- （この下にある check_type = st.radio("点検区分"... 以降のコードはそのまま残してください） ---
 
     if master_row is not None:
         st.markdown("---")
@@ -521,11 +521,9 @@ with tabs[0]:
                                 inc_o_checks["外装・キャノピ・ネジ類"] = st.checkbox("支柱・キャノピ・反射板・ネジ等", value=True)
                                 inc_o_checks["電源・ジャック・ガード"] = st.checkbox("電源コード・各種ジャック・ガード", value=True)
 
-                else:
-                    exterior_result = st.radio("外装点検", ["異常なし", "異常あり"], horizontal=True)
-                    detail_result = st.text_input("精度チェック（測定値など）", placeholder="例: 換気量 500ml")
             else:
-                st.info("メーカーや外部業者の対応です。細かいチェック入力は省略されます。一番下の「備考・報告欄」に対応内容や報告書No.を記載してください。")
+                exterior_result = st.radio("外装点検", ["異常なし", "異常あり"], horizontal=True)
+                detail_result = st.text_input("精度チェック（測定値など）", placeholder="例: 換気量 500ml")
 
             st.markdown("---")
             
@@ -615,8 +613,9 @@ with tabs[0]:
                         "最終実施者": inspector
                     }])
 
+                    # 💡 【修正】"ME No." ではなく "管理番号" を探すように変更
                     if not master_df.empty and "管理番号" in master_df.columns:
-                        clean_master_df_me = clean_series(master_df["ME No."])
+                        clean_master_df_me = clean_series(master_df["管理番号"])
                         master_df = master_df[clean_master_df_me != clean_data_str(final_me_no)]
                     
                     updated_master_df = pd.concat([master_df, new_master_entry], ignore_index=True)
@@ -704,7 +703,7 @@ with tabs[1]:
         st.markdown("#### 機器データの修正")
         st.write("管理番号を入力すると現在のデータが呼び出され、内容を上書き修正できます。")
 
-        edit_me_no = st.text_input("修正したい機器の「管理番号」を入力", placeholder="例: Y0001", key="edit_me_input").strip()
+        edit_me_no = st.text_input("修正したい機器の「管理番号」を入力", placeholder="例: INP0001", key="edit_me_input").strip()
 
         if edit_me_no:
             try:
@@ -887,7 +886,7 @@ with tabs[1]:
                             </div>
                             <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
                                 <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>管理番号 (ME No.)</b></td>
+                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>管理番号</b></td>
                                     <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{target_me}</td>
                                     <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>対象機種</b></td>
                                     <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{job_data['機種']}</td>
@@ -979,22 +978,17 @@ with tabs[2]:
                 
                 if len(selection_event.selection.rows) > 0:
                     idx = selection_event.selection.rows[0]
-                    # 列名が「管理番号」か「ME No.」どちらでも対応できるように取得
-                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", df_master.iloc[idx].get("管理番号", "")))
+                    # 💡 【修正】"ME No." ではなく "管理番号" を取得
+                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", "不明"))
                     model_name = clean_data_str(df_master.iloc[idx].get("機種", "不明な機器"))
                     
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
                     
-                    # 履歴の検索（列名の揺れに対応）
                     hist_df = pd.DataFrame()
-                    if not df_history.empty:
-                        if "管理番号" in df_history.columns:
-                            clean_hist_search_me = clean_series(df_history["管理番号"])
-                            hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
-                        elif "管理番号" in df_history.columns:
-                            clean_hist_search_me = clean_series(df_history["管理番号"])
-                            hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
+                    if not df_history.empty and "管理番号" in df_history.columns:
+                        clean_hist_search_me = clean_series(df_history["管理番号"])
+                        hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
                         
                     if not hist_df.empty:
                         st.write("#### 過去の点検・修理履歴")
@@ -1048,8 +1042,6 @@ with tabs[2]:
                             st.info("💡 上記の報告書をPDF化・紙に印刷するには、ブラウザの印刷機能（キーボードの `Ctrl + P` または `Cmd + P`）を使用してください。")
                     else:
                         st.info("この機器の点検・修理履歴はありません。")
-                else:
-                    st.info("点検履歴データがありません。")
             else:
                 st.info("機器マスターにまだデータがありません。")
 
@@ -1176,8 +1168,8 @@ with tabs[4]:
             
             if st.session_state.get("scan_model") is not None:
                 st.success("AIの読み取りが完了しました！以下の内容を確認し、追加情報を入れて登録してください。")
- # ====== タブ4：新規機器の登録 ======
-   # 共通の登録フォーム
+
+    # 共通の登録フォーム
     show_form = True
     if reg_mode == "AI銘板スキャナー" and st.session_state.get("scan_model") is None:
         show_form = False 
@@ -1195,7 +1187,6 @@ with tabs[4]:
             txt_vendor = st.text_input("リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
             
             st.markdown("---")
-            # 【追加】メーカーと耐用年数
             man_maker = st.text_input("④メーカー", placeholder="例: テルモ")
             man_model = st.text_input("⑤型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
             man_sn = st.text_input("⑥シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
@@ -1208,7 +1199,6 @@ with tabs[4]:
             man_delivery = st.date_input("⑫納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
-                # 直接入力があればそれを優先し、なければプルダウンの値を使う賢い処理
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
                 final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
 
@@ -1218,19 +1208,21 @@ with tabs[4]:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
                     try:
-                        clean_db_me_reg = clean_series(df_m_reg["ME No."])
+                        # 💡 【修正】"ME No." ではなく "管理番号" を探すように変更
+                        clean_db_me_reg = clean_series(df_m_reg["管理番号"])
                         
                         if clean_data_str(man_me_no) in clean_db_me_reg.values:
-                            st.error(f"{man_me_no} は既に登録されています。別のME No.を指定してください。")
+                            # 💡 【修正】エラーメッセージの "ME No." も "管理番号" に変更
+                            st.error(f"{man_me_no} は既に登録されています。別の管理番号を指定してください。")
                         else:
                             new_master_row = pd.DataFrame([{
                                 "管理番号": protect_zeros(man_me_no),
                                 "カテゴリ": final_cat,
-                                "メーカー": man_maker, # 【追加】
+                                "メーカー": man_maker,
                                 "機種": f"{final_cat}({man_model})",
                                 "シリアルNo": protect_zeros(man_sn),
-                                "製造年月日": man_year,
-                                "耐用年数": man_life, # 【追加】
+                                "製造年": man_year,
+                                "耐用年数": man_life,
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
                                 "導入形態": man_acq_type,
