@@ -237,7 +237,7 @@ if url_me_no:
                 symptom_str = "記載なし"
 
             try:
-                existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "ME No.", "機種", "報告者", "部署", "症状", "対応状況"])
+                existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況"])
                 
                 new_report = pd.DataFrame([{
                     "報告日": str(date.today()),
