@@ -286,7 +286,7 @@ tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
 with tabs[0]:
-    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: INP0001 または 12345678").strip()
+    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: INP0001").strip()
 
     master_row = None
     if input_keyword and not df_master_global.empty:
@@ -350,7 +350,7 @@ with tabs[0]:
 
     if master_row is not None:
         st.markdown("---")
-        check_type = st.radio("点検区分", ["院内・ME点検", "メーカー点検", "メーカー修理・校正", "その他外部委託"], horizontal=True)
+        check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
         
         if "last_check_date" not in st.session_state:
             st.session_state["last_check_date"] = date.today()
@@ -376,7 +376,7 @@ with tabs[0]:
             exterior_result = "異常なし"
             detail_result = ""
 
-            if check_type == "院内・ME点検":
+            if check_type == "院内点検(miratech)":
                 st.write(f"### 【{device_category} : {device_model}】専用チェック")
                 
                 if device_category == "輸液ポンプ":
