@@ -981,7 +981,7 @@ with tabs[2]:
                 if len(selection_event.selection.rows) > 0:
                     idx = selection_event.selection.rows[0]
                     # 列名が「管理番号」か「ME No.」どちらでも対応できるように取得
-                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", df_master.iloc[idx].get("ME No.", "")))
+                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", df_master.iloc[idx].get("管理番号", "")))
                     model_name = clean_data_str(df_master.iloc[idx].get("機種", "不明な機器"))
                     
                     st.markdown("---")
@@ -993,8 +993,8 @@ with tabs[2]:
                         if "管理番号" in df_history.columns:
                             clean_hist_search_me = clean_series(df_history["管理番号"])
                             hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
-                        elif "ME No." in df_history.columns:
-                            clean_hist_search_me = clean_series(df_history["ME No."])
+                        elif "管理番号" in df_history.columns:
+                            clean_hist_search_me = clean_series(df_history["管理番号"])
                             hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
                         
                     if not hist_df.empty:
@@ -1158,7 +1158,7 @@ with tabs[4]:
                             キーは以下のようにしてください:
                             - model (型式)
                             - serial_number (製造番号/SN)
-                            - manufacture_year (製造年。例: 2018)
+                            - manufacture_year (製造年月日。例: 2018.10.10)
                             """
                             response = ai_model.generate_content([prompt, img])
                             json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
@@ -1230,7 +1230,7 @@ with tabs[4]:
                                 "メーカー": man_maker, # 【追加】
                                 "機種": f"{final_cat}({man_model})",
                                 "シリアルNo": protect_zeros(man_sn),
-                                "製造年": man_year,
+                                "製造年月日": man_year,
                                 "耐用年数": man_life, # 【追加】
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
