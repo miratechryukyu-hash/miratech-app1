@@ -121,7 +121,7 @@ def check_auth():
                 except Exception as e:
                     st.error(f"データベース接続エラー: {e}")
 
-with tab2:
+    with tab2:
         st.write("初めて利用される方は、こちらから利用申請を行ってください。")
         with st.form("register_form"):
             st.caption("⚠️ **注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
