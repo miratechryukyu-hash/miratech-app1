@@ -161,8 +161,8 @@ with tab2:
                             st.error(f"登録エラー: {e}")
                 else:
                     st.error("すべての項目を入力してください。")
-
-    return False
+                    
+                    return False
 
 if not check_auth():
     st.stop()
