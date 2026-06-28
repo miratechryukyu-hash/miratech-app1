@@ -162,7 +162,7 @@ with tab2:
                 else:
                     st.error("すべての項目を入力してください。")
                     
-                    return False
+    return False
 
 if not check_auth():
     st.stop()
