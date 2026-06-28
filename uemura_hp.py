@@ -124,18 +124,14 @@ def check_auth():
 with tab2:
         st.write("初めて利用される方は、こちらから利用申請を行ってください。")
         with st.form("register_form"):
-            # 【追加】忠告メッセージ
             st.caption("⚠️ **注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
             
-            # 【追加】placeholderで入力例を表示
             new_id = st.text_input("希望するユーザーID", placeholder="例: user123")
             new_name = st.text_input("お名前（フルネーム）", placeholder="例: 安富 翔")
             new_pass = st.text_input("設定するパスワード", type="password", placeholder="例: pass456")
             
             if st.form_submit_button("利用申請を送信", use_container_width=True):
                 if new_id and new_name and new_pass:
-                    
-                    # 【追加】半角英数字のみかどうかの厳密チェック
                     if not re.match(r'^[a-zA-Z0-9]+$', new_id) or not re.match(r'^[a-zA-Z0-9]+$', new_pass):
                         st.error("⚠️ エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
                     else:
@@ -157,12 +153,11 @@ with tab2:
                                 conn.update(worksheet="ユーザー", data=updated_users)
                                 write_log(new_name, f"新規利用申請を行いました (ID: {new_id})")
                                 st.success(f"{new_name} さんの申請を受け付けました。管理者の承認をお待ちください。")
-                       except Exception as e:
+                        except Exception as e:
                             st.error(f"登録エラー: {e}")
                 else:
                     st.error("すべての項目を入力してください。")
 
-    # ↓↓↓ ここの空白の数を合わせます（先頭からスペース4つ分です） ↓↓↓
     return False
 
 if not check_auth():
