@@ -157,11 +157,12 @@ with tab2:
                                 conn.update(worksheet="ユーザー", data=updated_users)
                                 write_log(new_name, f"新規利用申請を行いました (ID: {new_id})")
                                 st.success(f"{new_name} さんの申請を受け付けました。管理者の承認をお待ちください。")
-                        except Exception as e:
+                       except Exception as e:
                             st.error(f"登録エラー: {e}")
                 else:
                     st.error("すべての項目を入力してください。")
-                    
+
+    # ↓↓↓ ここの空白の数を合わせます（先頭からスペース4つ分です） ↓↓↓
     return False
 
 if not check_auth():
