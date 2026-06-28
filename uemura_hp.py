@@ -301,8 +301,7 @@ with tabs[0]:
             matched_sn = df_master_global[clean_db_sn == clean_keyword]
             if not matched_sn.empty:
                 master_row = matched_sn.iloc[0]
-
-    incubator_type = "閉鎖式" 
+ 
 
     if master_row is not None:
         st.success("登録済みの機器が見つかりました。情報を自動出現させます。")
