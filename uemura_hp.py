@@ -403,9 +403,9 @@ with tabs[0]:
             memo = st.text_area("備考・報告欄（交換部品や報告書Noなど）", placeholder="特記事項があれば記入してください")
             
             submitted = st.form_submit_button("スプレッドシートに保存")
-
-       if submitted:
-            if not final_me_no:
+            
+            if submitted:
+                if not final_me_no:
                 st.warning("管理番号が入力されていません。")
             else:
                 # ==========================================
