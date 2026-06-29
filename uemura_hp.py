@@ -287,6 +287,23 @@ tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
 with tabs[0]:
+    # 💡 エラー防止：画面が立ち上がった瞬間に、すべての変数を安全にゼロ初期化しておく
+    final_me_no = ""
+    final_sn = ""
+    device_category = "その他"
+    device_model = ""
+    scan_year_val = ""
+    status_exterior = "該当なし"
+    status_alarm = "該当なし"
+    status_operation = "該当なし"
+    flow_acc = 0.0
+    occ_press = 0.0
+    min_flow, max_flow = 18.0, 22.0
+    min_press, max_press = 30.0, 90.0
+    flow_unit, press_unit = "ml", "kPa"
+    test_condition_flow = "120ml/hr 10min (予定20ml)"
+    test_condition_press = "120ml/hr M設定"
+
     input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: INP0001").strip()
 
     master_row = None
@@ -307,9 +324,9 @@ with tabs[0]:
         st.success("登録済みの機器が見つかりました。情報を自動出現させます。")
         final_me_no = clean_data_str(master_row.get("管理番号", ""))
         final_sn = clean_data_str(master_row.get("シリアルNo", ""))
-        def_category = clean_data_str(master_row.get("カテゴリ", "その他"))
+        device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
         full_meshun = clean_data_str(master_row.get("機種", ""))
-        def_model = full_meshun.replace(f"{def_category}(", "").replace(")", "")
+        device_model = full_meshun.replace(f"{device_category}(", "").replace(")", "")
         scan_year_val = clean_data_str(master_row.get("製造年月日", ""))
         
         # 1年経過アラート
@@ -319,49 +336,54 @@ with tabs[0]:
                 last_check_date = datetime.strptime(last_check_str, "%Y-%m-%d").date()
                 days_passed = (date.today() - last_check_date).days
                 if days_passed >= 365:
-                    st.error(f" 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
+                    st.error(f"⚠️ 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
                 else:
-                    st.info(f" 前回点検日: {last_check_str} (経過: {days_passed}日)")
+                    st.info(f"💡 前回点検日: {last_check_str} (経過: {days_passed}日)")
             except:
                 pass
         
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             st.text_input("管理番号", value=final_me_no, disabled=True)
-            st.text_input("機器の種類", value=def_category, disabled=True)
+            st.text_input("機器の種類", value=device_category, disabled=True)
         with col_m2:
             st.text_input("シリアルNo", value=final_sn, disabled=True)
-            st.text_input("型式", value=def_model, disabled=True)
-
-        device_category = def_category
-        device_model = def_model
-        is_registered = True
+            st.text_input("型式", value=device_model, disabled=True)
         
         # ==========================================
-        # 【新機能】お預かりした点検表データに基づく基準値自動セット
+        # 【判定機能】お預かりしたエクセルデータに基づく型式別基準値のセット
         # ==========================================
-        # デフォルト基準値
-        min_flow, max_flow = 18.0, 22.0
-        min_press, max_press = 30.0, 90.0
-        flow_unit, press_unit = "ml", "kPa"
-        test_condition_flow = "流量120ml/hr 10min (予定量20ml)"
-        test_condition_press = "流量120ml/hr"
-
-        # 型式ごとの個別判定（エクセルデータ準拠）
+        # テルモ シリンジポンプシリーズ（TE-331, 351, 371, 381）
         if "TE-331" in device_model or "TE-351" in device_model or "TE-371" in device_model or "TE-381" in device_model:
             min_flow, max_flow = 19.4, 20.6
             min_press, max_press = 53.4, 80.0
-        elif "AS-800" in device_model:
-            min_flow, max_flow = 9.0, 11.0
-            min_press, max_press = 0.0, 120.0  # 秒判定、または一般的なkpa範囲
-            test_condition_flow = "流量60mL/h 10min (予定量10ml)"
-        elif "OT-707" in device_model or "OT-818G" in device_model:
+            test_condition_press = "120ml/hr M設定(過負荷)"
+        # テルモ 輸液ポンプ（TE-171）
+        elif "TE-171" in device_model:
+            min_flow, max_flow = 19.0, 21.0
+            min_press, max_press = 6.0, 60.0
+            press_unit = "秒"
+            test_condition_press = "100ml/hr M(1.4m) 閉塞時間"
+        # テルモ 輸液ポンプ（TE-161, 261, 281）
+        elif "TE-161" in device_model or "TE-261" in device_model or "TE-281" in device_model:
             min_flow, max_flow = 18.0, 22.0
-            min_press, max_press = 30.0, 140.0
-            test_condition_press = "流量25ml/h"
+            min_press, max_press = 30.0, 90.0
+        # テルモ 輸液ポンプ（TE-LM830）
         elif "TE-LM830" in device_model:
             min_flow, max_flow = 18.0, 22.0
             min_press, max_press = 30.0, 120.0
+        # JMS 輸液ポンプシリーズ（OT-707, 818G）
+        elif "OT-707" in device_model or "OT-818G" in device_model:
+            min_flow, max_flow = 18.0, 22.0
+            min_press, max_press = 30.0, 140.0
+            test_condition_press = "25ml/hr 圧力計間1m"
+        # アトム 輸液ポンプ（AS-800）
+        elif "AS-800" in device_model:
+            min_flow, max_flow = 9.0, 11.0
+            min_press, max_press = 0.0, 2.0
+            press_unit = "分"
+            test_condition_flow = "60mL/h 10min (予定10ml)"
+            test_condition_press = "60mL/h 予定60mL(レベル5) 警報時間"
 
         st.markdown("---")
         check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
@@ -373,10 +395,8 @@ with tabs[0]:
             check_date = st.date_input("作業日", value=st.session_state["last_check_date"])
             inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
             
-            # --- 簡易版：一括チェックフォーム ---
             if check_type == "院内点検(miratech)":
                 st.write(f"### 📋 【{device_category}】 点検項目判定")
-                
                 c_chk1, c_chk2, c_chk3 = st.columns(3)
                 with c_chk1:
                     status_exterior = st.radio("1. 外観点検（汚れ・破損・クランプ等）", ["OK", "NG", "該当なし"])
@@ -388,13 +408,13 @@ with tabs[0]:
                 st.write("### 🔢 数値・精度測定（実測値）")
                 col_num1, col_num2 = st.columns(2)
                 with col_num1:
-                    st.info(f"💡 基準値：{min_flow} 〜 {max_flow} {flow_unit} ({test_condition_flow})")
+                    st.info(f"💡 基準値：{min_flow} 〜 {max_flow} {flow_unit}\n({test_condition_flow})")
                     flow_acc = st.number_input(f"流量精度実測値 ({flow_unit})", value=float(max_flow+min_flow)/2, step=0.1)
                 with col_num2:
-                    st.info(f"💡 基準値：{min_press} 〜 {max_press} {press_unit} ({test_condition_press})")
+                    st.info(f"💡 基準値：{min_press} 〜 {max_press} {press_unit}\n({test_condition_press})")
                     occ_press = st.number_input(f"閉塞検出圧実測値 ({press_unit})", value=float(max_press+min_press)/2, step=1.0)
             else:
-                st.info("外部対応（メーカー等）のため、数値測定はスキップされます。対応内容は備考欄に記入してください。")
+                st.info("外部対応のため数値測定はスキップされます。対応内容は備考欄に記入してください。")
                 status_exterior = status_alarm = status_operation = "該当なし"
                 flow_acc = occ_press = 0.0
 
@@ -403,80 +423,33 @@ with tabs[0]:
             memo = st.text_area("備考・報告欄（交換部品や報告書Noなど）", placeholder="特記事項があれば記入してください")
             
             submitted = st.form_submit_button("スプレッドシートに保存")
-            
-            if submitted:
-                if not final_me_no:
-                    st.warning("管理番号が入力されていません。")
+
+        if submitted:
+            # --- 安全装置：異常値なのに「使用可」で保存しようとしたら強制ブロック ---
+            has_error = False
+            if check_type == "院内点検(miratech)" and result == "使用可":
+                if not (min_flow <= flow_acc <= max_flow):
+                    st.error(f"🚨 アラーム：流量精度（{flow_acc} {flow_unit}）が基準値外です！【使用可】での保存はできません。")
+                    has_error = True
+                if not (min_press <= occ_press <= max_press):
+                    st.error(f"🚨 アラーム：閉塞圧/時間（{occ_press} {press_unit}）が基準値外です！【使用可】での保存はできません。")
+                    has_error = True
+                if status_exterior == "NG" or status_alarm == "NG" or status_operation == "NG":
+                    st.error("🚨 アラーム：一括判定に「NG」の項目があります！【使用可】での保存はできません。")
+                    has_error = True
+
+            if has_error:
+                st.error("⚠️ 基準値外の異常が検知されたため、保存を中断しました。数値を再確認するか、評価を「メーカー修理」等に切り替えてください。")
             else:
-                # ==========================================
-                # 【完全版】お預かりデータに基づく型式別基準値の自動セット
-                # ==========================================
-                min_flow, max_flow = 18.0, 22.0
-                min_press, max_press = 30.0, 90.0
-                flow_unit, press_unit = "ml", "kPa"
-                test_condition_flow = "120ml/hr 10min (予定20ml)"
-                test_condition_press = "120ml/hr M設定"
+                try:
+                    flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
+                    press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+                    detail_text = f"【{check_type}】 外観:{status_exterior} / 警報:{status_alarm} / 作動:{status_operation} / 流量:{flow_acc}{flow_unit}({flow_judge}) / 閉塞:{occ_press}{press_unit}({press_judge})"
 
-                # テルモ 輸液ポンプシリーズ
-                if "TE-171" in device_model:
-                    min_flow, max_flow = 19.0, 21.0
-                    min_press, max_press = 6.0, 60.0
-                    press_unit = "秒"
-                    test_condition_press = "100ml/hr M(1.4m) 閉塞時間"
-                elif "TE-161" in device_model or "TE-261" in device_model or "TE-281" in device_model:
-                    min_flow, max_flow = 18.0, 22.0
-                    min_press, max_press = 30.0, 90.0
-                elif "TE-LM830" in device_model:
-                    min_flow, max_flow = 18.0, 22.0
-                    min_press, max_press = 30.0, 120.0
-
-                # テルモ シリンジポンプシリーズ（TE-331, 351, 371, 381）
-                elif "TE-331" in device_model or "TE-351" in device_model or "TE-371" in device_model or "TE-381" in device_model:
-                    min_flow, max_flow = 19.4, 20.6
-                    min_press, max_press = 53.4, 80.0
-                    test_condition_press = "120ml/hr M設定(過負荷)"
-
-                # JMS 輸液ポンプシリーズ（OT-707, 818G）
-                elif "OT-707" in device_model or "OT-818G" in device_model:
-                    min_flow, max_flow = 18.0, 22.0
-                    min_press, max_press = 30.0, 140.0
-                    test_condition_press = "25ml/hr 圧力計間1m"
-
-                # アトム 輸液ポンプ（AS-800）
-                elif "AS-800" in device_model:
-                    min_flow, max_flow = 9.0, 11.0
-                    min_press, max_press = 0.0, 2.0
-                    press_unit = "分"
-                    test_condition_flow = "60mL/h 10min (予定10ml)"
-                    test_condition_press = "60mL/h 予定60mL(レベル5) 警報時間"
-
-                # --- 安全装置：数値が基準値外なのに「使用可」で保存しようとしたらブロック ---
-                has_error = False
-                if check_type == "院内点検(miratech)" and result == "使用可":
-                    if not (min_flow <= flow_acc <= max_flow):
-                        st.error(f"アラーム：流量精度（{flow_acc} {flow_unit}）が基準値（{min_flow}〜{max_flow}）を外れています！【使用可】での保存はできません。")
-                        has_error = True
-                    if not (min_press <= occ_press <= max_press):
-                        st.error(f"アラーム：閉塞圧/時間（{occ_press} {press_unit}）が基準値（{min_press}〜{max_press}）を外れています！【使用可】での保存はできません。")
-                        has_error = True
-                    if status_exterior == "NG" or status_alarm == "NG" or status_operation == "NG":
-                        st.error("アラーム：一括判定に「NG」の項目があります！【使用可】での保存はできません。")
-                        has_error = True
-
-                if has_error:
-                    st.error(" 基準値外の異常が検知されたため、データベースへの保存を強制中断しました。数値を再確認するか、評価を「メーカー修理」等に切り替えてください。")
-                else:
-                    try:
-                        # 判定テキストの組み立て
-                        flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-                        press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
-                        
-                        detail_text = f"【{check_type}】 外観:{status_exterior} / 警報:{status_alarm} / 作動:{status_operation} / 流量:{flow_acc}{flow_unit}({flow_judge}) / 閉塞:{occ_press}{press_unit}({press_judge})"
-
-                        # ==========================================
-                        # 印刷・履歴で完全共通化する本格HTML報告書レイアウト
-                        # ==========================================
-                        generated_html_report = f"""
+                    # ==========================================
+                    # 印刷・履歴で完全共通化する本格HTML報告書レイアウト
+                    # ==========================================
+                    generated_html_report = f"""
 <div style="font-family: sans-serif; font-size: 13px; color: black; background: white; padding: 25px; border: 2px solid #333; max-width: 750px; margin: 0 auto;">
 <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 8px; margin-top:0;">医療機器 定期点検報告書</h2>
 <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
@@ -547,66 +520,66 @@ with tabs[0]:
 </div>
 """
 
-                        # --- データベースへの保存処理 ---
-                        df_master = safe_read_worksheet(conn, "機器マスター")
-                        mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
+                    # --- データベース保存 ---
+                    df_master = safe_read_worksheet(conn, "機器マスター")
+                    mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
+                    
+                    if mask.any():
+                        df_master.loc[mask, "最終点検日"] = str(check_date)
+                        df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
+                        df_master.loc[mask, "最終実施者"] = inspector
+                        conn.update(worksheet="機器マスター", data=df_master)
                         
-                        if mask.any():
-                            df_master.loc[mask, "最終点検日"] = str(check_date)
-                            df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
-                            df_master.loc[mask, "最終実施者"] = inspector
-                            conn.update(worksheet="機器マスター", data=df_master)
-                            
-                            existing_history = safe_read_worksheet(conn, "点検履歴")
-                            new_hist_row = pd.DataFrame([{
-                                "点検日": str(check_date),
-                                "管理番号": safe_final_me_no,
-                                "カテゴリ": device_category,
-                                "シリアルNo": safe_final_sn,
-                                "製造年月日": scan_year_val,
-                                "機種": f"{device_category}({device_model})",
-                                "実施者": inspector,
-                                "判定": result,
-                                "詳細データ": detail_text,
-                                "備考": memo,
-                                "報告書HTML": generated_html_report
-                            }])
-                            updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
-                            conn.update(worksheet="点検履歴", data=updated_history)
-                            
-                            st.session_state["last_check_date"] = check_date
-                            current_user = st.session_state.get("current_user_name", "不明")
-                            write_log(current_user, f"{final_me_no} の点検データを保存({check_type} / 実施者: {inspector})")
-                            
-                            st.success(f" {final_me_no} の点検記録の保存、および台帳の更新が完了しました！")
+                        existing_history = safe_read_worksheet(conn, "点検履歴")
+                        new_hist_row = pd.DataFrame([{
+                            "点検日": str(check_date),
+                            "管理番号": safe_final_me_no,
+                            "カテゴリ": device_category,
+                            "シリアルNo": safe_final_sn,
+                            "製造年月日": scan_year_val,
+                            "機種": f"{device_category}({device_model})",
+                            "実施者": inspector,
+                            "判定": result,
+                            "詳細データ": detail_text,
+                            "備考": memo,
+                            "報告書HTML": generated_html_report
+                        }])
+                        updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
+                        conn.update(worksheet="点検履歴", data=updated_history)
+                        
+                        st.session_state["last_check_date"] = check_date
+                        current_user = st.session_state.get("current_user_name", "不明")
+                        write_log(current_user, f"{final_me_no} の点検データを保存({check_type} / 実施者: {inspector})")
+                        
+                        st.success(f"🎉 {final_me_no} の点検記録の保存、および台帳の更新が完了しました！")
 
-                            # 画面に印刷用点検表とQRコードを表示
-                            st.markdown("---")
-                            st.subheader("🖨️ 提出用 点検報告書（印刷・PDF保存用）")
-                            st.markdown(generated_html_report, unsafe_allow_html=True)
-                            st.info("💡 このまま印刷・PDF化する場合はブラウザの印刷機能（Ctrl + P または Cmd + P）を実行してください。")
-                            
-                            st.markdown("---")
-                            st.subheader(f"{final_me_no} 専用QRコード")
-                            final_url = f"{APP_URL}/?me_no={final_me_no}"
-                            qr = qrcode.QRCode(version=1, box_size=10, border=4)
-                            qr.add_data(final_url)
-                            qr.make(fit=True)
-                            img = qr.make_image(fill_color="black", back_color="white")
-                            buf = BytesIO()
-                            img.save(buf, format="PNG")
-                            byte_im = buf.getvalue()
-                            b64 = base64.b64encode(byte_im).decode()
-                            html_img = f'''
-                            <a href="data:image/png;base64,{b64}" download="QR_{final_me_no}.png">
-                                <img src="data:image/png;base64,{b64}" width="150" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
-                            </a>
-                            '''
-                            st.markdown(html_img, unsafe_allow_html=True)
-                        else:
-                            st.error("マスターにこの管理番号が存在しません。新規機器登録タブから登録してください。")
-                    except Exception as e:
-                        st.error(f"エラー: {e}")
+                        # 画面に印刷用点検表とQRコードを表示
+                        st.markdown("---")
+                        st.subheader("🖨️ 提出用 点検報告書（印刷・PDF保存用）")
+                        st.markdown(generated_html_report, unsafe_allow_html=True)
+                        st.info("💡 このまま印刷・PDF化する場合はブラウザの印刷機能（Ctrl + P または Cmd + P）を実行してください。")
+                        
+                        st.markdown("---")
+                        st.subheader(f"{final_me_no} 専用QRコード")
+                        final_url = f"{APP_URL}/?me_no={final_me_no}"
+                        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+                        qr.add_data(final_url)
+                        qr.make(fit=True)
+                        img = qr.make_image(fill_color="black", back_color="white")
+                        buf = BytesIO()
+                        img.save(buf, format="PNG")
+                        byte_im = buf.getvalue()
+                        b64 = base64.b64encode(byte_im).decode()
+                        html_img = f'''
+                        <a href="data:image/png;base64,{b64}" download="QR_{final_me_no}.png">
+                            <img src="data:image/png;base64,{b64}" width="150" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
+                        </a>
+                        '''
+                        st.markdown(html_img, unsafe_allow_html=True)
+                    else:
+                        st.error("マスターにこの管理番号が存在しません。新規機器登録タブから登録してください。")
+                except Exception as e:
+                    st.error(f"エラー: {e}")
 
 # ====== タブ2：マスター ======
 with tabs[1]:
