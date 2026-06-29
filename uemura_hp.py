@@ -538,10 +538,9 @@ with tabs[0]:
                 if not final_me_no:
                     st.warning("管理番号が入力されていません。")
                 else:
-                # --- 1. 型式別の基準値を自動セット ---
-                min_flow, max_flow = 18.0, 22.0
-                min_press, max_press = 30.0, 90.0
-                flow_unit, press_unit = "ml", "kPa"
+                    min_flow, max_flow = 18.0, 22.0
+                    min_press, max_press = 30.0, 90.0
+                    flow_unit, press_unit = "ml", "kPa"
                 
                 if "TE-331" in device_model or "TE-351" in device_model or "TE-371" in device_model or "TE-381" in device_model:
                     min_flow, max_flow = 19.4, 20.6
