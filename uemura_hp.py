@@ -535,8 +535,7 @@ with tabs[0]:
             submitted = st.form_submit_button("スプレッドシートに保存")
             
             if submitted:
-                
-            if not final_me_no:
+                if not final_me_no:
                 st.warning("管理番号が入力されていません。")
             else:
                 try:
