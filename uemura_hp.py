@@ -539,11 +539,10 @@ with tabs[0]:
                 st.warning("管理番号が入力されていません。")
             else:
                 try:
-                    existing_data = safe_read_worksheet(conn, "点検履歴")
-                    
+                    # --- 1. 詳細データの文字化（これがないとエラーになります） ---
                     details_list = [f"【{check_type}】"]
                     
-                    if check_type == "院内・ME点検":
+                    if check_type == "院内点検(miratech)":
                         if device_category == "輸液ポンプ":
                             details_list.append(f"汚れ破損:{'〇' if chk_e1 else '×'}, クランプ動作:{'〇' if chk_e3 else '×'}, 流量精度:{flow_acc}ml, 閉塞圧:{occ_press}kpa")
                         elif device_category == "シリンジポンプ":
@@ -565,92 +564,66 @@ with tabs[0]:
                     safe_final_me_no = protect_zeros(final_me_no)
                     safe_final_sn = protect_zeros(final_sn)
 
-                    data_dict = {
-                        "点検日": str(check_date), 
-                        "管理番号": safe_final_me_no, 
-                        "カテゴリ": device_category,
-                        "シリアルNo": safe_final_sn, 
-                        "製造年月日": scan_year_val, 
-                        "機種": f"{device_category}({device_model})", 
-                        "実施者": inspector, 
-                        "判定": result, 
-                        "詳細データ": detail_text,
-                        "備考": memo
-                    }
+                    # --- 2. 機器マスターの安全な更新（他の機器データが消えない方式） ---
+                    df_master = safe_read_worksheet(conn, "機器マスター")
+                    mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
+                    
+                    if mask.any():
+                        df_master.loc[mask, "最終点検日"] = str(check_date)
+                        df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
+                        df_master.loc[mask, "最終実施者"] = inspector
+                        conn.update(worksheet="機器マスター", data=df_master)
+                        
+                        # --- 3. 点検履歴への追加 ---
+                        existing_history = safe_read_worksheet(conn, "点検履歴")
+                        new_hist_row = pd.DataFrame([{
+                            "点検日": str(check_date),
+                            "管理番号": safe_final_me_no,
+                            "カテゴリ": device_category,
+                            "シリアルNo": safe_final_sn,
+                            "製造年月日": scan_year_val,
+                            "機種": f"{device_category}({device_model})",
+                            "実施者": inspector,
+                            "判定": result,
+                            "詳細データ": detail_text,
+                            "備考": memo
+                        }])
+                        updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
+                        conn.update(worksheet="点検履歴", data=updated_history)
+                        
+                        st.session_state["last_check_date"] = check_date
+                        current_user = st.session_state.get("current_user_name", "不明")
+                        write_log(current_user, f"{final_me_no} の点検データを保存({check_type} / 実施者: {inspector})")
+                        
+                        st.success(f"🎉 {final_me_no} の点検データを記録し、台帳を安全に更新しました！")
 
-                    new_data = pd.DataFrame([data_dict])
-                    updated_df = pd.concat([existing_data, new_data], ignore_index=True)
-                    conn.update(worksheet="点検履歴", data=updated_df)
-                    
-                    master_df = safe_read_worksheet(conn, "機器マスター")
-
-                    existing_location = ""
-                    existing_vendor = ""
-                    existing_delivery = ""
-                    existing_acq_type = ""
-                    existing_price = ""
-
-                    if master_row is not None:
-                        existing_location = clean_data_str(master_row.get("設置場所", ""))
-                        existing_vendor = clean_data_str(master_row.get("購入業者", ""))
-                        existing_delivery = clean_data_str(master_row.get("納入日", ""))
-                        existing_acq_type = clean_data_str(master_row.get("導入形態", ""))
-                        existing_price = clean_data_str(master_row.get("購入金額", ""))
-
-                    new_master_entry = pd.DataFrame([{
-                        "管理番号": safe_final_me_no,
-                        "カテゴリ": device_category,
-                        "機種": f"{device_category}({device_model})",
-                        "シリアルNo": safe_final_sn,
-                        "製造年月日": scan_year_val,
-                        "設置場所": existing_location,
-                        "購入業者": existing_vendor,
-                        "導入形態": existing_acq_type,
-                        "購入金額": existing_price,
-                        "納入日": existing_delivery,
-                        "最終点検日": str(check_date),
-                        "最終判定": f"{result}({check_type})",
-                        "最終実施者": inspector
-                    }])
-
-                    # 💡 【修正】"ME No." ではなく "管理番号" を探すように変更
-                    if not master_df.empty and "管理番号" in master_df.columns:
-                        clean_master_df_me = clean_series(master_df["管理番号"])
-                        master_df = master_df[clean_master_df_me != clean_data_str(final_me_no)]
-                    
-                    updated_master_df = pd.concat([master_df, new_master_entry], ignore_index=True)
-                    conn.update(worksheet="機器マスター", data=updated_master_df)
-                    
-                    st.session_state["last_check_date"] = check_date
-                    
-                    current_user = st.session_state.get("current_user_name", "不明")
-                    write_log(current_user, f"{final_me_no} の点検データを保存({check_type} / 実施者: {inspector})")
-                    
-                    st.success(f"{final_me_no} の点検記録と、機器マスター台帳の更新が完了しました！")
-
-                    st.markdown("---")
-                    st.subheader(f"{final_me_no} 専用QRコード")
-                    
-                    final_url = f"{APP_URL}/?me_no={final_me_no}"
-                    
-                    qr = qrcode.QRCode(version=1, box_size=10, border=4)
-                    qr.add_data(final_url)
-                    qr.make(fit=True)
-                    img = qr.make_image(fill_color="black", back_color="white")
-                    
-                    buf = BytesIO()
-                    img.save(buf, format="PNG")
-                    byte_im = buf.getvalue()
-                    
-                    b64 = base64.b64encode(byte_im).decode()
-                    html_img = f'''
-                    <a href="data:image/png;base64,{b64}" download="QR_{final_me_no}.png">
-                        <img src="data:image/png;base64,{b64}" width="150" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
-                    </a>
-                    <br>
-                    <p style="font-size: 14px; color: gray;">QRコードを<b>タップ（クリック）</b>すると直接ダウンロードされます。<br>スマホの場合は<b>長押しして「画像を保存」</b>も可能です。</p>
-                    '''
-                    st.markdown(html_img, unsafe_allow_html=True)
+                        # --- 4. QRコードの発行機能 ---
+                        st.markdown("---")
+                        st.subheader(f"{final_me_no} 専用QRコード")
+                        
+                        final_url = f"{APP_URL}/?me_no={final_me_no}"
+                        
+                        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+                        qr.add_data(final_url)
+                        qr.make(fit=True)
+                        img = qr.make_image(fill_color="black", back_color="white")
+                        
+                        buf = BytesIO()
+                        img.save(buf, format="PNG")
+                        byte_im = buf.getvalue()
+                        
+                        b64 = base64.b64encode(byte_im).decode()
+                        html_img = f'''
+                        <a href="data:image/png;base64,{b64}" download="QR_{final_me_no}.png">
+                            <img src="data:image/png;base64,{b64}" width="150" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
+                        </a>
+                        <br>
+                        <p style="font-size: 14px; color: gray;">QRコードを<b>タップ（クリック）</b>すると直接ダウンロードされます。<br>スマホの場合は<b>長押しして「画像を保存」</b>も可能です。</p>
+                        '''
+                        st.markdown(html_img, unsafe_allow_html=True)
+                        
+                    else:
+                        st.error("マスターにこの管理番号が存在しません。新規機器登録タブから登録してください。")
 
                 except Exception as e:
                     st.error(f"エラー: {e}")
