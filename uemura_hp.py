@@ -536,7 +536,7 @@ with tabs[0]:
             
             if submitted:
                 if not final_me_no:
-                st.warning("管理番号が入力されていません。")
+                    st.warning("管理番号が入力されていません。")
             else:
                 try:
                     # 1. 詳細データの文字化（旧式用・一覧表示用）
