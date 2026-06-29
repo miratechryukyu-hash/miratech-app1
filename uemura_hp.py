@@ -566,124 +566,127 @@ with tabs[0]:
                     # 【重要】保存前に、報告書のレイアウト(HTML)を生成する
                     # ==========================================
                     if device_category == "輸液ポンプ":
+                        # ==========================================
+                    # 【重要】保存前に、報告書のレイアウト(HTML)を生成する
+                    # ==========================================
+                    if device_category == "輸液ポンプ":
                         generated_html_report = f"""
-                        <div style="font-family: 'Noto Sans JP', sans-serif; font-size: 11px; color: black; background: white; padding: 20px; border: 1px solid #ccc; max-width: 800px; margin: 0 auto;">
-                            <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px; width: 15%; background: #f0f0f0;"><b>機種：</b></td>
-                                    <td style="border: 1px solid black; padding: 4px; width: 35%;">{device_model}</td>
-                                    <td style="border: 1px solid black; padding: 4px; width: 15%; background: #f0f0f0;"><b>製造販売業者：</b></td>
-                                    <td style="border: 1px solid black; padding: 4px; width: 35%;"></td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>管理番号</b></td>
-                                    <td style="border: 1px solid black; padding: 4px;">{final_me_no}</td>
-                                    <td style="border: 1px solid black; padding: 4px;" colspan="2">定期点検</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>点検実施日</b></td>
-                                    <td style="border: 1px solid black; padding: 4px;">{check_date}</td>
-                                    <td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>点検実施者</b></td>
-                                    <td style="border: 1px solid black; padding: 4px;">{inspector}</td>
-                                </tr>
-                            </table>
-
-                            <table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 5px;">
-                                <tr style="text-align: center; font-weight: bold; background: #f9f9f9;">
-                                    <td style="border: 1px solid black; padding: 4px; width: 33%;" colspan="2">外観点検</td>
-                                    <td style="border: 1px solid black; padding: 4px; width: 33%;" colspan="2">各種警報</td>
-                                    <td style="border: 1px solid black; padding: 4px; width: 34%;" colspan="2">作動点検</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">本体の汚れ・破損</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_e1 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">開始忘れ警報</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_a1 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">積算クリア機能</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_op1 else '×'}</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">ポールクランプ用ネジ穴</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e2 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">流量設定無し警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a1 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">流量設定</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_op2 else '×'}</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">チューブクランプ動作</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e3 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">気泡検出</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a2 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">日付・時刻設定</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_op3 else '×'}</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">フィンガー部動作</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e4 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">ドアオープン警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a2 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">流量精度</td><td style="border: 1px solid black; text-align: center;">{flow_acc}</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">AC・DC切り替え</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e5 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">輸液完了</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a3 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 2px; font-size: 9px; color: gray;" colspan="2">※流量120ml/hr 10min 予定量20ml 許容範囲18〜22ml</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">セルフチェック機能</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e6 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">消音</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a4 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">閉塞検出</td><td style="border: 1px solid black; text-align: center;">{occ_press}</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px;">表示部LED</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e7 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 4px;">再警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a3 else '×'}</td>
-                                    <td style="border: 1px solid black; padding: 2px; font-size: 9px; color: gray;" colspan="2">※流量120ml/h、「M」30〜90kPaの範囲内</td>
-                                </tr>
-                                <tr>
-                                    <td style="border: none;" colspan="2"></td>
-                                    <td style="border: none;" colspan="2"></td>
-                                    <td style="border: 1px solid black; padding: 4px;">気泡センサーAD値</td><td style="border: 1px solid black; background: #eee;"></td>
-                                </tr>
-                                <tr>
-                                    <td style="border: none; font-size: 10px; padding-top: 4px;" colspan="2">○：異常なし ×：メーカー点検 /：機能無し</td>
-                                    <td style="border: none;" colspan="2"></td>
-                                    <td style="border: 1px solid black; padding: 2px; font-size: 9px;">水入り:{bubble_ad_water}</td><td style="border: 1px solid black; padding: 2px; font-size: 9px;">水無し:{bubble_ad_nowater}</td>
-                                </tr>
-                            </table>
-
-                            <table style="width: 100%; border-collapse: collapse;">
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 4px; width: 50%; vertical-align: top;" rowspan="2">
-                                        <b>交換部品</b><br><div style="height: 50px;"></div>
-                                    </td>
-                                    <td style="border: 1px solid black; padding: 4px; vertical-align: top;">
-                                        <b>備考・報告欄</b><br><div style="height: 30px; white-space: pre-wrap;">{memo}</div>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td style="border: 1px solid black; padding: 6px;">
-                                        <span style="float: left;"><b>総合評価</b></span>
-                                        <span style="float: right; font-weight: bold; font-size: 14px;">{result}</span>
-                                    </td>
-                                </tr>
-                            </table>
-                            <div style="text-align: right; margin-top: 4px; font-size: 10px;">□ 定期点検実施日シール貼付</div>
-                        </div>
-                        """
+<div style="font-family: 'Noto Sans JP', sans-serif; font-size: 11px; color: black; background: white; padding: 20px; border: 1px solid #ccc; max-width: 800px; margin: 0 auto;">
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
+<tr>
+<td style="border: 1px solid black; padding: 4px; width: 15%; background: #f0f0f0;"><b>機種：</b></td>
+<td style="border: 1px solid black; padding: 4px; width: 35%;">{device_model}</td>
+<td style="border: 1px solid black; padding: 4px; width: 15%; background: #f0f0f0;"><b>製造販売業者：</b></td>
+<td style="border: 1px solid black; padding: 4px; width: 35%;"></td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>管理番号</b></td>
+<td style="border: 1px solid black; padding: 4px;">{final_me_no}</td>
+<td style="border: 1px solid black; padding: 4px;" colspan="2">定期点検</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>点検実施日</b></td>
+<td style="border: 1px solid black; padding: 4px;">{check_date}</td>
+<td style="border: 1px solid black; padding: 4px; background: #f0f0f0;"><b>点検実施者</b></td>
+<td style="border: 1px solid black; padding: 4px;">{inspector}</td>
+</tr>
+</table>
+<table style="width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 5px;">
+<tr style="text-align: center; font-weight: bold; background: #f9f9f9;">
+<td style="border: 1px solid black; padding: 4px; width: 33%;" colspan="2">外観点検</td>
+<td style="border: 1px solid black; padding: 4px; width: 33%;" colspan="2">各種警報</td>
+<td style="border: 1px solid black; padding: 4px; width: 34%;" colspan="2">作動点検</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">本体の汚れ・破損</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_e1 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">開始忘れ警報</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_a1 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">積算クリア機能</td><td style="border: 1px solid black; text-align: center; width: 5%;">{'〇' if chk_op1 else '×'}</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">ポールクランプ用ネジ穴</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e2 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">流量設定無し警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a1 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">流量設定</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_op2 else '×'}</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">チューブクランプ動作</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e3 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">気泡検出</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a2 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">日付・時刻設定</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_op3 else '×'}</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">フィンガー部動作</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e4 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">ドアオープン警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a2 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">流量精度</td><td style="border: 1px solid black; text-align: center;">{flow_acc}</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">AC・DC切り替え</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e5 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">輸液完了</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a3 else '×'}</td>
+<td style="border: 1px solid black; padding: 2px; font-size: 9px; color: gray;" colspan="2">※流量120ml/hr 10min 予定量20ml 許容範囲18〜22ml</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">セルフチェック機能</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e6 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">消音</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a4 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">閉塞検出</td><td style="border: 1px solid black; text-align: center;">{occ_press}</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 4px;">表示部LED</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_e7 else '×'}</td>
+<td style="border: 1px solid black; padding: 4px;">再警報</td><td style="border: 1px solid black; text-align: center;">{'〇' if chk_a3 else '×'}</td>
+<td style="border: 1px solid black; padding: 2px; font-size: 9px; color: gray;" colspan="2">※流量120ml/h、「M」30〜90kPaの範囲内</td>
+</tr>
+<tr>
+<td style="border: none;" colspan="2"></td>
+<td style="border: none;" colspan="2"></td>
+<td style="border: 1px solid black; padding: 4px;">気泡センサーAD値</td><td style="border: 1px solid black; background: #eee;"></td>
+</tr>
+<tr>
+<td style="border: none; font-size: 10px; padding-top: 4px;" colspan="2">○：異常なし ×：メーカー点検 /：機能無し</td>
+<td style="border: none;" colspan="2"></td>
+<td style="border: 1px solid black; padding: 2px; font-size: 9px;">水入り:{bubble_ad_water}</td><td style="border: 1px solid black; padding: 2px; font-size: 9px;">水無し:{bubble_ad_nowater}</td>
+</tr>
+</table>
+<table style="width: 100%; border-collapse: collapse;">
+<tr>
+<td style="border: 1px solid black; padding: 4px; width: 50%; vertical-align: top;" rowspan="2">
+<b>交換部品</b><br><div style="height: 50px;"></div>
+</td>
+<td style="border: 1px solid black; padding: 4px; vertical-align: top;">
+<b>備考・報告欄</b><br><div style="height: 30px; white-space: pre-wrap;">{memo}</div>
+</td>
+</tr>
+<tr>
+<td style="border: 1px solid black; padding: 6px;">
+<span style="float: left;"><b>総合評価</b></span>
+<span style="float: right; font-weight: bold; font-size: 14px;">{result}</span>
+</td>
+</tr>
+</table>
+<div style="text-align: right; margin-top: 4px; font-size: 10px;">□ 定期点検実施日シール貼付</div>
+</div>
+"""
                     else:
+                        # 輸液ポンプ以外の機器用（シンプルな汎用レイアウト）
                         generated_html_report = f"""
-                        <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
-                            <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">定期医療機器点検報告書</h2>
-                            <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 15px;">
-                                <tr>
-                                    <td style="padding:8px; border:1px solid #aaa; width:25%; background-color:#f0f0f0;"><b>管理番号</b></td>
-                                    <td style="padding:8px; border:1px solid #aaa; width:25%;">{final_me_no}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding:8px; border:1px solid #aaa; background-color:#f0f0f0;"><b>機種</b></td>
-                                    <td style="padding:8px; border:1px solid #aaa;">{device_model}</td>
-                                </tr>
-                            </table>
-                            <h4 style="margin-bottom:8px; border-left:4px solid #333; padding-left:8px;">■ 点検・測定項目</h4>
-                            <div style="padding: 10px; border: 1px solid #aaa; margin-bottom: 15px;">{detail_text}</div>
-                            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                                <tr>
-                                    <td style="padding:8px; border:1px solid #aaa; width:25%; background-color:#f0f0f0;"><b>総合評価</b></td>
-                                    <td style="padding:8px; border:1px solid #aaa; font-size:15px; color:red; font-weight:bold;">{result}</td>
-                                </tr>
-                            </table>
-                        </div>
-                        """
+<div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
+<h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">定期医療機器点検報告書</h2>
+<table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 15px;">
+<tr>
+<td style="padding:8px; border:1px solid #aaa; width:25%; background-color:#f0f0f0;"><b>管理番号</b></td>
+<td style="padding:8px; border:1px solid #aaa; width:25%;">{final_me_no}</td>
+</tr>
+<tr>
+<td style="padding:8px; border:1px solid #aaa; background-color:#f0f0f0;"><b>機種</b></td>
+<td style="padding:8px; border:1px solid #aaa;">{device_model}</td>
+</tr>
+</table>
+<h4 style="margin-bottom:8px; border-left:4px solid #333; padding-left:8px;">■ 点検・測定項目</h4>
+<div style="padding: 10px; border: 1px solid #aaa; margin-bottom: 15px;">{detail_text}</div>
+<table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+<tr>
+<td style="padding:8px; border:1px solid #aaa; width:25%; background-color:#f0f0f0;"><b>総合評価</b></td>
+<td style="padding:8px; border:1px solid #aaa; font-size:15px; color:red; font-weight:bold;">{result}</td>
+</tr>
+</table>
+</div>
+"""
 
                     # 2. 機器マスターの更新
                     df_master = safe_read_worksheet(conn, "機器マスター")
