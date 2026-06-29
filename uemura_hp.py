@@ -125,7 +125,7 @@ def check_auth():
     with tab2:
         st.write("初めて利用される方は、こちらから利用申請を行ってください。")
         with st.form("register_form"):
-            st.caption("⚠️ **注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
+            st.caption(" **注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
             
             new_id = st.text_input("希望するユーザーID", placeholder="例: user123")
             new_name = st.text_input("お名前（フルネーム）", placeholder="例: 安富 翔")
@@ -134,7 +134,7 @@ def check_auth():
             if st.form_submit_button("利用申請を送信", use_container_width=True):
                 if new_id and new_name and new_pass:
                     if not re.match(r'^[a-zA-Z0-9]+$', new_id) or not re.match(r'^[a-zA-Z0-9]+$', new_pass):
-                        st.error("⚠️ エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
+                        st.error(" エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
                     else:
                         try:
                             conn = st.connection("gsheets", type=GSheetsConnection)
@@ -336,9 +336,9 @@ with tabs[0]:
                 last_check_date = datetime.strptime(last_check_str, "%Y-%m-%d").date()
                 days_passed = (date.today() - last_check_date).days
                 if days_passed >= 365:
-                    st.error(f"⚠️ 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
+                    st.error(f" 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
                 else:
-                    st.info(f"💡 前回点検日: {last_check_str} (経過: {days_passed}日)")
+                    st.info(f" 前回点検日: {last_check_str} (経過: {days_passed}日)")
             except:
                 pass
         
@@ -396,13 +396,21 @@ with tabs[0]:
             inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
             
             if check_type == "院内点検(miratech)":
-                st.write(f"### 📋 【{device_category}】 点検項目判定")
+                st.write(f"### 【{device_category}】 点検項目判定")
                 c_chk1, c_chk2, c_chk3 = st.columns(3)
                 with c_chk1:
                     status_exterior = st.radio("1. 外観点検（汚れ・破損・クランプ等）", ["OK", "NG", "該当なし"])
                 with c_chk2:
-                    status_alarm = st.radio("2. 各種警報（開始忘れ・気泡・ドア等）", ["OK", "NG", "該当なし"])
+                    status_exterior = st.radio("2. 外観点検（ポールクランプ用ネジ穴）", ["OK", "NG", "該当なし"])
                 with c_chk3:
+                    status_exterior = st.radio("3. 外観点検（チューブクランプ動作）", ["OK", "NG", "該当なし"])
+                with c_chk4:
+                    status_exterior = st.radio("4. 外観点検（フィンガー部動作）", ["OK", "NG", "該当なし"])
+                with c_chk5:
+                    status_exterior = st.radio("5. 外観点検（AC/DC切り替え）", ["OK", "NG", "該当なし"])
+                with c_chk6:
+                    status_alarm = st.radio("2. 各種警報（開始忘れ・気泡・ドア等）", ["OK", "NG", "該当なし"])
+                with c_chk7:
                     status_operation = st.radio("3. 作動点検（機能・LED・時計等）", ["OK", "NG", "該当なし"])
 
                 st.write("### 🔢 数値・精度測定（実測値）")
