@@ -439,28 +439,29 @@ with tabs[0]:
                 memo = st.text_area("備考・報告欄", placeholder="特記事項があれば記入してください")
                 
                 submitted = st.form_submit_button("スプレッドシートに保存")
-
-    # ========= 保存ボタンが押されたあとの処理 =========
-    if submitted:
-        if not final_me_no:
-            st.warning("管理番号が入力されていません。")
-        else:
-            has_error = False
-            if check_type == "院内点検(miratech)" and result == "使用可":
-                if device_category in ["輸液ポンプ", "シリンジポンプ"]:
-                    if not (min_flow <= flow_acc <= max_flow):
-                        st.error(f"アラーム：流量精度（{flow_acc}）が基準値外です。")
-                        has_error = True
-                    if not (min_press <= occ_press <= max_press):
-                        st.error(f"アラーム：閉塞圧（{occ_press}）が基準値外です。")
-                        has_error = True
-                    if "NG" in [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]:
-                        st.error("アラーム：点検項目に「NG」があります。")
-                        has_error = True
-                elif device_category == "保育器":
-                    if any(v == "NG" for v in inc_o_checks.values()):
-                        st.error("アラーム：保育器の点検項目に「NG」があります。")
-                        has_error = True
+                
+              # ========= 保存ボタンが押されたあとの処理 =========  
+                
+                if submitted:
+                    if not final_me_no:
+                        st.warning("管理番号が入力されていません。")
+                    else:
+                        has_error = False
+                        if check_type == "院内点検(miratech)" and result == "使用可":
+                            if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+                                if not (min_flow <= flow_acc <= max_flow):
+                                    st.error(f"アラーム：流量精度（{flow_acc}）が基準値外です。")
+                                    has_error = True
+                                    if not (min_press <= occ_press <= max_press):
+                                        st.error(f"アラーム：閉塞圧（{occ_press}）が基準値外です。")
+                                        has_error = True
+                                        if "NG" in [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]:
+                                            st.error("アラーム：点検項目に「NG」があります。")
+                                            has_error = True
+                                        elif device_category == "保育器":
+                                            if any(v == "NG" for v in inc_o_checks.values()):
+                                                st.error("アラーム：保育器の点検項目に「NG」があります。")
+                                                has_error = True
 
             if has_error:
                 st.error("基準値外の項目があるため保存をブロックしました。数値を直すか、総合評価を【メーカー修理】等にしてください。")
