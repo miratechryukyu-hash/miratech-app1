@@ -468,10 +468,10 @@ with tabs[0]:
                                 inc_o_checks["SpO2表示"] = st.radio("SpO2・HR表示測定が可能か", ["OK", "NG", "--"], horizontal=True)
 
                                 inc_o_checks["タイマー表示"] = st.radio("タイマー機能・表示動作", ["OK", "NG", "--"], horizontal=True)
-
-
-                           st.write("**② 各種警報機能**")
-                            o3, o4 = st.columns(2)
+                                
+                                
+                                st.write("**② 各種警報機能**")
+                                o3, o4 = st.columns(2)
                             with o3:
                                 inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "--"], horizontal=True)
                                 inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "--"], horizontal=True)
