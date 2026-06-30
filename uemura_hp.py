@@ -462,31 +462,30 @@ with tabs[0]:
                                             if any(v == "NG" for v in inc_o_checks.values()):
                                                 st.error("アラーム：保育器の点検項目に「NG」があります。")
                                                 has_error = True
-
-            if has_error:
-                st.error("基準値外の項目があるため保存をブロックしました。数値を直すか、総合評価を【メーカー修理】等にしてください。")
-            else:
-                try:
-                    parts_list = []
-                    if device_category in ["輸液ポンプ", "シリンジポンプ"]:
-                        parts_list.extend([
-                            f"本体の汚れ・破損なし:{chk_e1}", f"ポールクランプ用ネジ穴:{chk_e2}",
-                            f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
-                            f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
-                        ])
-                        flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-                        press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
-                        parts_list.extend([
-                            f"流量精度実測値:{flow_acc} {flow_unit} ({flow_judge})",
-                            f"閉塞検出圧実測値:{occ_press} {press_unit} ({press_judge})",
-                            f"基準流量:{min_flow}～{max_flow}",
-                            f"基準閉塞:{min_press}～{max_press} {press_unit}"
-                        ])
-                    elif device_category == "保育器":
-                        for k, v in inc_o_checks.items():
-                            parts_list.append(f"{k}:{v}")
-                    
-                    detail_text = " | ".join(parts_list)
+                                                
+                                                if has_error:
+                                                    st.error("基準値外の項目があるため保存をブロックしました。数値を直すか、総合評価を【メーカー修理】等にしてください。")
+                                                else:
+                                                    try:
+                                                        parts_list = []
+                                                        if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+                                                            parts_list.extend([
+                                                                f"本体の汚れ・破損なし:{chk_e1}", f"ポールクランプ用ネジ穴:{chk_e2}",
+                                                                f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
+                                                                f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
+                                                            ])
+                                                            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
+                                                            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+                                                            parts_list.extend([
+                                                                f"流量精度実測値:{flow_acc} {flow_unit} ({flow_judge})",
+                                                                f"閉塞検出圧実測値:{occ_press} {press_unit} ({press_judge})",
+                                                                f"基準流量:{min_flow}～{max_flow}",
+                                                                f"基準閉塞:{min_press}～{max_press} {press_unit}"
+                                                            ])
+                                                        elif device_category == "保育器":
+                                                            for k, v in inc_o_checks.items():
+                                                                parts_list.append(f"{k}:{v}")
+                                                                detail_text = " | ".join(parts_list)
 
                     # 先ほどのエラー修正（変数の受け渡し）
                     safe_final_me_no = final_me_no
