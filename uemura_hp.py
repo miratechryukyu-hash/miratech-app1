@@ -508,28 +508,18 @@ with tabs[0]:
                     st.warning("管理番号が入力されていません。")
                 else:
                 # --- 1. 型式別の基準値を自動セット ---
-                min_flow, max_flow = 18.0, 22.0
-                min_press, max_press = 30.0, 90.0
-                flow_unit, press_unit = "ml", "kPa"
+                    min_flow, max_flow = 18.0, 22.0
+                    min_press, max_press = 30.0, 90.0
+                    flow_unit, press_unit = "ml", "kPa"
+                    
+                    if "TE-331" in device_model or "TE-351" in device_model or "TE-371" in device_model or "TE-381" in device_model:
+                        min_flow, max_flow = 19.4, 20.6
+                        min_press, max_press = 53.4, 80.0
+                    elif "TE-171" in device_model:
+                        min_flow, max_flow = 19.0, 21.0
+                        min_press, max_press = 6.0, 60.0
+                        press_unit = "秒"
                 
-                if "TE-331" in device_model or "TE-351" in device_model or "TE-371" in device_model or "TE-381" in device_model:
-                    min_flow, max_flow = 19.4, 20.6
-                    min_press, max_press = 53.4, 80.0
-                elif "TE-171" in device_model:
-                    min_flow, max_flow = 19.0, 21.0
-                    min_press, max_press = 6.0, 60.0
-                    press_unit = "秒"
-                elif "TE-LM830" in device_model:
-                    min_flow, max_flow = 18.0, 22.0
-                    min_press, max_press = 30.0, 120.0
-                elif "OT-707" in device_model or "OT-818G" in device_model:
-                    min_flow, max_flow = 18.0, 22.0
-                    min_press, max_press = 30.0, 140.0
-                elif "AS-800" in device_model:
-                    min_flow, max_flow = 9.0, 11.0
-                    min_press, max_press = 0.0, 2.0
-                    press_unit = "分"
-
                 # --- 2. 安全装置（アラーム判定） ---
                 has_error = False
                 if check_type == "院内点検(miratech)" and result == "使用可":
