@@ -320,9 +320,9 @@ with tabs[0]:
                 last_check_date = datetime.strptime(last_check_str, "%Y-%m-%d").date()
                 days_passed = (date.today() - last_check_date).days
                 if days_passed >= 365:
-                    st.error(f"⚠️ 警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
+                    st.error(f"警告: 最終点検から1年以上経過しています！（前回: {last_check_str} / 経過: {days_passed}日）")
                 else:
-                    st.info(f"💡 前回点検日: {last_check_str} (経過: {days_passed}日)")
+                    st.info(f"前回点検日: {last_check_str} (経過: {days_passed}日)")
             except:
                 pass
         
@@ -383,31 +383,32 @@ with tabs[0]:
                         st.write("**【外観・作動点検】**")
                         col1, col2 = st.columns(2)
                         with col1:
-                            chk_e1 = st.checkbox("本体の汚れ・破損なし", value=True)
-                            chk_e2 = st.checkbox("ポールクランプ用ネジ穴", value=True)
-                            chk_e3 = st.checkbox("チューブクランプ動作", value=True)
-                            chk_e4 = st.checkbox("フィンガー部動作", value=True)
+                            chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "--"], horizontal=True)
+                            chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "--"], horizontal=True)
+                            chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "--"], horizontal=True)
+                            chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "--"], horizontal=True)
                         with col2:
-                            chk_e5 = st.checkbox("AC・DC切り替え", value=True)
-                            chk_e6 = st.checkbox("セルフチェック機能", value=True)
-                            chk_e7 = st.checkbox("表示部LED", value=True)
+                            chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "--"], horizontal=True)
+                            chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "--"], horizontal=True)
+                            chk_e7 = st.radio("表示部LED", ["OK", "NG", "--"], horizontal=True)
                         
                         st.write("**【その他の作動点検】**")
                         col5, col6 = st.columns(2)
                         with col5:
-                            chk_op1 = st.checkbox("積算クリア機能", value=True)
-                            chk_op2 = st.checkbox("流量設定", value=True)
+                            chk_op1 = st.radio("積算クリア機能", ["OK", "NG", "--"], horizontal=True)
+                            chk_op2 = st.radio("流量設定", ["OK", "NG", "--"], horizontal=True)
                         with col6:
-                            chk_op3 = st.checkbox("日付・時刻設定", value=True)
+                            chk_op3 = st.radio("日付・時刻設定", ["OK", "NG", "--"], horizontal=True)
 
                         st.write("**【各種警報点検】**")
                         col3, col4 = st.columns(2)
                         with col3:
-                            chk_a1 = st.checkbox("開始忘れ / 流量設定無し", value=True)
-                            chk_a2 = st.checkbox("気泡検出 / ドアオープン", value=True)
+                            chk_a1 = st.radio("開始忘れ / 流量設定無し", ["OK", "NG", "--"], horizontal=True)
+
+                            chk_a2 = st.radio("気泡検出 / ドアオープン", ["OK", "NG", "--"], horizontal=True)
                         with col4:
-                            chk_a3 = st.checkbox("輸液完了 / 再警報", value=True)
-                            chk_a4 = st.checkbox("消音機能", value=True)
+                            chk_a3 = st.radio("輸液完了 / 再警報", ["OK", "NG", "--"], horizontal=True)
+                            chk_a4 = st.radio("消音機能", ["OK", "NG", "--"], horizontal=True)
                     
                     st.write("**② 数値・精度チェック**")
                     col_num1, col_num2 = st.columns(2)
@@ -418,67 +419,31 @@ with tabs[0]:
                         occ_press = st.number_input("閉塞検出圧 (kpa/mmHg)", value=50.0, step=1.0)
                         bubble_ad_nowater = st.number_input("気泡センサーAD値 (水無し)", value=5)
 
-                elif device_category == "シリンジポンプ":
-                    with st.expander("① 外観・作動・警報の詳細チェック", expanded=True):
-                        st.write("**【外観・作動点検】**")
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            chk_es1 = st.checkbox("本体の汚れ・破損なし", value=True)
-                            chk_es2 = st.checkbox("ポールクランプ用ネジ穴", value=True)
-                            chk_es3 = st.checkbox("シリンジクランプ動作", value=True)
-                        with col2:
-                            chk_es4 = st.checkbox("スライダー・クラッチ動作", value=True)
-                            chk_es5 = st.checkbox("AC・DC切り替え", value=True)
-                            chk_es6 = st.checkbox("セルフチェック・LED", value=True)
-                        
-                        st.write("**【その他の作動点検】**")
-                        col7, col8 = st.columns(2)
-                        with col7:
-                            chk_sop1 = st.checkbox("積算クリア機能", value=True)
-                            chk_sop2 = st.checkbox("流量設定", value=True)
-                        with col8:
-                            chk_sop3 = st.checkbox("日付・時刻設定", value=True)
-
-                        st.write("**【各種警報点検】**")
-                        col3, col4 = st.columns(2)
-                        with col3:
-                            chk_as1 = st.checkbox("シリンジ外れ・サイズ認識", value=True)
-                            chk_as2 = st.checkbox("押し子外れ / クラッチ外れ", value=True)
-                            chk_as3 = st.checkbox("残量 / 閉塞警報", value=True)
-                        with col4:
-                            chk_as4 = st.checkbox("開始忘れ / 流量設定無し", value=True)
-                            chk_as5 = st.checkbox("消音 / 再警報", value=True)
-                    
-                    st.write("**② 数値・精度チェック**")
-                    col_num1_s, col_num2_s = st.columns(2)
-                    with col_num1_s:
-                        flow_acc = st.number_input("流量精度チェック (ml)", value=10.0, step=0.1)
-                    with col_num2_s:
-                        occ_press = st.number_input("閉塞検出圧 (kpa)", value=80.0, step=1.0)
-
+                
                 elif device_category == "保育器":
                     if "閉鎖式" in incubator_type:
                         with st.expander("閉鎖式保育器 点検項目", expanded=True):
                             st.write("**① 外観点検**")
                             c1, c2 = st.columns(2)
                             with c1:
-                                inc_c_checks["本体・フード破損なし"] = st.checkbox("本体・パネル・フード等に破損なし", value=True)
-                                inc_c_checks["キャスター動作"] = st.checkbox("キャスター・ストッパー動作", value=True)
-                                inc_c_checks["手入れ窓パッキン"] = st.checkbox("手入れ窓・パッキン破損なし", value=True)
-                                inc_c_checks["ホース破損なし"] = st.checkbox("ホースアッセンブリ破損なし", value=True)
+                                inc_c_checks["本体・フード破損なし"] = st.radio("本体・パネル・フード等に破損なし", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["キャスター動作"] = st.radio("キャスター・ストッパー動作", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["手入れ窓パッキン"] = st.radio("手入れ窓・パッキン破損なし", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["ホース破損なし"] = st.radio("ホースアッセンブリ破損なし", ["OK", "NG", "--"], horizontal=True)
                             with c2:
-                                inc_c_checks["フィルター状態"] = st.checkbox("フィルター汚れなし・期限内", value=True)
-                                inc_c_checks["電源コード・プラグ"] = st.checkbox("電源・プラグ・アースピン破損なし", value=True)
-                                inc_c_checks["センサー破損なし"] = st.checkbox("各種センサー・接続部破損なし", value=True)
+                                inc_c_checks["フィルター状態"] = st.radio("フィルター汚れなし・期限内", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["電源コード・プラグ"] = st.radio("電源・プラグ・アースピン破損なし", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["センサー破損なし"] =st.radio("各種センサー・接続部破損なし", ["OK", "NG", "--"], horizontal=True)
 
                             st.write("**② 作動・機能点検**")
                             c3, c4 = st.columns(2)
                             with c3:
-                                inc_c_checks["傾斜装置"] = st.checkbox("傾斜装置スムーズ動作", value=True)
-                                inc_c_checks["ファン作動"] = st.checkbox("ファン確実作動・破損なし", value=True)
+                                inc_c_checks["傾斜装置"] = st.radio("傾斜装置スムーズ動作", ["OK", "NG", "--"], horizontal=True)
+
+                                inc_c_checks["ファン作動"] = st.radio("ファン確実作動・破損なし", ["OK", "NG", "--"], horizontal=True)
                             with c4:
-                                inc_c_checks["加湿警報"] = st.checkbox("低水位・水槽外れ警報作動", value=True)
-                                inc_c_checks["SpO2表示"] = st.checkbox("SpO2表示・測定(対応機のみ)", value=True)
+                                inc_c_checks["加湿警報"] = st.radio("低水位・水槽外れ警報作動", ["OK", "NG", "--"], horizontal=True)
+                                inc_c_checks["SpO2表示"] = st.radio("SpO2表示・測定(対応機のみ)", ["OK", "NG", "--"], horizontal=True)
 
                             st.write("**③ 温度制御 (設定 36.0±1℃)**")
                             c5, c6 = st.columns(2)
@@ -491,43 +456,48 @@ with tabs[0]:
                             st.write("**① コントロール・作動・表示点検**")
                             o1, o2 = st.columns(2)
                             with o1:
-                                inc_o_checks["電源・照明スイッチ"] = st.checkbox("電源・照明灯スイッチ異常なし", value=True)
-                                inc_o_checks["表示・キー操作"] = st.checkbox("表示部・キー操作異常なし", value=True)
-                                inc_o_checks["温度制御(マニュアル)"] = st.checkbox("マニュアルコントロール動作", value=True)
-                                inc_o_checks["温度制御(サーボ)"] = st.checkbox("体温プローブ・サーボ動作", value=True)
-                            with o2:
-                                inc_o_checks["SpO2表示"] = st.checkbox("SpO2・HR表示測定が可能か", value=True)
-                                inc_o_checks["タイマー表示"] = st.checkbox("タイマー機能・表示動作", value=True)
+                                inc_o_checks["電源・照明スイッチ"] = st.radio("電源・照明灯スイッチ異常なし", ["OK", "NG", "--"], horizontal=True)
 
-                            st.write("**② 各種警報機能**")
+                                inc_o_checks["表示・キー操作"] = st.radio("表示部・キー操作異常なし", ["OK", "NG", "--"], horizontal=True)
+
+                                inc_o_checks["温度制御(マニュアル)"] = st.radio("マニュアルコントロール動作", ["OK", "NG", "--"], horizontal=True)
+
+                                inc_o_checks["温度制御(サーボ)"] = st.radio("体温プローブ・サーボ動作", ["OK", "NG", "--"], horizontal=True)
+
+                            with o2:
+                                inc_o_checks["SpO2表示"] = st.radio("SpO2・HR表示測定が可能か", ["OK", "NG", "--"], horizontal=True)
+
+                                inc_o_checks["タイマー表示"] = st.radio("タイマー機能・表示動作", ["OK", "NG", "--"], horizontal=True)
+
+
+                           st.write("**② 各種警報機能**")
                             o3, o4 = st.columns(2)
                             with o3:
-                                inc_o_checks["チェックスイッチ"] = st.checkbox("チェックスイッチ作動", value=True)
-                                inc_o_checks["設定温度警報(マニュアル)"] = st.checkbox("設定温度警報(マニュアル)", value=True)
-                                inc_o_checks["設定温度警報(皮膚温)"] = st.checkbox("設定温度警報(皮膚温)", value=True)
+                                inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "--"], horizontal=True)
                             with o4:
-                                inc_o_checks["プローブ警報"] = st.checkbox("プローブ警報作動", value=True)
-                                inc_o_checks["停電警報"] = st.checkbox("停電警報作動", value=True)
-                                inc_o_checks["キャノピ傾斜"] = st.checkbox("キャノピ傾斜動作", value=True)
+                                inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "--"], horizontal=True)
 
                             st.write("**③ 蘇生装置・酸素・外装**")
                             o5, o6 = st.columns(2)
                             with o5:
-                                inc_o_checks["蘇生装置"] = st.checkbox("蘇生装置の機能点検・異常なし", value=True)
-                                inc_o_checks["酸素ブレンダ作動"] = st.checkbox("酸素ブレンダ作動確認", value=True)
-                                inc_o_checks["供給ガス警報"] = st.checkbox("供給ガスが発生するか", value=True)
+                                inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "--"], horizontal=True)
                             with o6:
-                                inc_o_checks["吸引・流量計"] = st.checkbox("吸引ユニット・酸素流量計正常", value=True)
-                                inc_o_checks["外装・キャノピ・ネジ類"] = st.checkbox("支柱・キャノピ・反射板・ネジ等", value=True)
-                                inc_o_checks["電源・ジャック・ガード"] = st.checkbox("電源コード・各種ジャック・ガード", value=True)
-
+                                inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "--"], horizontal=True)
+                                inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "--"], horizontal=True)
             else:
-                exterior_result = st.radio("外装点検", ["異常なし", "異常あり"], horizontal=True)
+                exterior_result = st.radio("外装点検", ["異常なし", "異常あり"], ["OK", "NG", "--"], horizontal=True)
                 detail_result = st.text_input("精度チェック（測定値など）", placeholder="例: 換気量 500ml")
 
             st.markdown("---")
             
-            inspector_label = "実施者（自社名、またはメーカー・業者名）" if check_type != "院内・ME点検" else "実施者"
+            inspector_label = "実施者（自社名、またはメーカー・業者名）" if check_type != "院内(miratech)" else "実施者"
             inspector = st.text_input(inspector_label, value=st.session_state.get("current_user_name", ""))
             result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True) 
             memo = st.text_area("備考・報告欄", placeholder="メーカーの作業報告書No.や、交換部品、対応内容などを記載してください")
@@ -543,11 +513,9 @@ with tabs[0]:
                     
                     details_list = [f"【{check_type}】"]
                     
-                    if check_type == "院内・ME点検":
+                    if check_type == "院内(miratech)":
                         if device_category == "輸液ポンプ":
                             details_list.append(f"汚れ破損:{'〇' if chk_e1 else '×'}, クランプ動作:{'〇' if chk_e3 else '×'}, 流量精度:{flow_acc}ml, 閉塞圧:{occ_press}kpa")
-                        elif device_category == "シリンジポンプ":
-                            details_list.append(f"汚れ破損:{'〇' if chk_es1 else '×'}, クランプ動作:{'〇' if chk_es3 else '×'}, 流量精度:{flow_acc}ml, 閉塞圧:{occ_press}kpa")
                         elif device_category == "保育器":
                             if "閉鎖式" in incubator_type:
                                 c_chk_str = ", ".join([f"{k}:{'〇' if v else '×'}" for k, v in inc_c_checks.items()])
