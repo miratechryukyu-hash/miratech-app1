@@ -572,6 +572,9 @@ with tabs[0]:
                         
                         detail_text = " | ".join(parts_list)
 
+                        safe_final_me_no = final_me_no
+                        safe_final_sn = final_sn
+
                         # --- 4. データベース保存処理 ---
                         df_master = safe_read_worksheet(conn, "機器マスター")
                         mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
