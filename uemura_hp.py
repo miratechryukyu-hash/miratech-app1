@@ -486,89 +486,77 @@ with tabs[0]:
                                                             for k, v in inc_o_checks.items():
                                                                 parts_list.append(f"{k}:{v}")
                                                                 detail_text = " | ".join(parts_list)
+                                                             # 先ほどのエラー修正（変数の受け渡し）   
+                                                                safe_final_me_no = final_me_no
+                                                                safe_final_sn = final_sn
+                                                                df_master = safe_read_worksheet(conn, "機器マスター")
+                                                                mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
+                                                                if mask.any():
+                                                                    df_master.loc[mask, "最終点検日"] = str(check_date)
+                                                                    df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
+                                                                    df_master.loc[mask, "最終実施者"] = inspector
+                                                                    conn.update(worksheet="機器マスター", data=df_master)
+                                                                    
+                                                                    existing_history = safe_read_worksheet(conn, "点検履歴")
+                                                                    new_hist_row = pd.DataFrame([{
+                                                                        "点検日": str(check_date),
+                                                                        "管理番号": protect_zeros(final_me_no),
+                                                                        "カテゴリ": device_category,
+                                                                        "シリアルNo": protect_zeros(final_sn),
+                                                                        "製造年月日": scan_year_val,
+                                                                        "機種": f"{device_category}({device_model})",
+                                                                        "実施者": inspector,
+                                                                        "判定": result,
+                                                                        "詳細データ": detail_text,
+                                                                        "備考": memo
+                                                                    }])
+                                                                    updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
+                                                                    conn.update(worksheet="点検履歴", data=updated_history)
+                                                                     # 🌟 成功したら、検索窓や入力フォームを画面から完全に消し去る！
+                                                                    form_container.empty()
+                                                                    
+                                                                    st.success("点検記録を保存しました。このまま印刷できます！")
+                                                                    st.write(f"## 医療機器定期点検報告書 （{check_date} 実施分）")
+                                                                    info_df = pd.DataFrame({
+                                                                        "管理番号": [final_me_no],
+                                                                        "機種(型式)": [f"{device_category}({device_model})"],
+                                                                        "点検実施者": [inspector],
+                                                                        "総合評価": [result]
+                                                                    })
+                                                                    st.table(info_df)
+                                                                    item_names = []
+                                                                    item_results = []
+                                                                    item_judges = []
+                                                                    for p in parts_list:
+                                                                        if "基準流量" in p or "基準閉塞" in p:
+                                                                            continue
+                                                                            if ":" in p:
+                                                                                k, v = p.split(":", 1)
+                                                                                item_names.append(k.strip())
+                                                                                if "(" in v:
+                                                                                    val, jdg = v.split("(", 1)
+                                                                                    item_results.append(val.strip())
+                                                                                    item_judges.append(jdg.replace(")", "").strip())
+                                                                                else:
+                                                                                    item_results.append(v.strip())
+                                                                                    item_judges.append(v.strip())
+                                                                                    excel_df = pd.DataFrame({
+                                                                                        "点検・測定項目": item_names,
+                                                                                        "点検実測値 / 結果": item_results,
+                                                                                        "判定": item_judges
+                                                                                    })
+                                                                                    st.table(excel_df)
+                                                                                    if memo:
+                                                                                        st.info(f"備考・処置内容:\n{memo}")
+                                                                                        st.info("キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
 
-                    # 先ほどのエラー修正（変数の受け渡し）
-                    safe_final_me_no = final_me_no
-                    safe_final_sn = final_sn
-
-                    df_master = safe_read_worksheet(conn, "機器マスター")
-                    mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
-                    
-                    if mask.any():
-                        df_master.loc[mask, "最終点検日"] = str(check_date)
-                        df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
-                        df_master.loc[mask, "最終実施者"] = inspector
-                        conn.update(worksheet="機器マスター", data=df_master)
-                        
-                        existing_history = safe_read_worksheet(conn, "点検履歴")
-                        new_hist_row = pd.DataFrame([{
-                            "点検日": str(check_date),
-                            "管理番号": protect_zeros(final_me_no),
-                            "カテゴリ": device_category,
-                            "シリアルNo": protect_zeros(final_sn),
-                            "製造年月日": scan_year_val,
-                            "機種": f"{device_category}({device_model})",
-                            "実施者": inspector,
-                            "判定": result,
-                            "詳細データ": detail_text,
-                            "備考": memo
-                        }])
-                        updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
-                        conn.update(worksheet="点検履歴", data=updated_history)
-                        
-                        # 🌟 成功したら、検索窓や入力フォームを画面から完全に消し去る！
-                        form_container.empty()
-                        
-                        st.success("点検記録を保存しました。このまま印刷できます！")
-
-                        st.write(f"## 医療機器定期点検報告書 （{check_date} 実施分）")
-                        
-                        info_df = pd.DataFrame({
-                            "管理番号": [final_me_no],
-                            "機種(型式)": [f"{device_category}({device_model})"],
-                            "点検実施者": [inspector],
-                            "総合評価": [result]
-                        })
-                        st.table(info_df)
-
-                        item_names = []
-                        item_results = []
-                        item_judges = []
-                        
-                        for p in parts_list:
-                            if "基準流量" in p or "基準閉塞" in p:
-                                continue
-                            if ":" in p:
-                                k, v = p.split(":", 1)
-                                item_names.append(k.strip())
-                                if "(" in v:
-                                    val, jdg = v.split("(", 1)
-                                    item_results.append(val.strip())
-                                    item_judges.append(jdg.replace(")", "").strip())
-                                else:
-                                    item_results.append(v.strip())
-                                    item_judges.append(v.strip())
-
-                        excel_df = pd.DataFrame({
-                            "点検・測定項目": item_names,
-                            "点検実測値 / 結果": item_results,
-                            "判定": item_judges
-                        })
-                        st.table(excel_df)
-                        
-                        if memo:
-                            st.info(f"備考・処置内容:\n{memo}")
-                        
-                        st.info("💡 キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
-                        
-                        # 印刷が終わったら、元の入力画面に戻るためのボタン
-                        if st.button("次の機器を点検する（入力画面に戻る）"):
-                            st.rerun()
-
-                    else:
-                        st.error("マスターにこの管理番号が存在しません。")
-                except Exception as e:
-                    st.error(f"エラー: {e}")
+                                                                                         # 印刷が終わったら、元の入力画面に戻るためのボタン
+                                                                                        if st.button("次の機器を点検する（入力画面に戻る）"):
+                                                                                            st.rerun()
+                                                                                        else:
+                                                                                            st.error("マスターにこの管理番号が存在しません。")
+                                                    except Exception as e:
+                                                        st.error(f"エラー: {e}")
 
 # ====== タブ2：マスター ======
 with tabs[1]:
