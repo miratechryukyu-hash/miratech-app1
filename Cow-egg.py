@@ -8,7 +8,7 @@ st.set_page_config(page_title="胚検出・評価AIアプリ", layout="centered"
 st.title("胚検出・評価AIシステム")
 st.write("画像をアップロードすると、AIが自動で解析して評価・検出を行います。")
 
-MODEL_ID = "embryo_detection-chld1-2-rfdetr-small-t1/2"
+MODEL_ID = "embryo_detection-chld1-2-rfdetr-small-t1"
 
 try:
     from inference_sdk import InferenceHTTPClient
@@ -28,7 +28,7 @@ def get_api_key() -> str:
 
 API_KEY = get_api_key()
 
-if not API_KEY or API_KEY == "MK6vBZRzX6NhC0RrjGfi":
+if not API_KEY or API_KEY == "API_KEY":
     st.warning("Roboflow APIキーが設定されていません。")
     st.info(
         "`.streamlit/secrets.toml` に次の行を追加してください:\n\n"
