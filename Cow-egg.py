@@ -8,7 +8,24 @@ st.set_page_config(page_title="胚検出・評価AIアプリ", layout="centered"
 st.title("胚検出・評価AIシステム")
 st.write("画像をアップロードすると、AIが自動で解析して評価・検出を行います。")
 
-MODEL_ID = "embryo_detection-chld1-2-rfdetr-small-t1"
+def get_model_id() -> str:
+    if "ROBOFLOW_MODEL_ID" in st.secrets:
+        return st.secrets["ROBOFLOW_MODEL_ID"]
+    return os.environ.get(
+        "ROBOFLOW_MODEL_ID",
+        "embryo_detection-chld1-2-rfdetr-small-t1/2",
+    )
+
+
+MODEL_ID = get_model_id()
+
+if "/" not in MODEL_ID:
+    st.error(
+        "モデル ID の形式が正しくありません。"
+        "`プロジェクト名/バージョン番号` の形式で指定してください。"
+    )
+    st.code('ROBOFLOW_MODEL_ID = "embryo_detection-chld1-2-rfdetr-small-t1/2"')
+    st.stop()
 
 try:
     from inference_sdk import InferenceHTTPClient
@@ -102,5 +119,18 @@ if uploaded_file is not None:
                     st.json(result)
 
             except Exception as e:
+                error_text = str(e)
                 st.error(f"解析中にエラーが発生しました: {e}")
-                st.caption("APIキー・モデルID・ネットワーク接続を確認してください。")
+                if "401" in error_text or "Unauthorized" in error_text:
+                    st.warning(
+                        "APIキーが Serverless 推論に対応していない可能性があります。"
+                        "Roboflow の [Settings → API](https://app.roboflow.com/settings/api) "
+                        "から **Private API Key** をコピーして `secrets.toml` に設定してください。"
+                    )
+                elif "404" in error_text or "not found" in error_text.lower():
+                    st.warning(
+                        "モデル ID が見つかりません。Roboflow の Deploy 画面で "
+                        "`プロジェクト名/バージョン` を確認し、`ROBOFLOW_MODEL_ID` を更新してください。"
+                    )
+                else:
+                    st.caption("APIキー・モデルID・ネットワーク接続を確認してください。")
