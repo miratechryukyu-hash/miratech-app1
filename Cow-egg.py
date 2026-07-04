@@ -1,12 +1,16 @@
 import io
 import os
 
+import requests
 import streamlit as st
 from PIL import Image
+
+ROBOFLOW_API_URL = "https://serverless.roboflow.com"
 
 st.set_page_config(page_title="胚検出・評価AIアプリ", layout="centered")
 st.title("胚検出・評価AIシステム")
 st.write("画像をアップロードすると、AIが自動で解析して評価・検出を行います。")
+
 
 def get_model_id() -> str:
     if "ROBOFLOW_MODEL_ID" in st.secrets:
@@ -17,7 +21,14 @@ def get_model_id() -> str:
     )
 
 
+def get_api_key() -> str:
+    if "ROBOFLOW_API_KEY" in st.secrets:
+        return st.secrets["ROBOFLOW_API_KEY"]
+    return os.environ.get("ROBOFLOW_API_KEY", "")
+
+
 MODEL_ID = get_model_id()
+API_KEY = get_api_key()
 
 if "/" not in MODEL_ID:
     st.error(
@@ -27,42 +38,13 @@ if "/" not in MODEL_ID:
     st.code('ROBOFLOW_MODEL_ID = "embryo_detection-chld1-2-rfdetr-small-t1/2"')
     st.stop()
 
-try:
-    from inference_sdk import InferenceHTTPClient
-except ImportError:
-    st.error(
-        "必要なパッケージがインストールされていません。"
-        "ターミナルで `pip install -r requirements.txt` を実行してください。"
-    )
-    st.stop()
-
-
-def get_api_key() -> str:
-    if "ROBOFLOW_API_KEY" in st.secrets:
-        return st.secrets["ROBOFLOW_API_KEY"]
-    return os.environ.get("ROBOFLOW_API_KEY", "")
-
-
-API_KEY = get_api_key()
-
 if not API_KEY or API_KEY == "API_KEY":
     st.warning("Roboflow APIキーが設定されていません。")
     st.info(
-        "`.streamlit/secrets.toml` に次の行を追加してください:\n\n"
+        "Streamlit Cloud の Secrets または `.streamlit/secrets.toml` に次を追加してください:\n\n"
         'ROBOFLOW_API_KEY = "あなたのAPIキー"'
     )
     st.stop()
-
-
-@st.cache_resource
-def get_inference_client(api_key: str) -> InferenceHTTPClient:
-    return InferenceHTTPClient(
-        api_url="https://serverless.roboflow.com",
-        api_key=api_key,
-    )
-
-
-client = get_inference_client(API_KEY)
 
 
 def load_uploaded_image(uploaded_file) -> Image.Image:
@@ -71,6 +53,24 @@ def load_uploaded_image(uploaded_file) -> Image.Image:
     if image.mode != "RGB":
         image = image.convert("RGB")
     return image
+
+
+def image_to_jpeg_bytes(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def run_inference(image: Image.Image, api_key: str, model_id: str) -> dict:
+    url = f"{ROBOFLOW_API_URL}/{model_id}"
+    response = requests.post(
+        url,
+        params={"api_key": api_key},
+        files={"file": ("image.jpg", image_to_jpeg_bytes(image), "image/jpeg")},
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def extract_predictions(result) -> list:
@@ -106,7 +106,7 @@ if uploaded_file is not None:
     if st.button("AIで解析・評価する", type="primary"):
         with st.spinner("AIが画像を解析中..."):
             try:
-                result = client.infer(image, model_id=MODEL_ID)
+                result = run_inference(image, API_KEY, MODEL_ID)
                 predictions = extract_predictions(result)
 
                 st.success("解析が完了しました！")
@@ -118,19 +118,21 @@ if uploaded_file is not None:
                     st.write(f"検出数: {len(predictions)} 個")
                     st.json(result)
 
-            except Exception as e:
-                error_text = str(e)
-                st.error(f"解析中にエラーが発生しました: {e}")
-                if "401" in error_text or "Unauthorized" in error_text:
+            except requests.HTTPError as e:
+                status = e.response.status_code if e.response is not None else None
+                st.error(f"解析中にエラーが発生しました: HTTP {status}")
+                if status == 401:
                     st.warning(
-                        "APIキーが Serverless 推論に対応していない可能性があります。"
+                        "APIキーが無効、または Serverless 推論に対応していません。"
                         "Roboflow の [Settings → API](https://app.roboflow.com/settings/api) "
-                        "から **Private API Key** をコピーして `secrets.toml` に設定してください。"
+                        "から **Private API Key** を Secrets に設定してください。"
                     )
-                elif "404" in error_text or "not found" in error_text.lower():
+                elif status == 404:
                     st.warning(
                         "モデル ID が見つかりません。Roboflow の Deploy 画面で "
                         "`プロジェクト名/バージョン` を確認し、`ROBOFLOW_MODEL_ID` を更新してください。"
                     )
-                else:
-                    st.caption("APIキー・モデルID・ネットワーク接続を確認してください。")
+            except requests.RequestException as e:
+                st.error(f"通信エラーが発生しました: {e}")
+            except Exception as e:
+                st.error(f"解析中にエラーが発生しました: {e}")
