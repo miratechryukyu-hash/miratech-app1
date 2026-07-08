@@ -10,6 +10,7 @@ import re
 from PIL import Image
 import base64
 import time
+from components.back_camera_input import back_camera_input
 
 # ==========================================
 # 設定
@@ -96,6 +97,146 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
         st.info(f"備考・処置内容:\n{memo}")
 
     st.info("💡 キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
+
+def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
+                              scan_year_val, check_date, check_type, inspector, result,
+                              memo, detail_text):
+    """点検結果を機器マスター・点検履歴シートへ保存する"""
+    df_master = safe_read_worksheet(conn, "機器マスター", ["管理番号", "最終点検日", "最終判定", "最終実施者"])
+    if df_master.empty or "管理番号" not in df_master.columns:
+        raise ValueError("機器マスターの読み込みに失敗しました。通信環境を確認してください。")
+
+    for col in ["最終点検日", "最終判定", "最終実施者"]:
+        if col not in df_master.columns:
+            df_master[col] = ""
+
+    mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
+    if not mask.any():
+        raise ValueError(f"マスターに管理番号「{final_me_no}」が見つかりません。")
+
+    df_master.loc[mask, "最終点検日"] = str(check_date)
+    df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
+    df_master.loc[mask, "最終実施者"] = inspector
+    conn.update(worksheet="機器マスター", data=df_master)
+
+    history_columns = ["点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種", "実施者", "判定", "詳細データ", "備考"]
+    existing_history = safe_read_worksheet(conn, "点検履歴", history_columns)
+    if existing_history.empty:
+        existing_history = pd.DataFrame(columns=history_columns)
+
+    new_hist_row = {
+        "点検日": str(check_date),
+        "管理番号": protect_zeros(final_me_no),
+        "カテゴリ": device_category,
+        "シリアルNo": protect_zeros(final_sn),
+        "製造年月日": scan_year_val,
+        "機種": f"{device_category}({device_model})",
+        "実施者": inspector,
+        "判定": result,
+        "詳細データ": detail_text,
+        "備考": memo,
+    }
+    for col in existing_history.columns:
+        if col not in new_hist_row:
+            new_hist_row[col] = ""
+
+    new_hist_df = pd.DataFrame([new_hist_row])
+    updated_history = pd.concat([existing_history, new_hist_df[existing_history.columns]], ignore_index=True)
+    conn.update(worksheet="点検履歴", data=updated_history)
+
+def validate_inspection_items(device_category, check_type, result, inc_o_checks,
+                              chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                              flow_acc, occ_press, min_flow, max_flow, min_press, max_press):
+    """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
+    ng_items = []
+    incomplete_items = []
+
+    if check_type != "院内点検(miratech)":
+        return ng_items, incomplete_items
+
+    if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+        pump_checks = {
+            "本体の汚れ・破損なし": chk_e1,
+            "ポールクランプ用ネジ穴": chk_e2,
+            "チューブクランプ動作": chk_e3,
+            "フィンガー部動作": chk_e4,
+            "AC・DC切り替え": chk_e5,
+            "セルフチェック機能": chk_e6,
+            "表示部LED": chk_e7,
+        }
+        for label, val in pump_checks.items():
+            if is_unselected(val):
+                incomplete_items.append(label)
+            elif val == "NG":
+                ng_items.append(label)
+
+        if result == "使用可":
+            if not (min_flow <= flow_acc <= max_flow):
+                ng_items.append(f"流量精度実測値（{flow_acc}）")
+            if not (min_press <= occ_press <= max_press):
+                ng_items.append(f"閉塞検出圧実測値（{occ_press}）")
+
+    elif device_category == "保育器":
+        for label, val in inc_o_checks.items():
+            if is_unselected(val):
+                incomplete_items.append(label)
+            elif val == "NG":
+                ng_items.append(label)
+
+    return ng_items, incomplete_items
+
+def is_unselected(val):
+    return val in ("--", "---", None, "")
+
+def build_inspection_detail_text(check_type, device_category, result, inc_o_checks,
+                                 chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                                 flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                                 flow_unit, press_unit):
+    parts_list = []
+    if check_type == "院内点検(miratech)":
+        if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+            parts_list.extend([
+                f"本体の汚れ・破損なし:{chk_e1}", f"ポールクランプ用ネジ穴:{chk_e2}",
+                f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
+                f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
+            ])
+            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
+            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+            parts_list.extend([
+                f"流量精度実測値:{flow_acc} {flow_unit} ({flow_judge})",
+                f"閉塞検出圧実測値:{occ_press} {press_unit} ({press_judge})",
+                f"基準流量:{min_flow}～{max_flow}",
+                f"基準閉塞:{min_press}～{max_press} {press_unit}"
+            ])
+        elif device_category == "保育器":
+            for k, v in inc_o_checks.items():
+                parts_list.append(f"{k}:{v}")
+
+    detail_text = " | ".join(parts_list)
+    if check_type != "院内点検(miratech)":
+        detail_text = f"点検区分:{check_type}" + (f" | {detail_text}" if detail_text else "")
+    return detail_text
+
+def execute_inspection_save(conn, final_me_no, final_sn, device_category, device_model,
+                            scan_year_val, check_date, check_type, inspector, result,
+                            memo, detail_text):
+    save_inspection_to_sheets(
+        conn, final_me_no, final_sn, device_category, device_model,
+        scan_year_val, check_date, check_type, inspector, result,
+        memo, detail_text,
+    )
+    write_log(inspector, f"{final_me_no} の点検を登録")
+    st.session_state["last_check_date"] = check_date
+    st.session_state["check_registered_msg"] = f"✅ {final_me_no} の点検データを登録しました。"
+    return {
+        "check_date": check_date,
+        "final_me_no": final_me_no,
+        "model_name": f"{device_category}({device_model})",
+        "inspector": inspector,
+        "result": result,
+        "detail_text": detail_text,
+        "memo": memo,
+    }
 
 # --- ログ書き込み用共通関数 ---
 def write_log(user_name, action):
@@ -340,6 +481,9 @@ with tabs[0]:
     </style>
     """, unsafe_allow_html=True)
 
+    if st.session_state.get("check_registered_msg"):
+        st.success(st.session_state["check_registered_msg"])
+
     # エラー防止のためにすべての変数を初期化
     final_me_no = ""
     final_sn = ""
@@ -351,19 +495,28 @@ with tabs[0]:
     inspector = ""
 
     # 輸液・シリンジポンプ用項目の初期化
-    chk_e1 = chk_e2 = chk_e3 = chk_e4 = chk_e5 = chk_e6 = chk_e7 = "--"
+    chk_e1 = chk_e2 = chk_e3 = chk_e4 = chk_e5 = chk_e6 = chk_e7 = "---"
 
     # 保育器用項目の初期化
     inc_o_checks = {
-        "チェックスイッチ": "--", "設定温度警報(マニュアル)": "--", "設定温度警報(皮膚温)": "--",
-        "プローブ警報": "--", "停電警報": "--", "キャノピ傾斜": "--",
-        "蘇生装置": "--", "酸素ブレンダ作動": "--", "供給ガス警報": "--",
-        "吸引・流量計": "--", "外装・キャノピ・ネジ類": "--", "電源・ジャック・ガード": "--"
+        "チェックスイッチ": "---", "設定温度警報(マニュアル)": "---", "設定温度警報(皮膚温)": "---",
+        "プローブ警報": "---", "停電警報": "---", "キャノピ傾斜": "---",
+        "蘇生装置": "---", "酸素ブレンダ作動": "---", "供給ガス警報": "---",
+        "吸引・流量計": "---", "外装・キャノピ・ネジ類": "---", "電源・ジャック・ガード": "---"
     }
     flow_acc = 0.0
     occ_press = 0.0
 
-    input_keyword = st.text_input("管理番号 または シリアルNo を入力して検索", placeholder="例: INP0001").strip()
+    input_keyword = st.text_input(
+        "管理番号 または シリアルNo を入力して検索",
+        placeholder="例: INP0001",
+        key="check_search_keyword",
+    ).strip()
+
+    if input_keyword != st.session_state.get("check_last_search_keyword", ""):
+        st.session_state.pop("check_registered_msg", None)
+        st.session_state.pop("pending_check_save", None)
+        st.session_state["check_last_search_keyword"] = input_keyword
 
     master_row = None
     if input_keyword and not df_master_global.empty:
@@ -386,7 +539,9 @@ with tabs[0]:
         device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
         full_meshun = clean_data_str(master_row.get("機種", ""))
         device_model = full_meshun.replace(f"{device_category}(", "").replace(")", "")
-        scan_year_val = clean_data_str(master_row.get("製造年月日", ""))
+        scan_year_val = clean_data_str(
+            master_row.get("製造年月日", "") or master_row.get("製造年", "")
+        )
 
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -420,12 +575,13 @@ with tabs[0]:
             press_unit = "分"
 
         st.markdown("---")
-        check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
 
         if "last_check_date" not in st.session_state:
             st.session_state["last_check_date"] = date.today()
 
+        saved_report = None
         with st.form("check_form"):
+            check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
             check_date = st.date_input("作業日", value=st.session_state["last_check_date"])
             inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
 
@@ -434,14 +590,14 @@ with tabs[0]:
                     st.write("**1. 外観・作動点検**")
                     col1, col2 = st.columns(2)
                     with col1:
-                        chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "--"], horizontal=True)
-                        chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "--"], horizontal=True)
-                        chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "--"], horizontal=True)
-                        chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "--"], horizontal=True)
+                        chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "---"], horizontal=True, index=None)
                     with col2:
-                        chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "--"], horizontal=True)
-                        chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "--"], horizontal=True)
-                        chk_e7 = st.radio("表示部LED", ["OK", "NG", "--"], horizontal=True)
+                        chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e7 = st.radio("表示部LED", ["OK", "NG", "---"], horizontal=True, index=None)
 
                     st.write("**2. 数値・精度チェック**")
                     col_num1, col_num2 = st.columns(2)
@@ -456,24 +612,24 @@ with tabs[0]:
                     st.write("**2. 各種警報機能**")
                     o3, o4 = st.columns(2)
                     with o3:
-                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "--"], horizontal=True)
+                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "---"], horizontal=True, index=None)
                     with o4:
-                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "--"], horizontal=True)
+                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "---"], horizontal=True, index=None)
 
                     st.write("**3. 蘇生装置・酸素・外装**")
                     o5, o6 = st.columns(2)
                     with o5:
-                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "--"], horizontal=True)
+                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "---"], horizontal=True, index=None)
                     with o6:
-                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "--"], horizontal=True)
-                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "--"], horizontal=True)
+                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "---"], horizontal=True, index=None)
+                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "---"], horizontal=True, index=None)
             else:
                 st.info("外部対応のため数値測定はスキップされます。")
 
@@ -481,94 +637,97 @@ with tabs[0]:
             result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True)
             memo = st.text_area("備考・報告欄", placeholder="特記事項があれば記入してください")
 
-            submitted = st.form_submit_button("スプレッドシートに保存")
+            submitted = st.form_submit_button("保存・決定", type="primary", use_container_width=True)
 
         if submitted:
             if not final_me_no:
                 st.warning("管理番号が入力されていません。")
+            elif not inspector.strip():
+                st.warning("実施者を入力してください。")
             else:
-                has_error = False
-                if check_type == "院内点検(miratech)" and result == "使用可":
-                    if device_category in ["輸液ポンプ", "シリンジポンプ"]:
-                        if not (min_flow <= flow_acc <= max_flow):
-                            st.error(f"アラーム：流量精度（{flow_acc}）が基準値外です。")
-                            has_error = True
-                        if not (min_press <= occ_press <= max_press):
-                            st.error(f"アラーム：閉塞圧（{occ_press}）が基準値外です。")
-                            has_error = True
-                        if "NG" in [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]:
-                            st.error("アラーム：点検項目に「NG」があります。")
-                            has_error = True
-                    elif device_category == "保育器":
-                        if any(v == "NG" for v in inc_o_checks.values()):
-                            st.error("アラーム：保育器の点検項目に「NG」があります。")
-                            has_error = True
+                ng_items, incomplete_items = validate_inspection_items(
+                    device_category, check_type, result, inc_o_checks,
+                    chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                    flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                )
+                detail_text = build_inspection_detail_text(
+                    check_type, device_category, result, inc_o_checks,
+                    chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                    flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                    flow_unit, press_unit,
+                )
+                save_payload = {
+                    "final_me_no": final_me_no,
+                    "final_sn": final_sn,
+                    "device_category": device_category,
+                    "device_model": device_model,
+                    "scan_year_val": scan_year_val,
+                    "check_date": check_date,
+                    "check_type": check_type,
+                    "inspector": inspector,
+                    "result": result,
+                    "memo": memo,
+                    "detail_text": detail_text,
+                    "incomplete_items": incomplete_items,
+                    "ng_items": ng_items,
+                }
 
-                if has_error:
-                    st.error("基準値外の項目があるため保存をブロックしました。数値を直すか、総合評価を【メーカー修理】等にしてください。")
+                if incomplete_items:
+                    st.error("未選択ですよ。OK / NG / --- のいずれかを選択してください。")
+                    st.warning("未設定の項目: " + "、".join(incomplete_items))
+                    st.session_state["pending_check_save"] = save_payload
+                elif ng_items and check_type == "院内点検(miratech)" and result == "使用可":
+                    st.error("NG項目があります。")
+                    st.warning("NGの項目: " + "、".join(ng_items))
+                    st.session_state.pop("pending_check_save", None)
+                    st.error("総合評価が「使用可」のため保存できません。数値・項目を修正するか、総合評価を【メーカー修理】等に変更してください。")
                 else:
+                    if ng_items:
+                        st.warning("NG項目があります: " + "、".join(ng_items))
+                        if check_type == "院内点検(miratech)" and result != "使用可":
+                            st.info("総合評価が「使用可」以外のため、NG項目があっても保存します。")
+                    st.session_state.pop("pending_check_save", None)
                     try:
-                        parts_list = []
-                        if device_category in ["輸液ポンプ", "シリンジポンプ"]:
-                            parts_list.extend([
-                                f"本体の汚れ・破損なし:{chk_e1}", f"ポールクランプ用ネジ穴:{chk_e2}",
-                                f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
-                                f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
-                            ])
-                            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-                            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
-                            parts_list.extend([
-                                f"流量精度実測値:{flow_acc} {flow_unit} ({flow_judge})",
-                                f"閉塞検出圧実測値:{occ_press} {press_unit} ({press_judge})",
-                                f"基準流量:{min_flow}～{max_flow}",
-                                f"基準閉塞:{min_press}～{max_press} {press_unit}"
-                            ])
-                        elif device_category == "保育器":
-                            for k, v in inc_o_checks.items():
-                                parts_list.append(f"{k}:{v}")
-
-                        detail_text = " | ".join(parts_list)
-
-                        df_master = safe_read_worksheet(conn, "機器マスター")
-                        mask = clean_series(df_master["管理番号"]) == clean_data_str(final_me_no)
-
-                        if mask.any():
-                            df_master.loc[mask, "最終点検日"] = str(check_date)
-                            df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
-                            df_master.loc[mask, "最終実施者"] = inspector
-                            conn.update(worksheet="機器マスター", data=df_master)
-
-                            existing_history = safe_read_worksheet(conn, "点検履歴")
-                            new_hist_row = pd.DataFrame([{
-                                "点検日": str(check_date),
-                                "管理番号": protect_zeros(final_me_no),
-                                "カテゴリ": device_category,
-                                "シリアルNo": protect_zeros(final_sn),
-                                "製造年月日": scan_year_val,
-                                "機種": f"{device_category}({device_model})",
-                                "実施者": inspector,
-                                "判定": result,
-                                "詳細データ": detail_text,
-                                "備考": memo
-                            }])
-                            updated_history = pd.concat([existing_history, new_hist_row], ignore_index=True)
-                            conn.update(worksheet="点検履歴", data=updated_history)
-
-                            st.success("点検記録の保存、および台帳の更新が完了しました。")
-
-                            render_inspection_report(
-                                check_date,
-                                final_me_no,
-                                f"{device_category}({device_model})",
-                                inspector,
-                                result,
-                                detail_text,
-                                memo,
-                            )
-                        else:
-                            st.error("マスターにこの管理番号が存在しません。")
+                        with st.spinner("スプレッドシートに保存しています..."):
+                            saved_report = execute_inspection_save(conn, **{k: v for k, v in save_payload.items() if k not in ("incomplete_items", "ng_items")})
+                        st.success(st.session_state["check_registered_msg"])
                     except Exception as e:
-                        st.error(f"エラー: {e}")
+                        st.error(f"登録エラー: {e}")
+
+        pending = st.session_state.get("pending_check_save")
+        if pending:
+            st.markdown("---")
+            st.warning("⚠️ 未設定の項目があります。保存しますか？")
+            st.write("未設定の項目: " + "、".join(pending.get("incomplete_items", [])))
+            col_yes, col_no = st.columns(2)
+            with col_yes:
+                if st.button("Yes（保存する）", type="primary", use_container_width=True, key="confirm_incomplete_save_yes"):
+                    try:
+                        with st.spinner("スプレッドシートに保存しています..."):
+                            saved_report = execute_inspection_save(
+                                conn,
+                                **{k: v for k, v in pending.items() if k not in ("incomplete_items", "ng_items")}
+                            )
+                        st.session_state.pop("pending_check_save", None)
+                        st.success(st.session_state["check_registered_msg"])
+                    except Exception as e:
+                        st.error(f"登録エラー: {e}")
+            with col_no:
+                if st.button("No（キャンセル）", use_container_width=True, key="confirm_incomplete_save_no"):
+                    st.session_state.pop("pending_check_save", None)
+                    st.info("保存をキャンセルしました。未設定の項目を入力してください。")
+                    st.rerun()
+
+        if saved_report:
+            render_inspection_report(
+                saved_report["check_date"],
+                saved_report["final_me_no"],
+                saved_report["model_name"],
+                saved_report["inspector"],
+                saved_report["result"],
+                saved_report["detail_text"],
+                saved_report["memo"],
+            )
 
 # ====== タブ2：マスター ======
 with tabs[1]:
@@ -1035,7 +1194,8 @@ with tabs[4]:
         if ai_model is None:
             st.error("APIキーが設定されていないか、ライブラリのバージョンが古いです。")
         else:
-            img_file = st.camera_input("銘板（シール）を撮影してください", key="ai_camera")
+            st.caption("📷 **アウトカメラで撮影** ボタンを押して銘板を撮影してください（iPhone・iPad・Android 対応）")
+            img_file = back_camera_input(key="ai_camera", height=560)
             
             if img_file:
                 current_image_bytes = img_file.getvalue()
