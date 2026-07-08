@@ -5,7 +5,7 @@ from typing import Optional
 
 import streamlit.components.v1 as components
 
-frontend_dir = (Path(__file__).parent / "frontend").absolute()
+frontend_dir = (Path(__file__).resolve().parent / "back_camera_input_frontend").absolute()
 _component_func = components.declare_component(
     "back_camera_input", path=str(frontend_dir)
 )

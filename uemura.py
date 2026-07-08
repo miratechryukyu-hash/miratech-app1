@@ -10,7 +10,7 @@ import re
 from PIL import Image
 import base64
 import time
-from components.back_camera_input import back_camera_input
+from back_camera_input import back_camera_input
 
 # ==========================================
 # 設定
