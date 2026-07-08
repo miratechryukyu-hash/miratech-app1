@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, date
@@ -10,12 +11,23 @@ import re
 from PIL import Image
 import base64
 import time
-from back_camera_input import back_camera_input
+from pathlib import Path
+
+# アウトカメラ撮影コンポーネント（外部import不要・Streamlit Cloud対応）
+_CAMERA_FRONTEND = (Path(__file__).resolve().parent / "back_camera_input_frontend").absolute()
+_back_camera_func = components.declare_component("back_camera_input", path=str(_CAMERA_FRONTEND))
+
+def back_camera_input(height=450, width=500, key=None):
+    b64_data = _back_camera_func(height=height, width=width, key=key)
+    if b64_data is None:
+        return None
+    return BytesIO(base64.b64decode(b64_data.split(",")[1]))
 
 # ==========================================
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
+APP_VERSION = "2026-07-08c"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -459,6 +471,7 @@ if url_me_no:
 # 【ルートA】直接アクセスした場合（管理画面へ）
 # ==========================================
 st.sidebar.success(f"ログイン中: {st.session_state.get('current_user_name', '不明')}")
+st.sidebar.caption(f"App {APP_VERSION}")
 if st.sidebar.button("ログアウト"):
     write_log(st.session_state["current_user_name"], "ログアウトしました")
     st.session_state["logged_in_facility"] = None
