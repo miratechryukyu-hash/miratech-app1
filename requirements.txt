@@ -1,4 +1,5 @@
 streamlit
+streamlit-back-camera-input
 pandas
 plotly
 st-gsheets-connection

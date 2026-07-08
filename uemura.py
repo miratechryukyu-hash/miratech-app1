@@ -13,21 +13,45 @@ import base64
 import time
 from pathlib import Path
 
-# アウトカメラ撮影コンポーネント（外部import不要・Streamlit Cloud対応）
-_CAMERA_FRONTEND = (Path(__file__).resolve().parent / "back_camera_input_frontend").absolute()
-_back_camera_func = components.declare_component("back_camera_input", path=str(_CAMERA_FRONTEND))
+def _init_back_camera_input():
+    """アウトカメラ撮影。ローカルfrontend → pipパッケージの順で利用"""
+    bundled = Path(__file__).resolve().parent / "back_camera_input_frontend"
+    if bundled.is_dir() and (bundled / "index.html").is_file():
+        component_func = components.declare_component(
+            "miratech_back_camera", path=str(bundled)
+        )
 
-def back_camera_input(height=450, width=500, key=None):
-    b64_data = _back_camera_func(height=height, width=width, key=key)
-    if b64_data is None:
+        def capture(height=450, width=500, key=None):
+            b64_data = component_func(height=height, width=width, key=key)
+            if b64_data is None:
+                return None
+            return BytesIO(base64.b64decode(b64_data.split(",")[1]))
+
+        return capture
+
+    try:
+        from streamlit_back_camera_input import back_camera_input as pip_capture
+        return pip_capture
+    except ImportError:
+        pass
+
+    def unavailable(height=450, width=500, key=None):
+        st.error(
+            "カメラ機能を読み込めません。"
+            "back_camera_input_frontend フォルダをリポジトリに含めるか、"
+            "requirements.txt に streamlit-back-camera-input を追加してください。"
+        )
         return None
-    return BytesIO(base64.b64decode(b64_data.split(",")[1]))
+
+    return unavailable
+
+back_camera_input = _init_back_camera_input()
 
 # ==========================================
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-08c"
+APP_VERSION = "2026-07-08d"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
