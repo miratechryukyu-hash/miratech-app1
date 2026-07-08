@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, date
@@ -10,7 +11,17 @@ import re
 from PIL import Image
 import base64
 import time
-from back_camera_input import back_camera_input
+from pathlib import Path
+
+# アウトカメラ撮影コンポーネント（外部import不要・Streamlit Cloud対応）
+_CAMERA_FRONTEND = (Path(__file__).resolve().parent / "back_camera_input_frontend").absolute()
+_back_camera_func = components.declare_component("back_camera_input", path=str(_CAMERA_FRONTEND))
+
+def back_camera_input(height=450, width=500, key=None):
+    b64_data = _back_camera_func(height=height, width=width, key=key)
+    if b64_data is None:
+        return None
+    return BytesIO(base64.b64decode(b64_data.split(",")[1]))
 
 # ==========================================
 # 設定
