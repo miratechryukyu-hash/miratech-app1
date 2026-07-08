@@ -27,6 +27,7 @@ def back_camera_input(height=450, width=500, key=None):
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
+APP_VERSION = "2026-07-08c"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -470,6 +471,7 @@ if url_me_no:
 # 【ルートA】直接アクセスした場合（管理画面へ）
 # ==========================================
 st.sidebar.success(f"ログイン中: {st.session_state.get('current_user_name', '不明')}")
+st.sidebar.caption(f"App {APP_VERSION}")
 if st.sidebar.button("ログアウト"):
     write_log(st.session_state["current_user_name"], "ログアウトしました")
     st.session_state["logged_in_facility"] = None
