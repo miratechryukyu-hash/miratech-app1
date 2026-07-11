@@ -75,12 +75,19 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11h"
+APP_VERSION = "2026-07-11i"
+
+class SheetReadError(Exception):
+    """スプレッドシート読み込み失敗"""
 
 @st.cache_resource
 def _get_sheet_client():
     gs = st.secrets["connections"]["gsheets"]
-    client = gspread.service_account_from_dict(dict(gs["configuration"]))
+    config = dict(gs["configuration"])
+    pk = config.get("private_key", "")
+    if "\\n" in pk:
+        config["private_key"] = pk.replace("\\n", "\n")
+    client = gspread.service_account_from_dict(config)
     return client, gs["spreadsheet"]
 
 @st.cache_data(ttl=15, show_spinner=False)
@@ -164,18 +171,30 @@ def _sanitize_dataframe(df):
     return clean
 
 # 通信エラー対策：安全にスプレッドシートを読み込むためのリトライ関数
-def safe_read_worksheet(conn, worksheet_name, default_columns=None):
+def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fail=False):
+    last_error = None
     for i in range(3):
         try:
-            # 💡 【修正】ttl=15 にして、Googleのアクセス制限(429エラー)を回避します
             df = conn.read(worksheet=worksheet_name, ttl=15)
             if df is not None:
                 return _sanitize_dataframe(df.dropna(how="all").fillna(""))
-        except Exception:
+        except Exception as e:
+            last_error = e
             if i < 2:
-                time.sleep(1) # 1秒待って再試行
-            else:
-                st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。通信環境が良い場所で再度お試しください。")
+                time.sleep(1)
+    err_msg = str(last_error) if last_error else "不明なエラー"
+    if "PEM" in err_msg or "private_key" in err_msg.lower():
+        hint = "Secrets の private_key が壊れています。Google Cloud から JSON を再ダウンロードして貼り直してください。"
+    elif "SpreadsheetNotFound" in err_msg or "404" in err_msg:
+        hint = "spreadsheet の ID が間違っているか、サービスアカウントに共有されていません。"
+    elif "Worksheet" in err_msg:
+        hint = f"シート名「{worksheet_name}」がスプレッドシート内にありません。"
+    else:
+        hint = "通信環境または Secrets 設定を確認してください。"
+    st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。{hint}")
+    st.caption(f"詳細: {err_msg}")
+    if raise_on_fail:
+        raise SheetReadError(err_msg)
     return pd.DataFrame(columns=default_columns) if default_columns else pd.DataFrame()
 
 def clean_series(series):
@@ -533,7 +552,11 @@ def check_auth():
                 
                 try:
                     conn = get_sheet_conn()
-                    df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
+                    df_users = safe_read_worksheet(
+                        conn, "ユーザー",
+                        ["ユーザーID", "パスワード", "名前", "ステータス", "権限"],
+                        raise_on_fail=True,
+                    )
                     
                     clean_db_ids = clean_series(df_users["ユーザーID"])
                     user_row = df_users[clean_db_ids == clean_id]
@@ -557,6 +580,8 @@ def check_auth():
                             st.error("パスワードが違います。")
                     else:
                         st.error("ユーザーIDが見つかりません。新規申請を行ってください。")
+                except SheetReadError:
+                    return False
                 except Exception as e:
                     st.error(f"データベース接続エラー: {e}")
 
