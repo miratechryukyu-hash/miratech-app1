@@ -4,6 +4,5 @@ pandas
 plotly
 st-gsheets-connection
 qrcode
-google-generativeai>=0.5.2
 pillow
 requests

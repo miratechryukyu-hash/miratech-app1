@@ -5,10 +5,10 @@ import pandas as pd
 from datetime import datetime, date
 import qrcode
 from io import BytesIO
-import google.generativeai as genai
 import json
 import re
 import os
+import requests
 from PIL import Image
 import base64
 import time
@@ -74,7 +74,40 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11e"
+APP_VERSION = "2026-07-11f"
+
+def _get_gemini_api_key():
+    return st.secrets.get("GEMINI_API_KEY", "")
+
+def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
+    """Gemini REST API で銘板画像を解析（gRPC ライブラリを使わず Cloud でも安全）"""
+    api_key = _get_gemini_api_key()
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY が設定されていません")
+
+    prompt = """
+    この医療機器の銘板写真から以下の情報を抜き出して、JSON形式で回答してください。
+    キーは以下のようにしてください:
+    - model (型式)
+    - serial_number (製造番号/SN)
+    - manufacture_year (製造年月日。例: 2018.10.10)
+    """
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.0-flash:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}},
+            ]
+        }]
+    }
+    resp = requests.post(url, json=payload, timeout=90)
+    resp.raise_for_status()
+    body = resp.json()
+    return body["candidates"][0]["content"]["parts"][0]["text"]
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -533,16 +566,7 @@ BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装
                    "ドプラ","検診台","血液ガス分析装置","吸引器類","加湿器類","分娩台","ベビーコット","哺乳瓶消毒器","煮沸消毒器","パルスオキシメーター",
                    "聴力検査器","光線治療器","酸素モニタ","電気メス","麻酔器","生体情報モニタ","手術台","子宮鏡","滅菌装置", "その他"]
 
-# AI設定
-ai_model = None
-if "GEMINI_API_KEY" in st.secrets:
-    try:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        ai_model = genai.GenerativeModel('gemini-2.5-flash')
-    except Exception as e:
-        st.error(f"APIキーの設定エラー: {e}")
-
-# 共通データベースの取得（購入業者プルダウン用）
+# AI設定（ログイン後すぐに gRPC を読み込まないよう REST API は利用時のみ呼び出す）
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_master_global = safe_read_worksheet(conn, "機器マスター")
@@ -1415,8 +1439,8 @@ with tabs[4]:
 
     if reg_mode == "AI銘板スキャナー":
         st.info("新しい機器の銘板を撮影すると、AIが情報を読み取ってくれます。")
-        if ai_model is None:
-            st.error("APIキーが設定されていないか、ライブラリのバージョンが古いです。")
+        if not _get_gemini_api_key():
+            st.error("AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に GEMINI_API_KEY を設定してください。")
         else:
             st.caption("📷 銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
             try:
@@ -1430,16 +1454,11 @@ with tabs[4]:
                 if st.session_state.get("last_scanned_image") != current_image_bytes:
                     with st.spinner("AIが文字を解析しています（約10秒）..."):
                         try:
-                            img = Image.open(img_file)
-                            prompt = """
-                            この医療機器の銘板写真から以下の情報を抜き出して、JSON形式で回答してください。
-                            キーは以下のようにしてください:
-                            - model (型式)
-                            - serial_number (製造番号/SN)
-                            - manufacture_year (製造年月日。例: 2018.10.10)
-                            """
-                            response = ai_model.generate_content([prompt, img])
-                            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                            img = Image.open(BytesIO(current_image_bytes))
+                            fmt = (img.format or "JPEG").upper()
+                            mime_type = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}.get(fmt, "image/jpeg")
+                            response_text = analyze_nameplate_with_gemini(current_image_bytes, mime_type)
+                            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                             if json_match:
                                 data = json.loads(json_match.group())
                                 
