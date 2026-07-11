@@ -75,7 +75,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11j"
+APP_VERSION = "2026-07-11k"
 
 def _normalize_spreadsheet_id(raw):
     s = str(raw).strip().strip('"').strip("'")
@@ -94,6 +94,12 @@ def _load_gsheets_settings():
         config["private_key"] = pk.replace("\\n", "\n")
     return spreadsheet_id, config, config.get("client_email", "")
 
+def _validate_spreadsheet_id(spreadsheet_id):
+    if not spreadsheet_id:
+        raise ValueError("Secrets に spreadsheet ID が設定されていません。[connections.gsheets] の spreadsheet を確認してください。")
+    if len(spreadsheet_id) < 20:
+        raise ValueError(f"spreadsheet ID の形式が不正です: {spreadsheet_id!r}")
+
 class SheetReadError(Exception):
     """スプレッドシート読み込み失敗"""
 
@@ -106,7 +112,9 @@ def _get_sheet_client():
 @st.cache_data(ttl=15, show_spinner=False)
 def _cached_sheet_read(worksheet_name):
     client, spreadsheet_id = _get_sheet_client()
-    ws = client.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    _validate_spreadsheet_id(spreadsheet_id)
+    sh = client.open_by_key(spreadsheet_id)
+    ws = sh.worksheet(worksheet_name)
     return get_as_dataframe(ws, evaluate_formulas=True)
 
 class SheetConn:
@@ -196,14 +204,15 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
             if i < 2:
                 time.sleep(1)
     err_msg = str(last_error) if last_error else "不明なエラー"
-    _, _, service_email = _load_gsheets_settings()
+    spreadsheet_id, _, service_email = _load_gsheets_settings()
     if "PEM" in err_msg or "private_key" in err_msg.lower():
         hint = "Secrets の private_key が壊れています。Google Cloud から JSON を再ダウンロードして貼り直してください。"
     elif "404" in err_msg or "SpreadsheetNotFound" in err_msg:
         hint = (
-            f"404 = スプレッドシートにサービスアカウントからアクセスできません。"
-            f" Google スプレッドシートの「共有」に **{service_email}** を「編集者」で追加してください。"
-            f" また Google Cloud で「Google Sheets API」「Google Drive API」が有効か確認してください。"
+            "共有は設定済みでも 404 になる場合、Secrets の spreadsheet ID が"
+            " 今開いているスプレッドシートと一致していないことが多いです。"
+            " ブラウザの URL の /d/ と /edit の間の ID と Secrets を照合してください。"
+            " 設定変更後は Streamlit Cloud で「Reboot app」を実行してください。"
         )
     elif "403" in err_msg or "Permission" in err_msg:
         hint = f"権限不足です。{service_email} をスプレッドシートの「編集者」に追加してください。"
@@ -213,6 +222,9 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
         hint = "通信環境または Secrets 設定を確認してください。"
     st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。{hint}")
     st.caption(f"詳細: {err_msg}")
+    st.caption(f"接続先 ID: {spreadsheet_id} / アカウント: {service_email}")
+    st.cache_data.clear()
+    st.cache_resource.clear()
     if raise_on_fail:
         raise SheetReadError(err_msg)
     return pd.DataFrame(columns=default_columns) if default_columns else pd.DataFrame()
