@@ -77,7 +77,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12e"
+APP_VERSION = "2026-07-12f"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -217,6 +217,25 @@ def clean_data_str(val):
         s = ""
     return s
 
+def normalize_stored_model(category, stored_model):
+    """機種列を型式のみに解釈（旧形式 カテゴリ(型式) にも対応）"""
+    raw = clean_data_str(stored_model)
+    if not raw:
+        return ""
+    cat = clean_data_str(category)
+    if cat:
+        legacy_prefix = f"{cat}("
+        if raw.startswith(legacy_prefix) and raw.endswith(")"):
+            return raw[len(legacy_prefix):-1]
+    paren = re.match(r"^(.+)\(([^)]+)\)$", raw)
+    if paren:
+        return clean_data_str(paren.group(2))
+    return raw
+
+def model_for_spreadsheet(device_model):
+    """スプレッドシート「機種」列に保存する値（型式のみ）"""
+    return clean_data_str(device_model)
+
 def _sanitize_dataframe(df):
     """PyArrow 型の DataFrame が duckdb/Streamlit Cloud で segfault するのを防ぐ"""
     if df is None or df.empty:
@@ -296,7 +315,7 @@ def lookup_device_for_sticker(df_master, me_no):
         return {}
     row = matched.iloc[0]
     return {
-        "model_name": clean_data_str(row.get("機種", "")),
+        "model_name": normalize_stored_model(row.get("カテゴリ", ""), row.get("機種", "")),
         "me_no": clean_me,
         "serial_no": clean_data_str(row.get("シリアルNo", "")),
         "delivery_date": clean_data_str(row.get("購入日", "") or row.get("納入日", "") or row.get("納品日", "")),
@@ -492,7 +511,7 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
         "カテゴリ": device_category,
         "シリアルNo": protect_zeros(final_sn),
         "製造年月日": scan_year_val,
-        "機種": f"{device_category}({device_model})",
+        "機種": model_for_spreadsheet(device_model),
         "実施者": inspector,
         "判定": result,
         "詳細データ": detail_text,
@@ -593,7 +612,7 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
     return {
         "check_date": check_date,
         "final_me_no": final_me_no,
-        "model_name": f"{device_category}({device_model})",
+        "model_name": model_for_spreadsheet(device_model),
         "inspector": inspector,
         "result": result,
         "detail_text": detail_text,
@@ -1016,8 +1035,7 @@ with tabs[0]:
         final_me_no = clean_data_str(master_row.get("管理番号", ""))
         final_sn = clean_data_str(master_row.get("シリアルNo", ""))
         device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
-        full_meshun = clean_data_str(master_row.get("機種", ""))
-        device_model = full_meshun.replace(f"{device_category}(", "").replace(")", "")
+        device_model = normalize_stored_model(device_category, master_row.get("機種", ""))
         scan_year_val = clean_data_str(
             master_row.get("製造年月日", "") or master_row.get("製造年", "")
         )
@@ -1272,7 +1290,9 @@ with tabs[1]:
                         st.info(f"{clean_edit_me_no} のデータを修正します。直したい箇所を書き換えて「保存」を押してください。")
                         
                         new_cat = st.text_input("カテゴリ", value=clean_data_str(target_row.get("カテゴリ", "")))
-                        new_model = st.text_input("機種 (例: 輸液ポンプ(TE-131A))", value=clean_data_str(target_row.get("機種", "")))
+                        new_model = st.text_input("型式 (例: ACCURO)", value=normalize_stored_model(
+                            target_row.get("カテゴリ", ""), target_row.get("機種", "")
+                        ))
                         new_sn = st.text_input("シリアルNo", value=clean_data_str(target_row.get("シリアルNo", "")))
                         new_year = st.text_input("製造年月日", value=clean_data_str(target_row.get("製造年月日", "")))
                         
@@ -1298,7 +1318,7 @@ with tabs[1]:
 
                             mask_m = master_me_nos == clean_edit_me_no
                             df_master_edit.loc[mask_m, "カテゴリ"] = new_cat
-                            df_master_edit.loc[mask_m, "機種"] = new_model
+                            df_master_edit.loc[mask_m, "機種"] = model_for_spreadsheet(new_model)
                             df_master_edit.loc[mask_m, "シリアルNo"] = safe_new_sn
                             df_master_edit.loc[mask_m, "製造年月日"] = new_year
                             df_master_edit.loc[mask_m, "設置場所"] = new_location
@@ -1315,7 +1335,7 @@ with tabs[1]:
                                     mask_h = clean_hist_me == clean_edit_me_no
                                     if mask_h.any():
                                         df_hist_edit.loc[mask_h, "カテゴリ"] = new_cat
-                                        df_hist_edit.loc[mask_h, "機種"] = new_model
+                                        df_hist_edit.loc[mask_h, "機種"] = model_for_spreadsheet(new_model)
                                         df_hist_edit.loc[mask_h, "シリアルNo"] = safe_new_sn
                                         df_hist_edit.loc[mask_h, "製造年月日"] = new_year
                                         conn.update(worksheet="点検履歴", data=df_hist_edit)
@@ -1527,7 +1547,8 @@ with tabs[2]:
                 machine_rows = []
                 for _, row in df_master.iterrows():
                     me = clean_data_str(row.get("管理番号", "不明"))
-                    model = clean_data_str(row.get("機種", "不明な機器"))
+                    cat = clean_data_str(row.get("カテゴリ", ""))
+                    model = normalize_stored_model(cat, row.get("機種", "")) or "不明な機器"
                     machine_labels.append(f"{me} | {model}")
                     machine_rows.append(row)
 
@@ -1542,7 +1563,10 @@ with tabs[2]:
                 if selected_label:
                     idx = machine_labels.index(selected_label)
                     target_me = clean_data_str(machine_rows[idx].get("管理番号", "不明"))
-                    model_name = clean_data_str(machine_rows[idx].get("機種", "不明な機器"))
+                    model_name = normalize_stored_model(
+                        machine_rows[idx].get("カテゴリ", ""),
+                        machine_rows[idx].get("機種", ""),
+                    ) or "不明な機器"
                     
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
@@ -1576,7 +1600,10 @@ with tabs[2]:
 
                         if selected_date:
                             report_data = hist_df[hist_df["点検日"] == selected_date].iloc[0]
-                            report_model = clean_data_str(report_data.get("機種", model_name)) or model_name
+                            report_model = normalize_stored_model(
+                                report_data.get("カテゴリ", ""),
+                                report_data.get("機種", model_name),
+                            ) or model_name
                             render_inspection_report(
                                 report_data.get("点検日", selected_date),
                                 target_me,
@@ -1650,7 +1677,7 @@ with tabs[3]:
     with col_s1:
         sticker_model = st.text_input(
             "機種名",
-            placeholder="例: 輸液ポンプ(TE-131A)",
+            placeholder="例: ACCURO",
             key="sticker_model",
         )
         sticker_serial = st.text_input(
@@ -1775,8 +1802,8 @@ with tabs[4]:
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
                 final_vendor = txt_vendor if txt_vendor.strip() != "" else sel_vendor
 
-                if not man_me_no or not final_cat:
-                    st.error("管理番号 と 機器種類 は必須です！")
+                if not man_me_no or not final_cat or not clean_data_str(man_model):
+                    st.error("管理番号・機器種類・型式 は必須です！")
                 else:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
@@ -1792,7 +1819,7 @@ with tabs[4]:
                                 "管理番号": protect_zeros(man_me_no),
                                 "カテゴリ": final_cat,
                                 "メーカー": man_maker,
-                                "機種": f"{final_cat}({man_model})",
+                                "機種": model_for_spreadsheet(man_model),
                                 "シリアルNo": protect_zeros(man_sn),
                                 "製造年": man_year,
                                 "耐用年数": man_life,
@@ -1808,7 +1835,7 @@ with tabs[4]:
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
                             st.session_state["last_registered_sticker"] = {
-                                "model_name": f"{final_cat}({man_model})" if man_model else final_cat,
+                                "model_name": model_for_spreadsheet(man_model),
                                 "me_no": clean_data_str(man_me_no),
                                 "serial_no": clean_data_str(man_sn),
                                 "delivery_date": str(man_delivery),
