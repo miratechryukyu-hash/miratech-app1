@@ -77,16 +77,10 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12c"
+APP_VERSION = "2026-07-12e"
 
-TEPRA_APP_URL = "tepralink2://"
-TEPRA_ANDROID_INTENT = (
-    "intent://#Intent;action=android.intent.action.MAIN;"
-    "category=android.intent.category.LAUNCHER;"
-    "package=jp.co.kingjim.android.tepra2;"
-    "S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Djp.co.kingjim.android.tepra2;"
-    "end"
-)
+TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
+TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
 
 _run_cookie_manager = None
 
@@ -348,11 +342,8 @@ def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_ur
     st.markdown(sticker_html, unsafe_allow_html=True)
 
 def render_tepra_print_button(copy_text, button_key="tepra_print"):
-    """URLコピー（iframe内）＋ アプリ起動（iframe外の link_button）"""
+    """QR用URLをクリップボードにコピー（TEPRA Link 2 は手動起動）"""
     js_text = json.dumps(copy_text)
-    open_link_id = f"{button_key}_open_link"
-    android_url = json.dumps(TEPRA_ANDROID_INTENT)
-    ios_url = json.dumps(TEPRA_APP_URL)
 
     components.html(
         f"""
@@ -361,32 +352,19 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
                 width: 100%; padding: 14px 16px; font-size: 16px; font-weight: 700;
                 background: #0068c9; color: #fff; border: none; border-radius: 10px;
                 cursor: pointer; margin-top: 4px;
-            ">1. QR用URLをコピー</button>
+            ">QR用URLをコピー</button>
             <p id="{button_key}_msg" style="
                 font-size: 13px; color: #0068c9; margin: 8px 0 0; display: none; font-weight: 700;
-            ">URLをコピーしました。下の緑ボタンで TEPRA Link 2 を開いてください。</p>
-            <a id="{open_link_id}" href="{TEPRA_APP_URL}" target="_top" rel="noopener noreferrer" style="
-                display: block; width: 100%; box-sizing: border-box;
-                padding: 14px 16px; font-size: 16px; font-weight: 700;
-                background: #00875a; color: #fff; text-align: center;
-                text-decoration: none; border-radius: 10px; margin-top: 10px;
-            ">2. TEPRA Link 2 を開く</a>
+            ">URLをコピーしました。TEPRA Link 2 アプリを開いて貼り付けてください。</p>
         </div>
         <script>
         (function() {{
             var copyText = {js_text};
             var btn = document.getElementById("{button_key}");
             var msg = document.getElementById("{button_key}_msg");
-            var openLink = document.getElementById("{open_link_id}");
-            if (/Android/i.test(navigator.userAgent || "")) {{
-                openLink.href = {android_url};
-            }} else {{
-                openLink.href = {ios_url};
-            }}
             btn.addEventListener("click", function() {{
                 function onCopied() {{
                     msg.style.display = "block";
-                    openLink.style.background = "#ff6b00";
                 }}
                 function fallbackCopy() {{
                     var ta = document.createElement("textarea");
@@ -409,20 +387,17 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
         }})();
         </script>
         """,
-        height=165,
+        height=95,
     )
-    st.link_button(
-        "2. TEPRA Link 2 を開く（スマホはこちらをタップ）",
-        url=TEPRA_APP_URL,
-        use_container_width=True,
-        type="primary",
-        key=f"{button_key}_native_open",
-        help="iframe 内のボタンで起動しない場合は、このボタンを使ってください。",
+    st.info(
+        "TEPRA Link 2 はブラウザから直接起動できません。"
+        " URLをコピーしたあと、端末のホーム画面から TEPRA Link 2 を開いてください。"
     )
-    st.caption(
-        "TEPRA Link 2 をインストール済みの端末で、1. URLコピー → 2. アプリ起動 → "
-        "TEPRA で **新規ラベル → QRコード** → 貼り付け → 印刷"
-    )
+    col_ios, col_android = st.columns(2)
+    with col_ios:
+        st.link_button("iPhone/iPad: App Store", url=TEPRA_IOS_STORE, use_container_width=True)
+    with col_android:
+        st.link_button("Android: Google Play", url=TEPRA_ANDROID_STORE, use_container_width=True)
 
 def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_key="tepra_print"):
     qr_url = build_device_qr_url(me_no)
@@ -431,15 +406,14 @@ def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_
     render_tepra_print_button(qr_url, button_key=button_key)
     with st.expander("TEPRA Link 2 での操作手順"):
         st.markdown(
-            "1. **1. QR用URLをコピー** をタップ\n"
-            "2. **2. TEPRA Link 2 を開く** をタップ（起動しない場合はその下の緑ボタン）\n"
-            "3. TEPRA Link 2 で **新規ラベル → QRコード** を選択\n"
+            "1. **QR用URLをコピー** をタップ\n"
+            "2. ホーム画面から **TEPRA Link 2** アプリを開く\n"
+            "3. **新規ラベル → QRコード** を選択\n"
             "4. テキスト欄で **貼り付け（ペースト）**\n"
-            "5. **印刷** をタップ\n\n"
-            "**Android で起動しない場合:** TEPRA Link 2 がインストールされているか確認してください。\n"
-            "**iPhone/iPad:** Safari 以外（Chrome 等）でも、下の緑ボタンから起動できます。"
+            "5. ラベル幅 18mm 以上を推奨（公式マニュアル）\n"
+            "6. **印刷** をタップ\n\n"
+            "アプリ未インストールの場合は、上の App Store / Google Play リンクから入手してください。"
         )
-    st.code(qr_url, language="text")
 
 def parse_detail_text_to_table(detail_text):
     item_names, item_results, item_judges = [], [], []
@@ -1712,15 +1686,6 @@ with tabs[3]:
         render_sticker_workflow(
             s["model_name"], s["me_no"], s["serial_no"], s["delivery_date"],
             button_key="tepra_qr_tab",
-        )
-        qr_b64 = base64.b64encode(
-            generate_qr_png_bytes(build_device_qr_url(s["me_no"]))
-        ).decode()
-        st.download_button(
-            "QRコード画像をダウンロード",
-            data=base64.b64decode(qr_b64),
-            file_name=f"QR_{clean_data_str(s['me_no'])}.png",
-            mime="image/png",
         )
 
 # ====== タブ5：新規機器の登録 ======
