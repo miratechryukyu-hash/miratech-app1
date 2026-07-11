@@ -16,43 +16,47 @@ from pathlib import Path
 
 def _init_back_camera_input():
     """アウトカメラ撮影。ローカルfrontend → pipパッケージの順で利用"""
-    bundled = Path(__file__).resolve().parent / "back_camera_input_frontend"
-    if bundled.is_dir() and (bundled / "index.html").is_file():
-        component_func = components.declare_component(
-            "miratech_back_camera", path=str(bundled)
-        )
+    try:
+        bundled = Path(__file__).resolve().parent / "back_camera_input_frontend"
+        if bundled.is_dir() and (bundled / "index.html").is_file():
+            component_func = components.declare_component(
+                "miratech_back_camera", path=str(bundled)
+            )
 
-        def capture(height=450, width=500, key=None):
-            b64_data = component_func(height=height, width=width, key=key)
-            if b64_data is None:
-                return None
-            return BytesIO(base64.b64decode(b64_data.split(",")[1]))
+            def capture(height=450, width=500, key=None):
+                b64_data = component_func(height=height, width=width, key=key)
+                if b64_data is None:
+                    return None
+                return BytesIO(base64.b64decode(b64_data.split(",")[1]))
 
-        return capture
+            return capture
+    except Exception:
+        pass
 
     try:
         from streamlit_back_camera_input import back_camera_input as pip_capture
         return pip_capture
-    except ImportError:
+    except Exception:
         pass
 
     def unavailable(height=450, width=500, key=None):
-        st.error(
-            "カメラ機能を読み込めません。"
-            "back_camera_input_frontend フォルダをリポジトリに含めるか、"
-            "requirements.txt に streamlit-back-camera-input を追加してください。"
-        )
+        st.warning("カメラ機能は現在利用できません。手動入力で登録してください。")
         return None
 
     return unavailable
 
-back_camera_input = _init_back_camera_input()
+try:
+    back_camera_input = _init_back_camera_input()
+except Exception:
+    def back_camera_input(height=450, width=500, key=None):
+        st.warning("カメラ機能は現在利用できません。手動入力で登録してください。")
+        return None
 
 # ==========================================
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11a"
+APP_VERSION = "2026-07-11b"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
