@@ -56,7 +56,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11c"
+APP_VERSION = "2026-07-11d"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -1371,9 +1371,13 @@ with tabs[4]:
     reg_mode = st.radio("入力方法を選択してください", ["AI銘板スキャナー", "手動で情報を入力"], horizontal=True)
     
     # 既存データから候補を自動生成
-    df_m_reg = safe_read_worksheet(conn, "機器マスター")
-    history_categories = sorted({clean_data_str(c) for c in df_m_reg["カテゴリ"].unique() if clean_data_str(c)})
-    history_vendors = sorted({clean_data_str(v) for v in df_m_reg["購入業者"].unique() if clean_data_str(v)})
+    df_m_reg = safe_read_worksheet(conn, "機器マスター", ["管理番号", "カテゴリ", "購入業者"])
+    history_categories = []
+    if not df_m_reg.empty and "カテゴリ" in df_m_reg.columns:
+        history_categories = sorted({clean_data_str(c) for c in df_m_reg["カテゴリ"].unique() if clean_data_str(c)})
+    history_vendors = []
+    if not df_m_reg.empty and "購入業者" in df_m_reg.columns:
+        history_vendors = sorted({clean_data_str(v) for v in df_m_reg["購入業者"].unique() if clean_data_str(v)})
 
     if reg_mode == "AI銘板スキャナー":
         st.info("新しい機器の銘板を撮影すると、AIが情報を読み取ってくれます。")
