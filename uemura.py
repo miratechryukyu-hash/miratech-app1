@@ -77,8 +77,11 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11m"
+APP_VERSION = "2026-07-11n"
 AUTH_COOKIE_NAME = "miratech_auth"
+LAST_ACTIVE_COOKIE = "miratech_last_active"
+IDLE_HOURS = 5
+IDLE_SECONDS = IDLE_HOURS * 3600
 SESSION_MAX_AGE_DAYS = 30
 
 def display_dataframe(df, **kwargs):
@@ -595,9 +598,45 @@ def save_auth_cookie(user_id, user_name):
         expires_at=datetime.now() + timedelta(days=SESSION_MAX_AGE_DAYS),
         key="save_auth_cookie",
     )
+    touch_activity()
 
 def clear_auth_cookie():
-    get_cookie_manager().delete(AUTH_COOKIE_NAME, key="clear_auth_cookie")
+    cm = get_cookie_manager()
+    cm.delete(AUTH_COOKIE_NAME, key="clear_auth_cookie")
+    cm.delete(LAST_ACTIVE_COOKIE, key="clear_last_active_cookie")
+    st.session_state.pop("last_activity", None)
+
+def _get_last_activity():
+    if "last_activity" in st.session_state:
+        return st.session_state["last_activity"]
+    cookies = get_cookie_manager().get_all() or {}
+    raw = cookies.get(LAST_ACTIVE_COOKIE)
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+def touch_activity():
+    now = time.time()
+    st.session_state["last_activity"] = now
+    get_cookie_manager().set(
+        LAST_ACTIVE_COOKIE,
+        str(int(now)),
+        expires_at=datetime.now() + timedelta(days=SESSION_MAX_AGE_DAYS),
+        key="touch_last_active",
+    )
+
+def enforce_idle_timeout():
+    last = _get_last_activity()
+    if last is not None and time.time() - last > IDLE_SECONDS:
+        logout_user()
+        st.session_state["auto_logout_msg"] = (
+            f"{IDLE_HOURS}時間以上操作がなかったため、自動ログアウトしました。"
+        )
+        st.rerun()
+    touch_activity()
 
 def restore_auth_from_cookie():
     cookies = get_cookie_manager().get_all()
@@ -606,11 +645,22 @@ def restore_auth_from_cookie():
     token = cookies.get(AUTH_COOKIE_NAME)
     if not token:
         return False
+    last = cookies.get(LAST_ACTIVE_COOKIE)
+    if last:
+        try:
+            if time.time() - float(last) > IDLE_SECONDS:
+                clear_auth_cookie()
+                return False
+        except ValueError:
+            pass
     try:
         data = _auth_serializer().loads(token, max_age=SESSION_MAX_AGE_DAYS * 86400)
         st.session_state["logged_in_facility"] = data["facility"]
         st.session_state["current_user_name"] = data["name"]
         st.session_state["current_user_id"] = data.get("uid", "")
+        if last:
+            st.session_state["last_activity"] = float(last)
+        touch_activity()
         return True
     except Exception:
         clear_auth_cookie()
@@ -641,6 +691,9 @@ def check_auth():
     if restore_auth_from_cookie():
         return True
 
+    if st.session_state.get("auto_logout_msg"):
+        st.warning(st.session_state.pop("auto_logout_msg"))
+
     st.warning("miratech 琉球 医療機器管理システム")
     tab1, tab2 = st.tabs(["ログイン", "新規利用申請"])
 
@@ -650,7 +703,7 @@ def check_auth():
             input_id = st.text_input("ユーザーID")
             input_pass = st.text_input("パスワード", type="password")
             remember_me = st.checkbox(
-                f"ログイン状態を保持する（{SESSION_MAX_AGE_DAYS}日間）",
+                f"次回から自動ログイン（{IDLE_HOURS}時間操作がなければ自動ログアウト）",
                 value=True,
             )
             
@@ -681,6 +734,9 @@ def check_auth():
                                 st.session_state["current_user_id"] = clean_id
                                 if remember_me:
                                     save_auth_cookie(clean_id, st.session_state["current_user_name"])
+                                else:
+                                    clear_auth_cookie()
+                                    touch_activity()
                                 
                                 write_log(st.session_state["current_user_name"], "ログインしました")
                                 st.rerun()
@@ -737,6 +793,8 @@ def check_auth():
 
 if not check_auth():
     st.stop()
+
+enforce_idle_timeout()
 
 # --- ログイン後の変数 ---
 facility_name = st.session_state["logged_in_facility"]
