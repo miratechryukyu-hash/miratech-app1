@@ -77,7 +77,16 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11p"
+APP_VERSION = "2026-07-12a"
+
+TEPRA_APP_URL = "tepralink2://"
+TEPRA_ANDROID_INTENT = (
+    "intent://#Intent;action=android.intent.action.MAIN;"
+    "category=android.intent.category.LAUNCHER;"
+    "package=jp.co.kingjim.android.tepra2;"
+    "S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Djp.co.kingjim.android.tepra2;"
+    "end"
+)
 
 _run_cookie_manager = None
 
@@ -324,35 +333,45 @@ def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_ur
     st.markdown(sticker_html, unsafe_allow_html=True)
 
 def render_tepra_print_button(copy_text, button_key="tepra_print"):
+    """URLコピー（iframe内）＋ アプリ起動（iframe外の link_button）"""
     js_text = json.dumps(copy_text)
+    open_link_id = f"{button_key}_open_link"
+    android_url = json.dumps(TEPRA_ANDROID_INTENT)
+    ios_url = json.dumps(TEPRA_APP_URL)
+
     components.html(
         f"""
-        <div style="font-family: sans-serif;">
-            <button id="{button_key}" style="
+        <div style="font-family: sans-serif; max-width: 100%;">
+            <button id="{button_key}" type="button" style="
                 width: 100%; padding: 14px 16px; font-size: 16px; font-weight: 700;
                 background: #0068c9; color: #fff; border: none; border-radius: 10px;
                 cursor: pointer; margin-top: 4px;
-            ">🏷️ テプラ印刷（URLコピー ＋ TEPRA Link 2 起動）</button>
-            <p id="{button_key}_msg" style="font-size: 12px; color: #0068c9; margin: 8px 0 0; display: none;">
-                URLをコピーしました。TEPRA Link 2 を起動します…
-            </p>
+            ">① QR用URLをコピー</button>
+            <p id="{button_key}_msg" style="
+                font-size: 13px; color: #0068c9; margin: 8px 0 0; display: none; font-weight: 700;
+            ">✓ URLをコピーしました。下の緑ボタンで TEPRA Link 2 を開いてください。</p>
+            <a id="{open_link_id}" href="{TEPRA_APP_URL}" target="_top" rel="noopener noreferrer" style="
+                display: block; width: 100%; box-sizing: border-box;
+                padding: 14px 16px; font-size: 16px; font-weight: 700;
+                background: #00875a; color: #fff; text-align: center;
+                text-decoration: none; border-radius: 10px; margin-top: 10px;
+            ">② TEPRA Link 2 を開く</a>
         </div>
         <script>
         (function() {{
             var copyText = {js_text};
             var btn = document.getElementById("{button_key}");
             var msg = document.getElementById("{button_key}_msg");
+            var openLink = document.getElementById("{open_link_id}");
+            if (/Android/i.test(navigator.userAgent || "")) {{
+                openLink.href = {android_url};
+            }} else {{
+                openLink.href = {ios_url};
+            }}
             btn.addEventListener("click", function() {{
-                function openTepra() {{
+                function onCopied() {{
                     msg.style.display = "block";
-                    window.location.href = "tepralink2://";
-                }}
-                if (navigator.clipboard && navigator.clipboard.writeText) {{
-                    navigator.clipboard.writeText(copyText).then(openTepra).catch(function() {{
-                        fallbackCopy();
-                    }});
-                }} else {{
-                    fallbackCopy();
+                    openLink.style.background = "#ff6b00";
                 }}
                 function fallbackCopy() {{
                     var ta = document.createElement("textarea");
@@ -364,27 +383,46 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
                     ta.select();
                     try {{ document.execCommand("copy"); }} catch (e) {{}}
                     document.body.removeChild(ta);
-                    openTepra();
+                    onCopied();
+                }}
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(copyText).then(onCopied).catch(fallbackCopy);
+                }} else {{
+                    fallbackCopy();
                 }}
             }});
         }})();
         </script>
         """,
-        height=90,
+        height=165,
+    )
+    st.link_button(
+        "② TEPRA Link 2 を開く（スマホはこちらをタップ）",
+        url=TEPRA_APP_URL,
+        use_container_width=True,
+        type="primary",
+        key=f"{button_key}_native_open",
+        help="iframe 内のボタンで起動しない場合は、このボタンを使ってください。",
+    )
+    st.caption(
+        "TEPRA Link 2 をインストール済みの端末で、① URLコピー → ② アプリ起動 → "
+        "TEPRA で **新規ラベル → QRコード** → 貼り付け → 印刷"
     )
 
 def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_key="tepra_print"):
     qr_url = build_device_qr_url(me_no)
     st.markdown("#### 管理番号シール プレビュー")
     render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url)
-    st.caption("テプラ印刷ボタンを押すと QR用URL がクリップボードにコピーされ、TEPRA Link 2 が起動します。")
     render_tepra_print_button(qr_url, button_key=button_key)
     with st.expander("TEPRA Link 2 での操作手順"):
         st.markdown(
-            "1. **テプラ印刷** ボタンをタップ（URLコピー ＋ アプリ起動）\n"
-            "2. TEPRA Link 2 で **新規ラベル → QRコード** を選択\n"
-            "3. テキスト欄で **貼り付け（ペースト）**\n"
-            "4. **印刷** をタップ"
+            "1. **① QR用URLをコピー** をタップ\n"
+            "2. **② TEPRA Link 2 を開く** をタップ（起動しない場合はその下の緑ボタン）\n"
+            "3. TEPRA Link 2 で **新規ラベル → QRコード** を選択\n"
+            "4. テキスト欄で **貼り付け（ペースト）**\n"
+            "5. **印刷** をタップ\n\n"
+            "**Android で起動しない場合:** TEPRA Link 2 がインストールされているか確認してください。\n"
+            "**iPhone/iPad:** Safari 以外（Chrome 等）でも、下の緑ボタンから起動できます。"
         )
     st.code(qr_url, language="text")
 
