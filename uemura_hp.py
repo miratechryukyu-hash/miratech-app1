@@ -56,7 +56,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11a"
+APP_VERSION = "2026-07-11c"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
