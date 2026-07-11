@@ -75,20 +75,33 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11i"
+APP_VERSION = "2026-07-11j"
+
+def _normalize_spreadsheet_id(raw):
+    s = str(raw).strip().strip('"').strip("'")
+    if "/spreadsheets/d/" in s:
+        match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", s)
+        if match:
+            return match.group(1)
+    return s
+
+def _load_gsheets_settings():
+    gs = st.secrets["connections"]["gsheets"]
+    spreadsheet_id = _normalize_spreadsheet_id(gs.get("spreadsheet", ""))
+    config = dict(gs["configuration"])
+    pk = config.get("private_key", "")
+    if "\\n" in pk:
+        config["private_key"] = pk.replace("\\n", "\n")
+    return spreadsheet_id, config, config.get("client_email", "")
 
 class SheetReadError(Exception):
     """スプレッドシート読み込み失敗"""
 
 @st.cache_resource
 def _get_sheet_client():
-    gs = st.secrets["connections"]["gsheets"]
-    config = dict(gs["configuration"])
-    pk = config.get("private_key", "")
-    if "\\n" in pk:
-        config["private_key"] = pk.replace("\\n", "\n")
+    spreadsheet_id, config, _ = _load_gsheets_settings()
     client = gspread.service_account_from_dict(config)
-    return client, gs["spreadsheet"]
+    return client, spreadsheet_id
 
 @st.cache_data(ttl=15, show_spinner=False)
 def _cached_sheet_read(worksheet_name):
@@ -183,10 +196,17 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
             if i < 2:
                 time.sleep(1)
     err_msg = str(last_error) if last_error else "不明なエラー"
+    _, _, service_email = _load_gsheets_settings()
     if "PEM" in err_msg or "private_key" in err_msg.lower():
         hint = "Secrets の private_key が壊れています。Google Cloud から JSON を再ダウンロードして貼り直してください。"
-    elif "SpreadsheetNotFound" in err_msg or "404" in err_msg:
-        hint = "spreadsheet の ID が間違っているか、サービスアカウントに共有されていません。"
+    elif "404" in err_msg or "SpreadsheetNotFound" in err_msg:
+        hint = (
+            f"404 = スプレッドシートにサービスアカウントからアクセスできません。"
+            f" Google スプレッドシートの「共有」に **{service_email}** を「編集者」で追加してください。"
+            f" また Google Cloud で「Google Sheets API」「Google Drive API」が有効か確認してください。"
+        )
+    elif "403" in err_msg or "Permission" in err_msg:
+        hint = f"権限不足です。{service_email} をスプレッドシートの「編集者」に追加してください。"
     elif "Worksheet" in err_msg:
         hint = f"シート名「{worksheet_name}」がスプレッドシート内にありません。"
     else:
