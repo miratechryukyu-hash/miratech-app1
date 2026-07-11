@@ -77,15 +77,23 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11o"
+APP_VERSION = "2026-07-11p"
+
+_run_cookie_manager = None
 
 def get_cookie_manager():
-    """CookieManager は cache 不可（widget のため session_state で1回だけ生成）"""
-    if "miratech_cookie_manager" not in st.session_state:
-        st.session_state.miratech_cookie_manager = stx.CookieManager(
-            key="miratech_cookie_manager"
-        )
-    return st.session_state.miratech_cookie_manager
+    """CookieManager は1実行につき1回だけ生成（session_state 保存は不可）"""
+    global _run_cookie_manager
+    if _run_cookie_manager is None:
+        _run_cookie_manager = stx.CookieManager(key="miratech_cookie_manager")
+    return _run_cookie_manager
+
+def read_browser_cookies():
+    """__init__ で読み込んだ cookies を返す（get_all の二重呼び出しを避ける）"""
+    cookies = get_cookie_manager().cookies
+    if cookies is None:
+        return None
+    return cookies if isinstance(cookies, dict) else {}
 
 AUTH_COOKIE_NAME = "miratech_auth"
 LAST_ACTIVE_COOKIE = "miratech_last_active"
@@ -679,7 +687,7 @@ def check_auth():
     if st.session_state["logged_in_facility"] is not None:
         return True
 
-    cookies = get_cookie_manager().get_all()
+    cookies = read_browser_cookies()
     if cookies is None:
         st.stop()
 
