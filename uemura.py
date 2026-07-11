@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from gspread_dataframe import get_as_dataframe, set_with_dataframe
 import pandas as pd
 from datetime import datetime, date
 import qrcode
@@ -74,7 +75,40 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11g"
+APP_VERSION = "2026-07-11h"
+
+@st.cache_resource
+def _get_sheet_client():
+    gs = st.secrets["connections"]["gsheets"]
+    client = gspread.service_account_from_dict(dict(gs["configuration"]))
+    return client, gs["spreadsheet"]
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _cached_sheet_read(worksheet_name):
+    client, spreadsheet_id = _get_sheet_client()
+    ws = client.open_by_key(spreadsheet_id).worksheet(worksheet_name)
+    return get_as_dataframe(ws, evaluate_formulas=True)
+
+class SheetConn:
+    """gspread 直結（duckdb 不使用・Cloud segfault 回避）"""
+
+    def read(self, worksheet=None, ttl=15, **kwargs):
+        df = _cached_sheet_read(worksheet)
+        return df if df is not None else pd.DataFrame()
+
+    def update(self, worksheet=None, data=None, **kwargs):
+        st.cache_data.clear()
+        client, spreadsheet_id = _get_sheet_client()
+        ws = client.open_by_key(spreadsheet_id).worksheet(worksheet)
+        write_df = data.fillna("") if data is not None else pd.DataFrame()
+        set_with_dataframe(
+            ws, write_df,
+            include_index=False, include_column_header=True, resize=True,
+        )
+
+@st.cache_resource
+def get_sheet_conn():
+    return SheetConn()
 
 def _get_gemini_api_key():
     return st.secrets.get("GEMINI_API_KEY", "")
@@ -459,7 +493,7 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
 # --- ログ書き込み用共通関数 ---
 def write_log(user_name, action):
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
+        conn = get_sheet_conn()
         df_logs = safe_read_worksheet(conn, "アクセスログ", ["日時", "ユーザー名", "アクション"])
         
         new_log = pd.DataFrame([{
@@ -498,7 +532,7 @@ def check_auth():
                 clean_pass = input_pass.strip()
                 
                 try:
-                    conn = st.connection("gsheets", type=GSheetsConnection)
+                    conn = get_sheet_conn()
                     df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
                     
                     clean_db_ids = clean_series(df_users["ユーザーID"])
@@ -541,7 +575,7 @@ def check_auth():
                         st.error("⚠️ エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
                     else:
                         try:
-                            conn = st.connection("gsheets", type=GSheetsConnection)
+                            conn = get_sheet_conn()
                             df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
 
                             if new_id in df_users["ユーザーID"].astype(str).values:
@@ -577,7 +611,7 @@ BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装
 
 # AI設定（ログイン後すぐに gRPC を読み込まないよう REST API は利用時のみ呼び出す）
 try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    conn = get_sheet_conn()
     df_master_global = safe_read_worksheet(conn, "機器マスター")
 except Exception as e:
     st.error("Googleスプレッドシートに接続できません。Streamlit Cloud の Secrets 設定を確認してください。")
