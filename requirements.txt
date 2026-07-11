@@ -1,7 +1,9 @@
 streamlit
+streamlit-back-camera-input
 pandas
 plotly
 st-gsheets-connection
 qrcode
 google-generativeai>=0.5.2
-streamlit-back-camera-input
+pillow
+requests
