@@ -1,9 +1,11 @@
 import streamlit as st
 import streamlit.components.v1 as components
+import extra_streamlit_components as stx
 import gspread
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from itsdangerous import URLSafeTimedSerializer
 import qrcode
 from io import BytesIO
 import json
@@ -75,7 +77,9 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11l"
+APP_VERSION = "2026-07-11m"
+AUTH_COOKIE_NAME = "miratech_auth"
+SESSION_MAX_AGE_DAYS = 30
 
 def display_dataframe(df, **kwargs):
     """Cloud 上の pyarrow segfault 回避のため文字列型に統一して表示"""
@@ -566,6 +570,59 @@ def write_log(user_name, action):
         pass 
 
 # ==========================================
+# ログインセッション（Cookie で保持）
+# ==========================================
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager(key="miratech_cookie_manager")
+
+def _auth_serializer():
+    secret = st.secrets.get(
+        "AUTH_SECRET",
+        st.secrets.get("GEMINI_API_KEY", "miratech-session-secret"),
+    )
+    return URLSafeTimedSerializer(str(secret), salt="miratech-auth")
+
+def save_auth_cookie(user_id, user_name):
+    token = _auth_serializer().dumps({
+        "uid": user_id,
+        "name": user_name,
+        "facility": "miratech 琉球 管理センター",
+    })
+    get_cookie_manager().set(
+        AUTH_COOKIE_NAME,
+        token,
+        expires_at=datetime.now() + timedelta(days=SESSION_MAX_AGE_DAYS),
+        key="save_auth_cookie",
+    )
+
+def clear_auth_cookie():
+    get_cookie_manager().delete(AUTH_COOKIE_NAME, key="clear_auth_cookie")
+
+def restore_auth_from_cookie():
+    cookies = get_cookie_manager().get_all()
+    if not cookies:
+        return False
+    token = cookies.get(AUTH_COOKIE_NAME)
+    if not token:
+        return False
+    try:
+        data = _auth_serializer().loads(token, max_age=SESSION_MAX_AGE_DAYS * 86400)
+        st.session_state["logged_in_facility"] = data["facility"]
+        st.session_state["current_user_name"] = data["name"]
+        st.session_state["current_user_id"] = data.get("uid", "")
+        return True
+    except Exception:
+        clear_auth_cookie()
+        return False
+
+def logout_user():
+    st.session_state["logged_in_facility"] = None
+    st.session_state["current_user_name"] = None
+    st.session_state.pop("current_user_id", None)
+    clear_auth_cookie()
+
+# ==========================================
 # ログイン認証
 # ==========================================
 def check_auth():
@@ -577,6 +634,13 @@ def check_auth():
     if st.session_state["logged_in_facility"] is not None:
         return True
 
+    cookies = get_cookie_manager().get_all()
+    if cookies is None:
+        st.stop()
+
+    if restore_auth_from_cookie():
+        return True
+
     st.warning("miratech 琉球 医療機器管理システム")
     tab1, tab2 = st.tabs(["ログイン", "新規利用申請"])
 
@@ -585,6 +649,10 @@ def check_auth():
             st.info("セキュリティ保護のため、ログインが必要です。")
             input_id = st.text_input("ユーザーID")
             input_pass = st.text_input("パスワード", type="password")
+            remember_me = st.checkbox(
+                f"ログイン状態を保持する（{SESSION_MAX_AGE_DAYS}日間）",
+                value=True,
+            )
             
             if st.form_submit_button("ログイン", use_container_width=True):
                 clean_id = input_id.strip()
@@ -610,6 +678,9 @@ def check_auth():
                             if saved_status == "OK":
                                 st.session_state["logged_in_facility"] = "miratech 琉球 管理センター"
                                 st.session_state["current_user_name"] = clean_data_str(user_info["名前"])
+                                st.session_state["current_user_id"] = clean_id
+                                if remember_me:
+                                    save_auth_cookie(clean_id, st.session_state["current_user_name"])
                                 
                                 write_log(st.session_state["current_user_name"], "ログインしました")
                                 st.rerun()
@@ -682,8 +753,7 @@ except Exception as e:
     st.error("Googleスプレッドシートに接続できません。Streamlit Cloud の Secrets 設定を確認してください。")
     st.caption(f"詳細: {e}")
     if st.button("ログアウトしてやり直す"):
-        st.session_state["logged_in_facility"] = None
-        st.session_state["current_user_name"] = None
+        logout_user()
         st.rerun()
     st.stop()
 # 機器マスターに登録済みの購入業者・機器種類を候補に反映
@@ -765,8 +835,7 @@ if url_me_no:
 
     if st.button("ログアウト"):
         write_log(st.session_state["current_user_name"], "ログアウト")
-        st.session_state["logged_in_facility"] = None
-        st.session_state["current_user_name"] = None
+        logout_user()
         st.query_params.clear() 
         st.rerun()
         
@@ -779,8 +848,7 @@ st.sidebar.success(f"ログイン中: {st.session_state.get('current_user_name',
 st.sidebar.caption(f"App {APP_VERSION}")
 if st.sidebar.button("ログアウト"):
     write_log(st.session_state["current_user_name"], "ログアウトしました")
-    st.session_state["logged_in_facility"] = None
-    st.session_state["current_user_name"] = None
+    logout_user()
     st.rerun()
 
 st.markdown(f"### {facility_name}")
