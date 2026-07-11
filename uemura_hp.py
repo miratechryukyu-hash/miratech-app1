@@ -26,7 +26,7 @@ def _is_streamlit_cloud():
     return host.endswith(".streamlit.app")
 
 def _upload_fallback_camera(height=450, width=500, key=None):
-    st.caption("📷 スマホの場合「ファイルを選択」→「写真を撮る」でアウトカメラが使えます")
+    st.caption("スマホの場合「ファイルを選択」→「写真を撮る」でアウトカメラが使えます")
     uploaded = st.file_uploader(
         "銘板写真を撮影または選択",
         type=["jpg", "jpeg", "png", "webp"],
@@ -77,7 +77,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12a"
+APP_VERSION = "2026-07-12c"
 
 TEPRA_APP_URL = "tepralink2://"
 TEPRA_ANDROID_INTENT = (
@@ -305,8 +305,23 @@ def lookup_device_for_sticker(df_master, me_no):
         "model_name": clean_data_str(row.get("機種", "")),
         "me_no": clean_me,
         "serial_no": clean_data_str(row.get("シリアルNo", "")),
-        "delivery_date": clean_data_str(row.get("納入日", "")),
+        "delivery_date": clean_data_str(row.get("購入日", "") or row.get("納入日", "") or row.get("納品日", "")),
     }
+
+def apply_sticker_master_lookup(me_no, master_info):
+    """管理番号変更時、key 付き text_input の session_state にマスター値を反映"""
+    lookup_key = clean_data_str(me_no)
+    if not lookup_key:
+        st.session_state.pop("_sticker_lookup_me", None)
+        return
+    if st.session_state.get("_sticker_lookup_me") == lookup_key:
+        return
+    st.session_state["_sticker_lookup_me"] = lookup_key
+    st.session_state["sticker_me_display"] = lookup_key
+    if master_info:
+        st.session_state["sticker_model"] = master_info.get("model_name", "")
+        st.session_state["sticker_serial"] = master_info.get("serial_no", "")
+        st.session_state["sticker_delivery"] = master_info.get("delivery_date", "")
 
 def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url=None):
     if not qr_url:
@@ -322,7 +337,7 @@ def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_ur
                 <div><b>機種名：</b>{html.escape(clean_data_str(model_name))}</div>
                 <div><b>管理番号：</b>{html.escape(clean_data_str(me_no))}</div>
                 <div><b>シリアル：</b>{html.escape(clean_data_str(serial_no))}</div>
-                <div><b>納品日：</b>{html.escape(clean_data_str(delivery_date))}</div>
+                <div><b>購入日：</b>{html.escape(clean_data_str(delivery_date))}</div>
             </div>
             <div style="flex-shrink: 0; text-align: center;">
                 <img src="data:image/png;base64,{qr_b64}" width="96" height="96" alt="QRコード">
@@ -346,16 +361,16 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
                 width: 100%; padding: 14px 16px; font-size: 16px; font-weight: 700;
                 background: #0068c9; color: #fff; border: none; border-radius: 10px;
                 cursor: pointer; margin-top: 4px;
-            ">① QR用URLをコピー</button>
+            ">1. QR用URLをコピー</button>
             <p id="{button_key}_msg" style="
                 font-size: 13px; color: #0068c9; margin: 8px 0 0; display: none; font-weight: 700;
-            ">✓ URLをコピーしました。下の緑ボタンで TEPRA Link 2 を開いてください。</p>
+            ">URLをコピーしました。下の緑ボタンで TEPRA Link 2 を開いてください。</p>
             <a id="{open_link_id}" href="{TEPRA_APP_URL}" target="_top" rel="noopener noreferrer" style="
                 display: block; width: 100%; box-sizing: border-box;
                 padding: 14px 16px; font-size: 16px; font-weight: 700;
                 background: #00875a; color: #fff; text-align: center;
                 text-decoration: none; border-radius: 10px; margin-top: 10px;
-            ">② TEPRA Link 2 を開く</a>
+            ">2. TEPRA Link 2 を開く</a>
         </div>
         <script>
         (function() {{
@@ -397,7 +412,7 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
         height=165,
     )
     st.link_button(
-        "② TEPRA Link 2 を開く（スマホはこちらをタップ）",
+        "2. TEPRA Link 2 を開く（スマホはこちらをタップ）",
         url=TEPRA_APP_URL,
         use_container_width=True,
         type="primary",
@@ -405,7 +420,7 @@ def render_tepra_print_button(copy_text, button_key="tepra_print"):
         help="iframe 内のボタンで起動しない場合は、このボタンを使ってください。",
     )
     st.caption(
-        "TEPRA Link 2 をインストール済みの端末で、① URLコピー → ② アプリ起動 → "
+        "TEPRA Link 2 をインストール済みの端末で、1. URLコピー → 2. アプリ起動 → "
         "TEPRA で **新規ラベル → QRコード** → 貼り付け → 印刷"
     )
 
@@ -416,8 +431,8 @@ def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_
     render_tepra_print_button(qr_url, button_key=button_key)
     with st.expander("TEPRA Link 2 での操作手順"):
         st.markdown(
-            "1. **① QR用URLをコピー** をタップ\n"
-            "2. **② TEPRA Link 2 を開く** をタップ（起動しない場合はその下の緑ボタン）\n"
+            "1. **1. QR用URLをコピー** をタップ\n"
+            "2. **2. TEPRA Link 2 を開く** をタップ（起動しない場合はその下の緑ボタン）\n"
             "3. TEPRA Link 2 で **新規ラベル → QRコード** を選択\n"
             "4. テキスト欄で **貼り付け（ペースト）**\n"
             "5. **印刷** をタップ\n\n"
@@ -469,7 +484,7 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     if memo and str(memo).strip().lower() not in ("", "nan"):
         st.info(f"備考・処置内容:\n{memo}")
 
-    st.info("💡 キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
+    st.info("キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
 
 def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
                               scan_year_val, check_date, check_type, inspector, result,
@@ -600,7 +615,7 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
     )
     write_log(inspector, f"{final_me_no} の点検を登録")
     st.session_state["last_check_date"] = check_date
-    st.session_state["check_registered_msg"] = f"✅ {final_me_no} の点検データを登録しました。"
+    st.session_state["check_registered_msg"] = f"{final_me_no} の点検データを登録しました。"
     return {
         "check_date": check_date,
         "final_me_no": final_me_no,
@@ -796,7 +811,7 @@ def check_auth():
     with tab2:
         st.write("初めて利用される方は、こちらから利用申請を行ってください。")
         with st.form("register_form"):
-            st.caption("⚠️ **注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
+            st.caption("**注意**: ユーザーIDとパスワードは **半角英数字のみ** で入力してください（漢字・ひらがな・カタカナ等は使用できません）。")
             
             new_id = st.text_input("希望するユーザーID", placeholder="例: user123")
             new_name = st.text_input("お名前（フルネーム）", placeholder="例: 安富 翔")
@@ -805,7 +820,7 @@ def check_auth():
             if st.form_submit_button("利用申請を送信", use_container_width=True):
                 if new_id and new_name and new_pass:
                     if not re.match(r'^[a-zA-Z0-9]+$', new_id) or not re.match(r'^[a-zA-Z0-9]+$', new_pass):
-                        st.error("⚠️ エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
+                        st.error("エラー: ユーザーIDとパスワードに日本語や記号が含まれています。「半角英数字のみ」で入力してやり直してください。")
                     else:
                         try:
                             conn = get_sheet_conn()
@@ -1187,7 +1202,7 @@ with tabs[0]:
         pending = st.session_state.get("pending_check_save")
         if pending:
             st.markdown("---")
-            st.warning("⚠️ 未設定の項目があります。保存しますか？")
+            st.warning("未設定の項目があります。保存しますか？")
             st.write("未設定の項目: " + "、".join(pending.get("incomplete_items", [])))
             col_yes, col_no = st.columns(2)
             with col_yes:
@@ -1302,7 +1317,7 @@ with tabs[1]:
                             saved_delivery_date = pd.to_datetime(saved_delivery_str).date()
                         except:
                             saved_delivery_date = date.today()
-                        new_delivery = st.date_input("納入日", value=saved_delivery_date, min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+                        new_delivery = st.date_input("購入日", value=saved_delivery_date, min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
 
                         if st.form_submit_button("変更を上書き保存する", type="primary"):
                             safe_new_sn = protect_zeros(new_sn)
@@ -1343,7 +1358,7 @@ with tabs[1]:
 
     # 【新機能】未対応の故障報告の一覧から修理・点検・報告書生成を一括で行う
     with sub_m3:
-        st.markdown("#### 🛠️ 故障対応・修理完了の入力")
+        st.markdown("#### 故障対応・修理完了の入力")
         st.write("現場から上がった故障報告に対して、修理対応と安全点検の結果を入力します。")
 
         try:
@@ -1358,7 +1373,7 @@ with tabs[1]:
                 df_pending = df_failed[df_failed["対応状況"].astype(str).str.strip() == "未対応"]
                 
                 if df_pending.empty:
-                    st.success("✅ 現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
+                    st.success("現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
                 else:
                     st.warning(f"現在、**{len(df_pending)} 件** の未対応の故障報告があります。")
                     
@@ -1380,7 +1395,7 @@ with tabs[1]:
                         repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
                         repair_detail = st.text_area("修理・処置内容", placeholder="例: 包包交換、内部清掃、設定リセット実施")
                         
-                        st.write("▼ 修理後の安全点検チェック（エビデンス確保）")
+                        st.write("修理後の安全点検チェック（エビデンス確保）")
                         chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
                         chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
                         chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
@@ -1436,12 +1451,12 @@ with tabs[1]:
                                 conn.update(worksheet="機器マスター", data=df_m_lookup)
                         
                         st.cache_data.clear()
-                        st.success(f"🎉 {target_me} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
+                        st.success(f"{target_me} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
                         write_log(st.session_state.get("current_user_name", "ME"), f"{target_me} の故障対応・修理点検を完了")
                         
                         # 4. その場で即座に印刷・PDF化できる「修理・点検報告書」を画面に出現させる
                         st.markdown("---")
-                        st.subheader("🖨️ 提出用 報告書の印刷レイアウト")
+                        st.subheader("提出用 報告書の印刷レイアウト")
                         
                         html_report = f"""
                         <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
@@ -1512,7 +1527,7 @@ with tabs[1]:
                         </div>
                         """
                         st.markdown(html_report, unsafe_allow_html=True)
-                        st.info("💡 このまま紙に印刷またはPDF化する場合は、ブラウザの印刷機能（Ctrl + P 又は Cmd + P）を実行してください。自動的にキレイなA4報告書枠のみが印刷されます。")
+                        st.info("このまま紙に印刷またはPDF化する場合は、ブラウザの印刷機能（Ctrl + P 又は Cmd + P）を実行してください。自動的にキレイなA4報告書枠のみが印刷されます。")
                         st.button("次の対応入力をする（画面をリフレッシュ）")
 
         except Exception as e:
@@ -1642,35 +1657,40 @@ with tabs[3]:
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
     df_m_qr = safe_read_worksheet(conn, "機器マスター")
-    target_qr_me = st.text_input("管理番号を入力", placeholder="例: INP0001", key="sticker_me_no")
+    for field_key in ("sticker_model", "sticker_serial", "sticker_me_display", "sticker_delivery"):
+        st.session_state.setdefault(field_key, "")
 
-    master_info = lookup_device_for_sticker(df_m_qr, target_qr_me) if target_qr_me else {}
+    target_qr_me = st.text_input("管理番号を入力", placeholder="例: INP0001", key="sticker_me_no")
+    master_info = lookup_device_for_sticker(df_m_qr, target_qr_me) if target_qr_me.strip() else {}
+    apply_sticker_master_lookup(target_qr_me, master_info)
+
     if master_info:
         st.info("機器マスターから情報を読み込みました。")
+    elif target_qr_me.strip():
+        st.warning(
+            f"管理番号「{clean_data_str(target_qr_me)}」は機器マスターに見つかりません。"
+            " 手入力するか、管理番号の表記（例: INP0001）を確認してください。"
+        )
 
     col_s1, col_s2 = st.columns(2)
     with col_s1:
         sticker_model = st.text_input(
             "機種名",
-            value=master_info.get("model_name", ""),
             placeholder="例: 輸液ポンプ(TE-131A)",
             key="sticker_model",
         )
         sticker_serial = st.text_input(
             "シリアルNo",
-            value=master_info.get("serial_no", ""),
             placeholder="例: 12345678",
             key="sticker_serial",
         )
     with col_s2:
         sticker_me = st.text_input(
             "管理番号（表示用）",
-            value=master_info.get("me_no", target_qr_me),
             key="sticker_me_display",
         )
         sticker_delivery = st.text_input(
-            "納品日",
-            value=master_info.get("delivery_date", ""),
+            "購入日",
             placeholder="例: 2024-03-15",
             key="sticker_delivery",
         )
@@ -1724,7 +1744,7 @@ with tabs[4]:
         if not _get_gemini_api_key():
             st.error("AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に GEMINI_API_KEY を設定してください。")
         else:
-            st.caption("📷 銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
+            st.caption("銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
             try:
                 img_file = back_camera_input(key="ai_camera", height=560)
             except Exception as e:
@@ -1764,27 +1784,27 @@ with tabs[4]:
 
     if show_form:
         with st.form("direct_reg_form"):
-            man_me_no = st.text_input("①管理番号 (必須)", placeholder="例: Y0001")
+            man_me_no = st.text_input("1. 管理番号 (必須)", placeholder="例: Y0001")
             
-            st.write("▼ ②機器種類（カテゴリ）※必須")
+            st.write("2. 機器種類（カテゴリ）※必須")
             sel_cat = st.selectbox(" 過去のリストから選ぶ", [""] + history_categories)
             txt_cat = st.text_input(" リストにない場合はここに直接入力", placeholder="例: 新しいポンプ")
             
-            st.write("▼ ③購入業者")
+            st.write("3. 購入業者")
             sel_vendor = st.selectbox("過去のリストから選ぶ", [""] + history_vendors)
             txt_vendor = st.text_input("リストにない場合はここに直接入力", placeholder="例: 〇〇医療器")
             
             st.markdown("---")
-            man_maker = st.text_input("④メーカー", placeholder="例: テルモ")
-            man_model = st.text_input("⑤型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
-            man_sn = st.text_input("⑥シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
-            man_year = st.text_input("⑦製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
-            man_life = st.number_input("⑧耐用年数（年）", min_value=0, value=6, step=1)
+            man_maker = st.text_input("4. メーカー", placeholder="例: テルモ")
+            man_model = st.text_input("5. 型式 (機種)", value=st.session_state.get("scan_model", ""), placeholder="例: TE-131A")
+            man_sn = st.text_input("6. シリアルNo", value=st.session_state.get("scan_sn", ""), placeholder="例: 12345678")
+            man_year = st.text_input("7. 製造年月日", value=st.session_state.get("scan_year", ""), placeholder="例: 2014")
+            man_life = st.number_input("8. 耐用年数（年）", min_value=0, value=6, step=1)
             
-            man_location = st.text_input("⑨設置場所", placeholder="例: 一般病棟")
-            man_acq_type = st.selectbox("⑩導入形態", ["購入", "リース", "レンタル", "その他"])
-            man_price = st.text_input("⑪購入金額", placeholder="例: 1500000")
-            man_delivery = st.date_input("⑫納入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            man_location = st.text_input("9. 設置場所", placeholder="例: 一般病棟")
+            man_acq_type = st.selectbox("10. 導入形態", ["購入", "リース", "レンタル", "その他"])
+            man_price = st.text_input("11. 購入金額", placeholder="例: 1500000")
+            man_delivery = st.date_input("12. 購入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
@@ -1796,11 +1816,11 @@ with tabs[4]:
                     final_cat = clean_data_str(final_cat)
                     final_vendor = clean_data_str(final_vendor)
                     try:
-                        # 💡 【修正】"ME No." ではなく "管理番号" を探すように変更
+                        # "ME No." ではなく "管理番号" を探すように変更
                         clean_db_me_reg = clean_series(df_m_reg["管理番号"])
                         
                         if clean_data_str(man_me_no) in clean_db_me_reg.values:
-                            # 💡 【修正】エラーメッセージの "ME No." も "管理番号" に変更
+                            # エラーメッセージの "ME No." も "管理番号" に変更
                             st.error(f"{man_me_no} は既に登録されています。別の管理番号を指定してください。")
                         else:
                             new_master_row = pd.DataFrame([{
