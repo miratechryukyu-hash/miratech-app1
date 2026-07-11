@@ -75,7 +75,15 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11k"
+APP_VERSION = "2026-07-11l"
+
+def display_dataframe(df, **kwargs):
+    """Cloud 上の pyarrow segfault 回避のため文字列型に統一して表示"""
+    if kwargs.pop("use_container_width", None):
+        kwargs.setdefault("width", "stretch")
+    if df is None or df.empty:
+        return st.dataframe(df, **kwargs)
+    return st.dataframe(_sanitize_dataframe(df), **kwargs)
 
 def _normalize_spreadsheet_id(raw):
     s = str(raw).strip().strip('"').strip("'")
@@ -1066,7 +1074,7 @@ with tabs[1]:
                 col_stat1, col_stat2 = st.columns([1, 2])
                 with col_stat1:
                     st.metric("総管理機器数", f"{total_devices} 台")
-                    st.dataframe(cat_counts, hide_index=True, use_container_width=True)
+                    st.dataframe(_sanitize_dataframe(cat_counts), hide_index=True, use_container_width=True)
                 with col_stat2:
                     st.bar_chart(cat_counts, x="機器カテゴリー", y="保有台数（台）", color="#ff9f43")
                 st.markdown("---")
@@ -1084,7 +1092,7 @@ with tabs[1]:
             if df.empty:
                 st.info(f"「{view_cat_master}」シートにはまだデータがありません。")
             else:
-                st.dataframe(df, hide_index=True, use_container_width=True)
+                display_dataframe(df, hide_index=True, use_container_width=True)
         except Exception as e:
             st.error(f"接続エラー: {e}")
 
@@ -1357,21 +1365,28 @@ with tabs[2]:
         sub_tab1, sub_tab2 = st.tabs(["機器カルテ（ワンタッチ照合）", "日次点検実績（グラフ）"])
 
         with sub_tab1:
-            st.write("下の一覧表から、詳細を見たい機器の行をタップ（クリック）してください")
-            if not df_master.empty:
-                selection_event = st.dataframe(
-                    df_master,
-                    use_container_width=True,
-                    hide_index=True,
-                    on_select="rerun",
-                    selection_mode="single-row"
+            st.write("一覧から機器を選んでください")
+            if not df_master.empty and "管理番号" in df_master.columns:
+                machine_labels = []
+                machine_rows = []
+                for _, row in df_master.iterrows():
+                    me = clean_data_str(row.get("管理番号", "不明"))
+                    model = clean_data_str(row.get("機種", "不明な機器"))
+                    machine_labels.append(f"{me} | {model}")
+                    machine_rows.append(row)
+
+                display_dataframe(df_master, hide_index=True, use_container_width=True)
+
+                selected_label = st.selectbox(
+                    "詳細を見たい機器を選択",
+                    [""] + machine_labels,
+                    key="karte_machine_select",
                 )
-                
-                if len(selection_event.selection.rows) > 0:
-                    idx = selection_event.selection.rows[0]
-                    # 💡 【修正】"ME No." ではなく "管理番号" を取得
-                    target_me = clean_data_str(df_master.iloc[idx].get("管理番号", "不明"))
-                    model_name = clean_data_str(df_master.iloc[idx].get("機種", "不明な機器"))
+
+                if selected_label:
+                    idx = machine_labels.index(selected_label)
+                    target_me = clean_data_str(machine_rows[idx].get("管理番号", "不明"))
+                    model_name = clean_data_str(machine_rows[idx].get("機種", "不明な機器"))
                     
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
@@ -1383,7 +1398,7 @@ with tabs[2]:
                         
                     if not hist_df.empty:
                         st.write("#### 過去の点検・修理履歴")
-                        st.dataframe(hist_df, use_container_width=True, hide_index=True)
+                        st.dataframe(_sanitize_dataframe(hist_df), use_container_width=True, hide_index=True)
                         
                         st.markdown("---")
                         st.write("#### 点検結果履歴（報告書表示）")
@@ -1437,7 +1452,7 @@ with tabs[2]:
                     
                 with col_table:
                     st.write("日付ごとの合計台数")
-                    st.dataframe(daily_counts.iloc[::-1], use_container_width=True, hide_index=True)
+                    display_dataframe(daily_counts.iloc[::-1], use_container_width=True, hide_index=True)
 
                 st.markdown("##### 特定の日の点検内訳を確認する")
                 target_date = st.date_input("確認したい日付を選択", date.today())
@@ -1445,7 +1460,7 @@ with tabs[2]:
                 day_detail_df = df_history[df_history["点検日"] == str(target_date)]
                 if not day_detail_df.empty:
                     st.success(f"{target_date} は 合計 {len(day_detail_df)} 台 の点検が完了しています。")
-                    st.dataframe(day_detail_df, use_container_width=True, hide_index=True)
+                    display_dataframe(day_detail_df, use_container_width=True, hide_index=True)
                 else:
                     st.info(f"選択された日付（{target_date}）の点検データはありません。")
             else:
@@ -1697,7 +1712,7 @@ try:
         try:
             df_logs = safe_read_worksheet(conn, "アクセスログ")
             if not df_logs.empty:
-                st.dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
+                display_dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
             else:
                 st.write("ログはまだありません。")
         except:
