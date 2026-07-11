@@ -8,14 +8,36 @@ from io import BytesIO
 import google.generativeai as genai
 import json
 import re
+import os
 from PIL import Image
 import base64
 import time
 import html
 from pathlib import Path
 
+def _is_streamlit_cloud():
+    """Streamlit Community Cloud 上で動いているか判定"""
+    if Path("/mount/src").exists():
+        return True
+    host = os.environ.get("HOSTNAME", "")
+    return host.endswith(".streamlit.app")
+
+def _upload_fallback_camera(height=450, width=500, key=None):
+    st.caption("📷 スマホの場合「ファイルを選択」→「写真を撮る」でアウトカメラが使えます")
+    uploaded = st.file_uploader(
+        "銘板写真を撮影または選択",
+        type=["jpg", "jpeg", "png", "webp"],
+        key=key or "camera_upload",
+    )
+    if uploaded is None:
+        return None
+    return BytesIO(uploaded.getvalue())
+
 def _init_back_camera_input():
-    """アウトカメラ撮影。ローカルfrontend → pipパッケージの順で利用"""
+    """アウトカメラ撮影。Cloudでは file_uploader、ローカルでは custom component"""
+    if _is_streamlit_cloud():
+        return _upload_fallback_camera
+
     try:
         bundled = Path(__file__).resolve().parent / "back_camera_input_frontend"
         if bundled.is_dir() and (bundled / "index.html").is_file():
@@ -39,11 +61,7 @@ def _init_back_camera_input():
     except Exception:
         pass
 
-    def unavailable(height=450, width=500, key=None):
-        st.warning("カメラ機能は現在利用できません。手動入力で登録してください。")
-        return None
-
-    return unavailable
+    return _upload_fallback_camera
 
 try:
     back_camera_input = _init_back_camera_input()
@@ -56,7 +74,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11d"
+APP_VERSION = "2026-07-11e"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -525,8 +543,17 @@ if "GEMINI_API_KEY" in st.secrets:
         st.error(f"APIキーの設定エラー: {e}")
 
 # 共通データベースの取得（購入業者プルダウン用）
-conn = st.connection("gsheets", type=GSheetsConnection)
-df_master_global = safe_read_worksheet(conn, "機器マスター")
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_master_global = safe_read_worksheet(conn, "機器マスター")
+except Exception as e:
+    st.error("Googleスプレッドシートに接続できません。Streamlit Cloud の Secrets 設定を確認してください。")
+    st.caption(f"詳細: {e}")
+    if st.button("ログアウトしてやり直す"):
+        st.session_state["logged_in_facility"] = None
+        st.session_state["current_user_name"] = None
+        st.rerun()
+    st.stop()
 # 機器マスターに登録済みの購入業者・機器種類を候補に反映
 vendor_options = []
 if not df_master_global.empty and "購入業者" in df_master_global.columns:
@@ -678,7 +705,12 @@ with tabs[0]:
         st.session_state["check_last_search_keyword"] = input_keyword
 
     master_row = None
-    if input_keyword and not df_master_global.empty:
+    if (
+        input_keyword
+        and not df_master_global.empty
+        and "管理番号" in df_master_global.columns
+        and "シリアルNo" in df_master_global.columns
+    ):
         clean_keyword = clean_data_str(input_keyword)
         clean_db_me = clean_series(df_master_global["管理番号"])
         clean_db_sn = clean_series(df_master_global["シリアルNo"])
@@ -1020,9 +1052,11 @@ with tabs[1]:
             
             if df_failed.empty:
                 st.info("現在、故障報告データはありません。")
+            elif "対応状況" not in df_failed.columns:
+                st.warning("故障報告シートに「対応状況」列がありません。")
             else:
                 # 「対応状況」が未対応のものだけを抽出
-                df_pending = df_failed[df_failed["対応状況"].str.strip() == "未対応"]
+                df_pending = df_failed[df_failed["対応状況"].astype(str).str.strip() == "未対応"]
                 
                 if df_pending.empty:
                     st.success("✅ 現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
@@ -1384,8 +1418,12 @@ with tabs[4]:
         if ai_model is None:
             st.error("APIキーが設定されていないか、ライブラリのバージョンが古いです。")
         else:
-            st.caption("📷 **アウトカメラで撮影** ボタンを押して銘板を撮影してください（iPhone・iPad・Android 対応）")
-            img_file = back_camera_input(key="ai_camera", height=560)
+            st.caption("📷 銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
+            try:
+                img_file = back_camera_input(key="ai_camera", height=560)
+            except Exception as e:
+                st.warning(f"カメラ機能でエラーが発生しました。下のファイル選択をお使いください。（{e}）")
+                img_file = _upload_fallback_camera(key="ai_camera_fallback", height=560)
             
             if img_file:
                 current_image_bytes = img_file.getvalue()
