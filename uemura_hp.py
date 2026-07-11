@@ -74,7 +74,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11f"
+APP_VERSION = "2026-07-11g"
 
 def _get_gemini_api_key():
     return st.secrets.get("GEMINI_API_KEY", "")
@@ -111,21 +111,6 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
-# 通信エラー対策：安全にスプレッドシートを読み込むためのリトライ関数
-def safe_read_worksheet(conn, worksheet_name, default_columns=None):
-    for i in range(3):
-        try:
-            # 💡 【修正】ttl=15 にして、Googleのアクセス制限(429エラー)を回避します
-            df = conn.read(worksheet=worksheet_name, ttl=15)
-            if df is not None:
-                return df.dropna(how="all").fillna("")
-        except Exception:
-            if i < 2:
-                time.sleep(1) # 1秒待って再試行
-            else:
-                st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。通信環境が良い場所で再度お試しください。")
-    return pd.DataFrame(columns=default_columns) if default_columns else pd.DataFrame()
-
 # データお掃除用の共通関数
 def clean_data_str(val):
     s = str(val).replace("'", "").strip()
@@ -134,6 +119,30 @@ def clean_data_str(val):
     if s.lower() == "nan":
         s = ""
     return s
+
+def _sanitize_dataframe(df):
+    """PyArrow 型の DataFrame が duckdb/Streamlit Cloud で segfault するのを防ぐ"""
+    if df is None or df.empty:
+        return df
+    clean = df.copy()
+    for col in clean.columns:
+        clean[col] = clean[col].apply(lambda v: "" if pd.isna(v) else clean_data_str(v))
+    return clean
+
+# 通信エラー対策：安全にスプレッドシートを読み込むためのリトライ関数
+def safe_read_worksheet(conn, worksheet_name, default_columns=None):
+    for i in range(3):
+        try:
+            # 💡 【修正】ttl=15 にして、Googleのアクセス制限(429エラー)を回避します
+            df = conn.read(worksheet=worksheet_name, ttl=15)
+            if df is not None:
+                return _sanitize_dataframe(df.dropna(how="all").fillna(""))
+        except Exception:
+            if i < 2:
+                time.sleep(1) # 1秒待って再試行
+            else:
+                st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。通信環境が良い場所で再度お試しください。")
+    return pd.DataFrame(columns=default_columns) if default_columns else pd.DataFrame()
 
 def clean_series(series):
     return series.astype(str).str.replace("'", "", regex=False).str.replace(r'\.0$', '', regex=True).str.replace(r'^nan$', '', flags=re.IGNORECASE, regex=True).str.strip()
