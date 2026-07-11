@@ -11,6 +11,7 @@ import re
 from PIL import Image
 import base64
 import time
+import html
 from pathlib import Path
 
 def _init_back_camera_input():
@@ -51,7 +52,7 @@ back_camera_input = _init_back_camera_input()
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-08d"
+APP_VERSION = "2026-07-11a"
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -88,6 +89,123 @@ def protect_zeros(val_str):
     if val_str.startswith("0") and val_str.isdigit():
         return f"'{val_str}"
     return val_str
+
+def build_device_qr_url(me_no):
+    clean_url = APP_URL.rstrip("/")
+    return f"{clean_url}/?me_no={clean_data_str(me_no)}"
+
+def generate_qr_png_bytes(url):
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+def lookup_device_for_sticker(df_master, me_no):
+    if df_master.empty or "管理番号" not in df_master.columns:
+        return {}
+    clean_me = clean_data_str(me_no)
+    matched = df_master[clean_series(df_master["管理番号"]) == clean_me]
+    if matched.empty:
+        return {}
+    row = matched.iloc[0]
+    return {
+        "model_name": clean_data_str(row.get("機種", "")),
+        "me_no": clean_me,
+        "serial_no": clean_data_str(row.get("シリアルNo", "")),
+        "delivery_date": clean_data_str(row.get("納入日", "")),
+    }
+
+def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url=None):
+    if not qr_url:
+        qr_url = build_device_qr_url(me_no)
+    qr_b64 = base64.b64encode(generate_qr_png_bytes(qr_url)).decode()
+    sticker_html = f"""
+    <div class="mgmt-sticker" style="
+        border: 2px solid #222; padding: 10px 12px; max-width: 440px;
+        font-family: 'Helvetica Neue', Arial, sans-serif; background: #fff; color: #000;
+    ">
+        <div style="display: flex; align-items: center; gap: 14px;">
+            <div style="flex: 1; font-size: 14px; line-height: 1.65; word-break: break-word;">
+                <div><b>機種名：</b>{html.escape(clean_data_str(model_name))}</div>
+                <div><b>管理番号：</b>{html.escape(clean_data_str(me_no))}</div>
+                <div><b>シリアル：</b>{html.escape(clean_data_str(serial_no))}</div>
+                <div><b>納品日：</b>{html.escape(clean_data_str(delivery_date))}</div>
+            </div>
+            <div style="flex-shrink: 0; text-align: center;">
+                <img src="data:image/png;base64,{qr_b64}" width="96" height="96" alt="QRコード">
+            </div>
+        </div>
+    </div>
+    """
+    st.markdown(sticker_html, unsafe_allow_html=True)
+
+def render_tepra_print_button(copy_text, button_key="tepra_print"):
+    js_text = json.dumps(copy_text)
+    components.html(
+        f"""
+        <div style="font-family: sans-serif;">
+            <button id="{button_key}" style="
+                width: 100%; padding: 14px 16px; font-size: 16px; font-weight: 700;
+                background: #0068c9; color: #fff; border: none; border-radius: 10px;
+                cursor: pointer; margin-top: 4px;
+            ">🏷️ テプラ印刷（URLコピー ＋ TEPRA Link 2 起動）</button>
+            <p id="{button_key}_msg" style="font-size: 12px; color: #0068c9; margin: 8px 0 0; display: none;">
+                URLをコピーしました。TEPRA Link 2 を起動します…
+            </p>
+        </div>
+        <script>
+        (function() {{
+            var copyText = {js_text};
+            var btn = document.getElementById("{button_key}");
+            var msg = document.getElementById("{button_key}_msg");
+            btn.addEventListener("click", function() {{
+                function openTepra() {{
+                    msg.style.display = "block";
+                    window.location.href = "tepralink2://";
+                }}
+                if (navigator.clipboard && navigator.clipboard.writeText) {{
+                    navigator.clipboard.writeText(copyText).then(openTepra).catch(function() {{
+                        fallbackCopy();
+                    }});
+                }} else {{
+                    fallbackCopy();
+                }}
+                function fallbackCopy() {{
+                    var ta = document.createElement("textarea");
+                    ta.value = copyText;
+                    ta.style.position = "fixed";
+                    ta.style.left = "-9999px";
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    try {{ document.execCommand("copy"); }} catch (e) {{}}
+                    document.body.removeChild(ta);
+                    openTepra();
+                }}
+            }});
+        }})();
+        </script>
+        """,
+        height=90,
+    )
+
+def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_key="tepra_print"):
+    qr_url = build_device_qr_url(me_no)
+    st.markdown("#### 管理番号シール プレビュー")
+    render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url)
+    st.caption("テプラ印刷ボタンを押すと QR用URL がクリップボードにコピーされ、TEPRA Link 2 が起動します。")
+    render_tepra_print_button(qr_url, button_key=button_key)
+    with st.expander("TEPRA Link 2 での操作手順"):
+        st.markdown(
+            "1. **テプラ印刷** ボタンをタップ（URLコピー ＋ アプリ起動）\n"
+            "2. TEPRA Link 2 で **新規ラベル → QRコード** を選択\n"
+            "3. テキスト欄で **貼り付け（ペースト）**\n"
+            "4. **印刷** をタップ"
+        )
+    st.code(qr_url, language="text")
 
 def parse_detail_text_to_table(detail_text):
     item_names, item_results, item_judges = [], [], []
@@ -505,7 +623,7 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検入力", "マスター", "機器カルテ・実績", "QR発行", "新規機器登録", "ユーザー・ログ管理"]
+tab_names = ["点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "ユーザー・ログ管理"]
 tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
@@ -1174,45 +1292,72 @@ with tabs[2]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ4：QRコード発行機能 ======
+# ====== タブ4：QRコード・管理番号シール ======
 with tabs[3]:
-    st.subheader("機器用QRコードの作成")
-    st.write("対象の「管理番号」を入力すると、機器に貼り付ける用のQRコードが作成されます。")
-    
-    target_qr_me = st.text_input("QRコードを作りたい「管理番号」を入力", placeholder="例: Y0001")
-    
-    if st.button("QRコードを作成する"):
-        if target_qr_me:
-            # URLの末尾の「/」を調整してキレイなリンクを作る
-            clean_url = APP_URL.rstrip('/')
-            final_url = f"{clean_url}/?me_no={target_qr_me}"
-            
-            qr = qrcode.QRCode(version=1, box_size=10, border=4)
-            qr.add_data(final_url)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            byte_im = buf.getvalue()
-            
-            st.success(f"「{target_qr_me}」専用のQRコードができました！")
-            
-            # 【追加】テプラ用にURLをテキスト表示（コピーボタン付き）
-            st.write("▼ テプラ等にコピーして使うためのURL")
-            st.code(final_url, language="text")
-            
-            b64 = base64.b64encode(byte_im).decode()
-            html_img = f'''
-            <a href="data:image/png;base64,{b64}" download="QR_{target_qr_me}.png">
-                <img src="data:image/png;base64,{b64}" width="200" style="border: 2px solid #eee; padding: 10px; border-radius: 10px; background-color: white;">
-            </a>
-            <br>
-            <p style="font-size: 14px; color: gray;">QRコードを<b>タップ（クリック）</b>すると直接ダウンロードされます。<br>スマホの場合は<b>長押しして「画像を保存」</b>も可能です。</p>
-            '''
-            st.markdown(html_img, unsafe_allow_html=True)
-        else:
+    st.subheader("管理番号シール ＆ QRコード")
+    st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
+
+    df_m_qr = safe_read_worksheet(conn, "機器マスター")
+    target_qr_me = st.text_input("管理番号を入力", placeholder="例: INP0001", key="sticker_me_no")
+
+    master_info = lookup_device_for_sticker(df_m_qr, target_qr_me) if target_qr_me else {}
+    if master_info:
+        st.info("機器マスターから情報を読み込みました。")
+
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        sticker_model = st.text_input(
+            "機種名",
+            value=master_info.get("model_name", ""),
+            placeholder="例: 輸液ポンプ(TE-131A)",
+            key="sticker_model",
+        )
+        sticker_serial = st.text_input(
+            "シリアルNo",
+            value=master_info.get("serial_no", ""),
+            placeholder="例: 12345678",
+            key="sticker_serial",
+        )
+    with col_s2:
+        sticker_me = st.text_input(
+            "管理番号（表示用）",
+            value=master_info.get("me_no", target_qr_me),
+            key="sticker_me_display",
+        )
+        sticker_delivery = st.text_input(
+            "納品日",
+            value=master_info.get("delivery_date", ""),
+            placeholder="例: 2024-03-15",
+            key="sticker_delivery",
+        )
+
+    if st.button("管理番号シールを作成する", type="primary", use_container_width=True):
+        if not sticker_me.strip():
             st.warning("管理番号を入力してください。")
+        else:
+            st.session_state["sticker_preview"] = {
+                "model_name": sticker_model,
+                "me_no": sticker_me,
+                "serial_no": sticker_serial,
+                "delivery_date": sticker_delivery,
+            }
+
+    if st.session_state.get("sticker_preview"):
+        s = st.session_state["sticker_preview"]
+        st.markdown("---")
+        render_sticker_workflow(
+            s["model_name"], s["me_no"], s["serial_no"], s["delivery_date"],
+            button_key="tepra_qr_tab",
+        )
+        qr_b64 = base64.b64encode(
+            generate_qr_png_bytes(build_device_qr_url(s["me_no"]))
+        ).decode()
+        st.download_button(
+            "QRコード画像をダウンロード",
+            data=base64.b64decode(qr_b64),
+            file_name=f"QR_{clean_data_str(s['me_no'])}.png",
+            mime="image/png",
+        )
 
 # ====== タブ5：新規機器の登録 ======
 with tabs[4]:
@@ -1330,14 +1475,30 @@ with tabs[4]:
                             conn.update(worksheet="機器マスター", data=updated_master_reg)
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
-                            st.success(f"{man_me_no} を登録しました！次回から「{final_cat}」も候補に表示されます。")
-                            
-                            st.session_state["scan_model"] = None 
-                            st.session_state["scan_sn"] = None 
-                            st.session_state["scan_year"] = None 
+                            st.session_state["last_registered_sticker"] = {
+                                "model_name": f"{final_cat}({man_model})" if man_model else final_cat,
+                                "me_no": clean_data_str(man_me_no),
+                                "serial_no": clean_data_str(man_sn),
+                                "delivery_date": str(man_delivery),
+                            }
+                            st.session_state["scan_model"] = None
+                            st.session_state["scan_sn"] = None
+                            st.session_state["scan_year"] = None
                             st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
+
+    if st.session_state.get("last_registered_sticker"):
+        s = st.session_state["last_registered_sticker"]
+        st.markdown("---")
+        st.success(f"「{s['me_no']}」を登録しました！ 管理番号シールを印刷できます。")
+        render_sticker_workflow(
+            s["model_name"], s["me_no"], s["serial_no"], s["delivery_date"],
+            button_key="tepra_after_reg",
+        )
+        if st.button("シール表示を閉じる", key="close_reg_sticker"):
+            st.session_state.pop("last_registered_sticker", None)
+            st.rerun()
 
 # ====== タブ5：ユーザー・ログ管理 ======
 try:
