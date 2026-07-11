@@ -77,7 +77,16 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-11n"
+APP_VERSION = "2026-07-11o"
+
+def get_cookie_manager():
+    """CookieManager は cache 不可（widget のため session_state で1回だけ生成）"""
+    if "miratech_cookie_manager" not in st.session_state:
+        st.session_state.miratech_cookie_manager = stx.CookieManager(
+            key="miratech_cookie_manager"
+        )
+    return st.session_state.miratech_cookie_manager
+
 AUTH_COOKIE_NAME = "miratech_auth"
 LAST_ACTIVE_COOKIE = "miratech_last_active"
 IDLE_HOURS = 5
@@ -575,10 +584,6 @@ def write_log(user_name, action):
 # ==========================================
 # ログインセッション（Cookie で保持）
 # ==========================================
-@st.cache_resource
-def get_cookie_manager():
-    return stx.CookieManager(key="miratech_cookie_manager")
-
 def _auth_serializer():
     secret = st.secrets.get(
         "AUTH_SECRET",
@@ -607,16 +612,7 @@ def clear_auth_cookie():
     st.session_state.pop("last_activity", None)
 
 def _get_last_activity():
-    if "last_activity" in st.session_state:
-        return st.session_state["last_activity"]
-    cookies = get_cookie_manager().get_all() or {}
-    raw = cookies.get(LAST_ACTIVE_COOKIE)
-    if not raw:
-        return None
-    try:
-        return float(raw)
-    except ValueError:
-        return None
+    return st.session_state.get("last_activity")
 
 def touch_activity():
     now = time.time()
@@ -638,8 +634,7 @@ def enforce_idle_timeout():
         st.rerun()
     touch_activity()
 
-def restore_auth_from_cookie():
-    cookies = get_cookie_manager().get_all()
+def restore_auth_from_cookie(cookies):
     if not cookies:
         return False
     token = cookies.get(AUTH_COOKIE_NAME)
@@ -688,7 +683,7 @@ def check_auth():
     if cookies is None:
         st.stop()
 
-    if restore_auth_from_cookie():
+    if restore_auth_from_cookie(cookies):
         return True
 
     if st.session_state.get("auto_logout_msg"):
