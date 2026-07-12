@@ -241,6 +241,31 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
+def _inject_pc_unified_layout():
+    """タブレットでも PC と同じメイン幅・余白になるよう CSS で統一"""
+    st.markdown(
+        """
+        <style>
+        section.main div.block-container,
+        div.stMainBlockContainer {
+            max-width: 46rem !important;
+            padding-top: 2rem !important;
+            padding-left: 1.5rem !important;
+            padding-right: 1.5rem !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            width: 16rem !important;
+            min-width: 16rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+_inject_pc_unified_layout()
+
 # データお掃除用の共通関数
 def clean_data_str(val):
     s = str(val).replace("'", "").strip()

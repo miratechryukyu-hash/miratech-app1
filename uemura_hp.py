@@ -77,7 +77,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12g"
+APP_VERSION = "2026-07-12h"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -240,6 +240,31 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
     return body["candidates"][0]["content"]["parts"][0]["text"]
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
+
+def _inject_pc_unified_layout():
+    """タブレットでも PC と同じメイン幅・余白になるよう CSS で統一"""
+    st.markdown(
+        """
+        <style>
+        section.main div.block-container,
+        div.stMainBlockContainer {
+            max-width: 46rem !important;
+            padding-top: 2rem !important;
+            padding-left: 1.5rem !important;
+            padding-right: 1.5rem !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            width: 16rem !important;
+            min-width: 16rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+_inject_pc_unified_layout()
 
 # データお掃除用の共通関数
 def clean_data_str(val):
@@ -1773,14 +1798,19 @@ with tabs[4]:
                 "GEMINI_API_KEY を追加してください。"
             )
             st.markdown(
-                "**Secrets の書き方（`[connections.gsheets]` の外・先頭付近に追加）:**"
+                "**Secrets の書き方（`[connections.gsheets]` セクションの外側・独立した行）:**"
             )
             st.code(
-                'GEMINI_API_KEY = "AIzaSy..."  # Google AI Studio の API キー\n\n'
+                'GEMINI_API_KEY = "AIzaSy..."  # どの位置でも可（gsheets の中に入れない）\n\n'
                 "[connections.gsheets]\n"
                 'spreadsheet = "スプレッドシートID"\n'
                 "# ... 以下 gsheets 設定 ...",
                 language="toml",
+            )
+            st.caption(
+                "TOML では [角括弧] のセクション内に書いた値はそのグループ専用です。"
+                " GEMINI_API_KEY は gsheets とは別のトップレベル設定なので、"
+                " [connections.gsheets] の前後どちらに書いても構いません。"
             )
             st.markdown(
                 "保存後は **Manage app → Reboot app** を実行してください。"
