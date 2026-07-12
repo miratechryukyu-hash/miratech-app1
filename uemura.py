@@ -77,7 +77,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12f"
+APP_VERSION = "2026-07-12g"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -174,7 +174,33 @@ def get_sheet_conn():
     return SheetConn()
 
 def _get_gemini_api_key():
-    return st.secrets.get("GEMINI_API_KEY", "")
+    """Streamlit Secrets / 環境変数から Gemini API キーを取得"""
+    candidates = []
+    try:
+        candidates.append(st.secrets.get("GEMINI_API_KEY"))
+    except Exception:
+        pass
+    try:
+        gemini = st.secrets.get("gemini")
+        if isinstance(gemini, dict):
+            candidates.append(gemini.get("api_key"))
+            candidates.append(gemini.get("GEMINI_API_KEY"))
+    except Exception:
+        pass
+    candidates.append(os.environ.get("GEMINI_API_KEY"))
+
+    for raw in candidates:
+        if raw is None:
+            continue
+        key = str(raw).strip().strip('"').strip("'")
+        if key:
+            return key
+    return ""
+
+def _gemini_key_status_message():
+    if _get_gemini_api_key():
+        return "Gemini API Key: 設定済み"
+    return "Gemini API Key: 未設定"
 
 def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
     """Gemini REST API で銘板画像を解析（gRPC ライブラリを使わず Cloud でも安全）"""
@@ -202,6 +228,13 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
         }]
     }
     resp = requests.post(url, json=payload, timeout=90)
+    if resp.status_code == 400:
+        raise ValueError(f"Gemini API リクエストエラー: {resp.text[:300]}")
+    if resp.status_code in (401, 403):
+        raise ValueError(
+            "Gemini API Key が無効です。Streamlit Cloud の Secrets の "
+            "GEMINI_API_KEY を Google AI Studio で発行したキーに差し替えてください。"
+        )
     resp.raise_for_status()
     body = resp.json()
     return body["candidates"][0]["content"]["parts"][0]["text"]
@@ -1733,8 +1766,26 @@ with tabs[4]:
 
     if reg_mode == "AI銘板スキャナー":
         st.info("新しい機器の銘板を撮影すると、AIが情報を読み取ってくれます。")
+        st.caption(_gemini_key_status_message())
         if not _get_gemini_api_key():
-            st.error("AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に GEMINI_API_KEY を設定してください。")
+            st.error(
+                "AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に "
+                "GEMINI_API_KEY を追加してください。"
+            )
+            st.markdown(
+                "**Secrets の書き方（`[connections.gsheets]` の外・先頭付近に追加）:**"
+            )
+            st.code(
+                'GEMINI_API_KEY = "AIzaSy..."  # Google AI Studio の API キー\n\n'
+                "[connections.gsheets]\n"
+                'spreadsheet = "スプレッドシートID"\n'
+                "# ... 以下 gsheets 設定 ...",
+                language="toml",
+            )
+            st.markdown(
+                "保存後は **Manage app → Reboot app** を実行してください。"
+                " ローカルで試す場合は `.streamlit/secrets.toml` に同じ行を追加します。"
+            )
         else:
             st.caption("銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
             try:
