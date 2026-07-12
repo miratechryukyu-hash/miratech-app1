@@ -16,6 +16,7 @@ from PIL import Image
 import base64
 import time
 import html
+import hashlib
 from pathlib import Path
 
 def _is_streamlit_cloud():
@@ -77,7 +78,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-12g"
+APP_VERSION = "2026-07-13a"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -202,11 +203,37 @@ def _gemini_key_status_message():
         return "Gemini API Key: 設定済み"
     return "Gemini API Key: 未設定"
 
+def _get_gemini_model():
+    try:
+        model = st.secrets.get("GEMINI_MODEL", "gemini-2.0-flash-lite")
+    except Exception:
+        model = "gemini-2.0-flash-lite"
+    model = str(model or "gemini-2.0-flash-lite").strip()
+    return model or "gemini-2.0-flash-lite"
+
+def _sanitize_api_error_message(message):
+    return re.sub(r"key=AIza[^\s&\"']+", "key=***", str(message))
+
+def _prepare_nameplate_image(image_bytes, max_side=1280):
+    """送信サイズを抑えてレート制限・タイムアウトを軽減"""
+    img = Image.open(BytesIO(image_bytes))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    img.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue(), "image/jpeg"
+
+def _image_fingerprint(image_bytes):
+    return hashlib.sha256(image_bytes).hexdigest()
+
 def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
     """Gemini REST API で銘板画像を解析（gRPC ライブラリを使わず Cloud でも安全）"""
     api_key = _get_gemini_api_key()
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません")
+
+    image_bytes, mime_type = _prepare_nameplate_image(image_bytes)
 
     prompt = """
     この医療機器の銘板写真から以下の情報を抜き出して、JSON形式で回答してください。
@@ -215,9 +242,10 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
     - serial_number (製造番号/SN)
     - manufacture_year (製造年月日。例: 2018.10.10)
     """
+    model = _get_gemini_model()
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
+        f"{model}:generateContent?key={api_key}"
     )
     payload = {
         "contents": [{
@@ -227,17 +255,41 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
             ]
         }]
     }
-    resp = requests.post(url, json=payload, timeout=90)
-    if resp.status_code == 400:
-        raise ValueError(f"Gemini API リクエストエラー: {resp.text[:300]}")
-    if resp.status_code in (401, 403):
-        raise ValueError(
-            "Gemini API Key が無効です。Streamlit Cloud の Secrets の "
-            "GEMINI_API_KEY を Google AI Studio で発行したキーに差し替えてください。"
-        )
-    resp.raise_for_status()
-    body = resp.json()
-    return body["candidates"][0]["content"]["parts"][0]["text"]
+
+    last_error = None
+    for attempt in range(3):
+        resp = requests.post(url, json=payload, timeout=90)
+        if resp.status_code == 429:
+            wait_sec = 30
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after and str(retry_after).isdigit():
+                wait_sec = max(10, min(int(retry_after), 120))
+            elif attempt < 2:
+                wait_sec = 15 * (attempt + 1)
+            last_error = (
+                "Gemini API の利用上限に達しました（429 Too Many Requests）。"
+                f" {wait_sec} 秒ほど待ってから「AIで銘板を読み取る」を再度押してください。"
+                " 無料枠の場合は 1 日の上限に達している可能性もあります。"
+            )
+            if attempt < 2:
+                time.sleep(wait_sec)
+                continue
+            raise ValueError(last_error)
+        if resp.status_code == 400:
+            raise ValueError(f"Gemini API リクエストエラー: {resp.text[:300]}")
+        if resp.status_code in (401, 403):
+            raise ValueError(
+                "Gemini API Key が無効です。Streamlit Cloud の Secrets の "
+                "GEMINI_API_KEY を Google AI Studio で発行したキーに差し替えてください。"
+            )
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            raise ValueError(_sanitize_api_error_message(str(e))) from e
+        body = resp.json()
+        return body["candidates"][0]["content"]["parts"][0]["text"]
+
+    raise ValueError(last_error or "Gemini API の呼び出しに失敗しました。")
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -1798,14 +1850,19 @@ with tabs[4]:
                 "GEMINI_API_KEY を追加してください。"
             )
             st.markdown(
-                "**Secrets の書き方（`[connections.gsheets]` の外・先頭付近に追加）:**"
+                "**Secrets の書き方（`[connections.gsheets]` セクションの外側・独立した行）:**"
             )
             st.code(
-                'GEMINI_API_KEY = "AIzaSy..."  # Google AI Studio の API キー\n\n'
+                'GEMINI_API_KEY = "AIzaSy..."  # どの位置でも可（gsheets の中に入れない）\n\n'
                 "[connections.gsheets]\n"
                 'spreadsheet = "スプレッドシートID"\n'
                 "# ... 以下 gsheets 設定 ...",
                 language="toml",
+            )
+            st.caption(
+                "TOML では [角括弧] のセクション内に書いた値はそのグループ専用です。"
+                " GEMINI_API_KEY は gsheets とは別のトップレベル設定なので、"
+                " [connections.gsheets] の前後どちらに書いても構いません。"
             )
             st.markdown(
                 "保存後は **Manage app → Reboot app** を実行してください。"
@@ -1821,26 +1878,51 @@ with tabs[4]:
             
             if img_file:
                 current_image_bytes = img_file.getvalue()
-                if st.session_state.get("last_scanned_image") != current_image_bytes:
+                image_fp = _image_fingerprint(current_image_bytes)
+                if st.session_state.get("scan_image_fp") != image_fp:
+                    st.session_state["scan_image_fp"] = image_fp
+                    st.session_state.pop("scan_model", None)
+                    st.session_state.pop("scan_sn", None)
+                    st.session_state.pop("scan_year", None)
+                    st.session_state.pop("scan_error", None)
+                    st.session_state["scan_ready"] = True
+
+                st.caption("写真が選ばれました。下のボタンを押すと AI が銘板を読み取ります。")
+                if st.session_state.get("scan_error"):
+                    st.error(st.session_state["scan_error"])
+
+                run_scan = st.button(
+                    "AIで銘板を読み取る",
+                    type="primary",
+                    use_container_width=True,
+                    key="run_nameplate_scan",
+                    disabled=not st.session_state.get("scan_ready", False),
+                )
+                if run_scan and st.session_state.get("scan_ready"):
+                    st.session_state["scan_ready"] = False
                     with st.spinner("AIが文字を解析しています（約10秒）..."):
                         try:
-                            img = Image.open(BytesIO(current_image_bytes))
-                            fmt = (img.format or "JPEG").upper()
-                            mime_type = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}.get(fmt, "image/jpeg")
-                            response_text = analyze_nameplate_with_gemini(current_image_bytes, mime_type)
-                            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                            response_text = analyze_nameplate_with_gemini(current_image_bytes)
+                            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
                             if json_match:
                                 data = json.loads(json_match.group())
-                                
                                 st.session_state["scan_model"] = data.get("model", "")
                                 st.session_state["scan_sn"] = data.get("serial_number", "")
                                 st.session_state["scan_year"] = data.get("manufacture_year", "")
+                                st.session_state.pop("scan_error", None)
                                 st.session_state["last_scanned_image"] = current_image_bytes
-                                st.rerun() 
+                                st.rerun()
                             else:
-                                st.warning("文字が見つかりませんでした。ブレていないか確認してもう一度撮影してください。")
+                                st.session_state["scan_error"] = (
+                                    "文字が見つかりませんでした。ブレていないか確認して、"
+                                    "もう一度「AIで銘板を読み取る」を押してください。"
+                                )
+                                st.session_state["scan_ready"] = True
+                                st.rerun()
                         except Exception as e:
-                            st.error(f"システムエラー: {e}")
+                            st.session_state["scan_error"] = _sanitize_api_error_message(str(e))
+                            st.session_state["scan_ready"] = True
+                            st.rerun()
             
             if st.session_state.get("scan_model") is not None:
                 st.success("AIの読み取りが完了しました！以下の内容を確認し、追加情報を入れて登録してください。")
