@@ -78,7 +78,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-13a"
+APP_VERSION = "2026-07-16a"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -214,14 +214,14 @@ def _get_gemini_model():
 def _sanitize_api_error_message(message):
     return re.sub(r"key=AIza[^\s&\"']+", "key=***", str(message))
 
-def _prepare_nameplate_image(image_bytes, max_side=1280):
-    """送信サイズを抑えてレート制限・タイムアウトを軽減"""
+def _prepare_nameplate_image(image_bytes, max_side=768):
+    """送信サイズを抑えてアップロード・解析を高速化"""
     img = Image.open(BytesIO(image_bytes))
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     img.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
     buf = BytesIO()
-    img.save(buf, format="JPEG", quality=85)
+    img.save(buf, format="JPEG", quality=70, optimize=True)
     return buf.getvalue(), "image/jpeg"
 
 def _image_fingerprint(image_bytes):
@@ -235,13 +235,10 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
 
     image_bytes, mime_type = _prepare_nameplate_image(image_bytes)
 
-    prompt = """
-    この医療機器の銘板写真から以下の情報を抜き出して、JSON形式で回答してください。
-    キーは以下のようにしてください:
-    - model (型式)
-    - serial_number (製造番号/SN)
-    - manufacture_year (製造年月日。例: 2018.10.10)
-    """
+    prompt = (
+        "医療機器の銘板画像から model, serial_number, manufacture_year を"
+        " JSON だけで返してください。"
+    )
     model = _get_gemini_model()
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -256,40 +253,113 @@ def analyze_nameplate_with_gemini(image_bytes, mime_type="image/jpeg"):
         }]
     }
 
-    last_error = None
-    for attempt in range(3):
-        resp = requests.post(url, json=payload, timeout=90)
-        if resp.status_code == 429:
-            wait_sec = 30
-            retry_after = resp.headers.get("Retry-After")
-            if retry_after and str(retry_after).isdigit():
-                wait_sec = max(10, min(int(retry_after), 120))
-            elif attempt < 2:
-                wait_sec = 15 * (attempt + 1)
-            last_error = (
-                "Gemini API の利用上限に達しました（429 Too Many Requests）。"
-                f" {wait_sec} 秒ほど待ってから「AIで銘板を読み取る」を再度押してください。"
-                " 無料枠の場合は 1 日の上限に達している可能性もあります。"
-            )
-            if attempt < 2:
-                time.sleep(wait_sec)
-                continue
-            raise ValueError(last_error)
-        if resp.status_code == 400:
-            raise ValueError(f"Gemini API リクエストエラー: {resp.text[:300]}")
-        if resp.status_code in (401, 403):
-            raise ValueError(
-                "Gemini API Key が無効です。Streamlit Cloud の Secrets の "
-                "GEMINI_API_KEY を Google AI Studio で発行したキーに差し替えてください。"
-            )
-        try:
-            resp.raise_for_status()
-        except requests.HTTPError as e:
-            raise ValueError(_sanitize_api_error_message(str(e))) from e
-        body = resp.json()
-        return body["candidates"][0]["content"]["parts"][0]["text"]
+    resp = requests.post(url, json=payload, timeout=35)
+    if resp.status_code == 429:
+        raise ValueError(
+            "Gemini API の利用上限に達しました。1〜2分待ってから再度"
+            "「AIで銘板を読み取る」を押してください。"
+        )
+    if resp.status_code == 400:
+        raise ValueError(f"Gemini API リクエストエラー: {resp.text[:300]}")
+    if resp.status_code in (401, 403):
+        raise ValueError(
+            "Gemini API Key が無効です。Streamlit Cloud の Secrets の "
+            "GEMINI_API_KEY を Google AI Studio で発行したキーに差し替えてください。"
+        )
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise ValueError(_sanitize_api_error_message(str(e))) from e
+    body = resp.json()
+    return body["candidates"][0]["content"]["parts"][0]["text"]
 
-    raise ValueError(last_error or "Gemini API の呼び出しに失敗しました。")
+@st.fragment
+def _render_ai_nameplate_scanner():
+    """カメラ・AI解析のみ部分再実行（ページ全体の再読込を避ける）"""
+    if not _get_gemini_api_key():
+        st.error(
+            "AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に "
+            "GEMINI_API_KEY を追加してください。"
+        )
+        st.code(
+            'GEMINI_API_KEY = "AIzaSy..."\n\n[connections.gsheets]\nspreadsheet = "..."',
+            language="toml",
+        )
+        return
+
+    st.caption(_gemini_key_status_message())
+    capture_mode = st.radio(
+        "写真の取り込み",
+        ["ファイルを選択", "カメラで撮影"],
+        horizontal=True,
+        key="ai_capture_mode",
+        help="ファイル選択の方が表示が速い端末があります。",
+    )
+
+    img_file = None
+    if capture_mode == "カメラで撮影":
+        img_file = st.camera_input("銘板を撮影", key="ai_camera_native")
+    else:
+        st.caption("スマホは「ファイルを選択」→「写真を撮る」でカメラが使えます。")
+        img_file = st.file_uploader(
+            "銘板写真",
+            type=["jpg", "jpeg", "png", "webp"],
+            key="ai_file_uploader",
+        )
+
+    if img_file is None:
+        return
+
+    current_image_bytes = img_file.getvalue()
+    image_fp = _image_fingerprint(current_image_bytes)
+    if st.session_state.get("scan_image_fp") != image_fp:
+        st.session_state["scan_image_fp"] = image_fp
+        st.session_state.pop("scan_model", None)
+        st.session_state.pop("scan_sn", None)
+        st.session_state.pop("scan_year", None)
+        st.session_state.pop("scan_error", None)
+        st.session_state["scan_ready"] = True
+
+    st.image(current_image_bytes, caption="選択中の写真", width=240)
+    st.caption("写真を確認してから、下のボタンで AI 読み取りを開始してください。")
+    if st.session_state.get("scan_error"):
+        st.error(st.session_state["scan_error"])
+
+    run_scan = st.button(
+        "AIで銘板を読み取る",
+        type="primary",
+        use_container_width=True,
+        key="run_nameplate_scan",
+        disabled=not st.session_state.get("scan_ready", False),
+    )
+    if not (run_scan and st.session_state.get("scan_ready")):
+        return
+
+    st.session_state["scan_ready"] = False
+    with st.spinner("AIが文字を解析しています..."):
+        try:
+            response_text = analyze_nameplate_with_gemini(current_image_bytes)
+            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                st.session_state["scan_model"] = data.get("model", "")
+                st.session_state["scan_sn"] = data.get("serial_number", "")
+                st.session_state["scan_year"] = data.get("manufacture_year", "")
+                st.session_state.pop("scan_error", None)
+                st.session_state["last_scanned_image"] = current_image_bytes
+                try:
+                    st.rerun(scope="app")
+                except TypeError:
+                    st.rerun()
+            else:
+                st.session_state["scan_error"] = (
+                    "文字が見つかりませんでした。明るい場所で再度撮影し、"
+                    "もう一度「AIで銘板を読み取る」を押してください。"
+                )
+                st.session_state["scan_ready"] = True
+        except Exception as e:
+            st.session_state["scan_error"] = _sanitize_api_error_message(str(e))
+            st.session_state["scan_ready"] = True
 
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
@@ -1832,8 +1902,8 @@ with tabs[4]:
     
     reg_mode = st.radio("入力方法を選択してください", ["AI銘板スキャナー", "手動で情報を入力"], horizontal=True)
     
-    # 既存データから候補を自動生成
-    df_m_reg = safe_read_worksheet(conn, "機器マスター", ["管理番号", "カテゴリ", "購入業者"])
+    # ページ上部で読み込み済みのマスターを再利用（二重読込を避けて表示を高速化）
+    df_m_reg = df_master_global
     history_categories = []
     if not df_m_reg.empty and "カテゴリ" in df_m_reg.columns:
         history_categories = sorted({clean_data_str(c) for c in df_m_reg["カテゴリ"].unique() if clean_data_str(c)})
@@ -1842,90 +1912,11 @@ with tabs[4]:
         history_vendors = sorted({clean_data_str(v) for v in df_m_reg["購入業者"].unique() if clean_data_str(v)})
 
     if reg_mode == "AI銘板スキャナー":
-        st.info("新しい機器の銘板を撮影すると、AIが情報を読み取ってくれます。")
-        st.caption(_gemini_key_status_message())
-        if not _get_gemini_api_key():
-            st.error(
-                "AI銘板スキャナーを使うには、Streamlit Cloud の Secrets に "
-                "GEMINI_API_KEY を追加してください。"
-            )
-            st.markdown(
-                "**Secrets の書き方（`[connections.gsheets]` セクションの外側・独立した行）:**"
-            )
-            st.code(
-                'GEMINI_API_KEY = "AIzaSy..."  # どの位置でも可（gsheets の中に入れない）\n\n'
-                "[connections.gsheets]\n"
-                'spreadsheet = "スプレッドシートID"\n'
-                "# ... 以下 gsheets 設定 ...",
-                language="toml",
-            )
-            st.caption(
-                "TOML では [角括弧] のセクション内に書いた値はそのグループ専用です。"
-                " GEMINI_API_KEY は gsheets とは別のトップレベル設定なので、"
-                " [connections.gsheets] の前後どちらに書いても構いません。"
-            )
-            st.markdown(
-                "保存後は **Manage app → Reboot app** を実行してください。"
-                " ローカルで試す場合は `.streamlit/secrets.toml` に同じ行を追加します。"
-            )
-        else:
-            st.caption("銘板写真を撮影または選択してください（iPhone・iPad・Android 対応）")
-            try:
-                img_file = back_camera_input(key="ai_camera", height=560)
-            except Exception as e:
-                st.warning(f"カメラ機能でエラーが発生しました。下のファイル選択をお使いください。（{e}）")
-                img_file = _upload_fallback_camera(key="ai_camera_fallback", height=560)
+        st.info("銘板写真を選び、「AIで銘板を読み取る」を押すと型式などを自動入力します。")
+        _render_ai_nameplate_scanner()
             
-            if img_file:
-                current_image_bytes = img_file.getvalue()
-                image_fp = _image_fingerprint(current_image_bytes)
-                if st.session_state.get("scan_image_fp") != image_fp:
-                    st.session_state["scan_image_fp"] = image_fp
-                    st.session_state.pop("scan_model", None)
-                    st.session_state.pop("scan_sn", None)
-                    st.session_state.pop("scan_year", None)
-                    st.session_state.pop("scan_error", None)
-                    st.session_state["scan_ready"] = True
-
-                st.caption("写真が選ばれました。下のボタンを押すと AI が銘板を読み取ります。")
-                if st.session_state.get("scan_error"):
-                    st.error(st.session_state["scan_error"])
-
-                run_scan = st.button(
-                    "AIで銘板を読み取る",
-                    type="primary",
-                    use_container_width=True,
-                    key="run_nameplate_scan",
-                    disabled=not st.session_state.get("scan_ready", False),
-                )
-                if run_scan and st.session_state.get("scan_ready"):
-                    st.session_state["scan_ready"] = False
-                    with st.spinner("AIが文字を解析しています（約10秒）..."):
-                        try:
-                            response_text = analyze_nameplate_with_gemini(current_image_bytes)
-                            json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
-                            if json_match:
-                                data = json.loads(json_match.group())
-                                st.session_state["scan_model"] = data.get("model", "")
-                                st.session_state["scan_sn"] = data.get("serial_number", "")
-                                st.session_state["scan_year"] = data.get("manufacture_year", "")
-                                st.session_state.pop("scan_error", None)
-                                st.session_state["last_scanned_image"] = current_image_bytes
-                                st.rerun()
-                            else:
-                                st.session_state["scan_error"] = (
-                                    "文字が見つかりませんでした。ブレていないか確認して、"
-                                    "もう一度「AIで銘板を読み取る」を押してください。"
-                                )
-                                st.session_state["scan_ready"] = True
-                                st.rerun()
-                        except Exception as e:
-                            st.session_state["scan_error"] = _sanitize_api_error_message(str(e))
-                            st.session_state["scan_ready"] = True
-                            st.rerun()
-            
-            if st.session_state.get("scan_model") is not None:
-                st.success("AIの読み取りが完了しました！以下の内容を確認し、追加情報を入れて登録してください。")
+        if st.session_state.get("scan_model") is not None:
+            st.success("AIの読み取りが完了しました！以下の内容を確認し、追加情報を入れて登録してください。")
 
     # 共通の登録フォーム
     show_form = True
