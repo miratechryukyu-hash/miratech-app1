@@ -78,7 +78,9 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-16a"
+APP_VERSION = "2026-07-16b"
+
+LEGACY_ME_COLUMNS = ("旧番号", "旧管理番号")
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -486,19 +488,57 @@ def generate_qr_png_bytes(url):
     img.save(buf, format="PNG")
     return buf.getvalue()
 
+def _legacy_numbers_from_row(row):
+    """行から旧番号リストを取得（カンマ・スラッシュ区切り複数可）"""
+    numbers = []
+    for col in LEGACY_ME_COLUMNS:
+        raw = clean_data_str(row.get(col, ""))
+        if not raw:
+            continue
+        for part in re.split(r"[,、/|]+", raw):
+            token = clean_data_str(part)
+            if token:
+                numbers.append(token)
+    return numbers
+
+def find_device_row(df_master, keyword):
+    """管理番号・旧番号・シリアルNo で機器マスター行を検索"""
+    if df_master is None or df_master.empty or "管理番号" not in df_master.columns:
+        return None, None
+
+    clean_kw = clean_data_str(keyword)
+    if not clean_kw:
+        return None, None
+
+    clean_db_me = clean_series(df_master["管理番号"])
+    matched = df_master[clean_db_me == clean_kw]
+    if not matched.empty:
+        return matched.iloc[0], "管理番号"
+
+    for _, row in df_master.iterrows():
+        if clean_kw in _legacy_numbers_from_row(row):
+            return row, "旧番号"
+
+    if "シリアルNo" in df_master.columns:
+        clean_db_sn = clean_series(df_master["シリアルNo"])
+        matched = df_master[clean_db_sn == clean_kw]
+        if not matched.empty:
+            return matched.iloc[0], "シリアルNo"
+
+    return None, None
+
 def lookup_device_for_sticker(df_master, me_no):
-    if df_master.empty or "管理番号" not in df_master.columns:
+    row, match_type = find_device_row(df_master, me_no)
+    if row is None:
         return {}
-    clean_me = clean_data_str(me_no)
-    matched = df_master[clean_series(df_master["管理番号"]) == clean_me]
-    if matched.empty:
-        return {}
-    row = matched.iloc[0]
+    current_me = clean_data_str(row.get("管理番号", ""))
     return {
         "model_name": normalize_stored_model(row.get("カテゴリ", ""), row.get("機種", "")),
-        "me_no": clean_me,
+        "me_no": current_me,
         "serial_no": clean_data_str(row.get("シリアルNo", "")),
         "delivery_date": clean_data_str(row.get("購入日", "") or row.get("納入日", "") or row.get("納品日", "")),
+        "legacy_me": clean_data_str(row.get("旧番号", "") or row.get("旧管理番号", "")),
+        "matched_via": match_type,
     }
 
 def apply_sticker_master_lookup(me_no, master_info):
@@ -510,11 +550,13 @@ def apply_sticker_master_lookup(me_no, master_info):
     if st.session_state.get("_sticker_lookup_me") == lookup_key:
         return
     st.session_state["_sticker_lookup_me"] = lookup_key
-    st.session_state["sticker_me_display"] = lookup_key
     if master_info:
+        st.session_state["sticker_me_display"] = master_info.get("me_no", lookup_key)
         st.session_state["sticker_model"] = master_info.get("model_name", "")
         st.session_state["sticker_serial"] = master_info.get("serial_no", "")
         st.session_state["sticker_delivery"] = master_info.get("delivery_date", "")
+    else:
+        st.session_state["sticker_me_display"] = lookup_key
 
 def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url=None):
     if not qr_url:
@@ -1181,8 +1223,8 @@ with tabs[0]:
     occ_press = 0.0
 
     input_keyword = st.text_input(
-        "管理番号 または シリアルNo を入力して検索",
-        placeholder="例: INP0001",
+        "管理番号・旧番号 または シリアルNo を入力して検索",
+        placeholder="例: INP0001 または 旧番号",
         key="check_search_keyword",
     ).strip()
 
@@ -1192,26 +1234,18 @@ with tabs[0]:
         st.session_state["check_last_search_keyword"] = input_keyword
 
     master_row = None
-    if (
-        input_keyword
-        and not df_master_global.empty
-        and "管理番号" in df_master_global.columns
-        and "シリアルNo" in df_master_global.columns
-    ):
-        clean_keyword = clean_data_str(input_keyword)
-        clean_db_me = clean_series(df_master_global["管理番号"])
-        clean_db_sn = clean_series(df_master_global["シリアルNo"])
-
-        matched_me = df_master_global[clean_db_me == clean_keyword]
-        if not matched_me.empty:
-            master_row = matched_me.iloc[0]
-        else:
-            matched_sn = df_master_global[clean_db_sn == clean_keyword]
-            if not matched_sn.empty:
-                master_row = matched_sn.iloc[0]
+    match_type = None
+    if input_keyword and not df_master_global.empty:
+        master_row, match_type = find_device_row(df_master_global, input_keyword)
 
     if master_row is not None:
-        st.success("登録済みの機器が見つかりました。情報を自動出現させます。")
+        if match_type == "旧番号":
+            st.info(
+                f"旧番号「{clean_data_str(input_keyword)}」で見つかりました。"
+                f" 現在の管理番号は {clean_data_str(master_row.get('管理番号', ''))} です。"
+            )
+        else:
+            st.success("登録済みの機器が見つかりました。情報を自動出現させます。")
         final_me_no = clean_data_str(master_row.get("管理番号", ""))
         final_sn = clean_data_str(master_row.get("シリアルNo", ""))
         device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
@@ -1454,26 +1488,37 @@ with tabs[1]:
         st.markdown("#### 機器データの修正")
         st.write("管理番号を入力すると現在のデータが呼び出され、内容を上書き修正できます。")
 
-        edit_me_no = st.text_input("修正したい機器の「管理番号」を入力", placeholder="例: INP0001", key="edit_me_input").strip()
+        edit_me_no = st.text_input(
+            "修正したい機器の「管理番号・旧番号」を入力",
+            placeholder="例: INP0001",
+            key="edit_me_input",
+        ).strip()
 
         if edit_me_no:
             try:
                 df_master_edit = safe_read_worksheet(conn, "機器マスター")
+                target_row, match_type = find_device_row(df_master_edit, edit_me_no)
 
-                clean_edit_me_no = clean_data_str(edit_me_no)
-                master_me_nos = clean_series(df_master_edit["管理番号"])
-
-                if not df_master_edit.empty and clean_edit_me_no in master_me_nos.values:
-                    target_row = df_master_edit[master_me_nos == clean_edit_me_no].iloc[0]
+                if target_row is not None:
+                    clean_edit_me_no = clean_data_str(target_row.get("管理番号", ""))
+                    master_me_nos = clean_series(df_master_edit["管理番号"])
 
                     with st.form("edit_master_form"):
-                        st.info(f"{clean_edit_me_no} のデータを修正します。直したい箇所を書き換えて「保存」を押してください。")
+                        if match_type == "旧番号":
+                            st.info(f"旧番号「{clean_data_str(edit_me_no)}」で見つかりました（現在の管理番号: {clean_edit_me_no}）")
+                        else:
+                            st.info(f"{clean_edit_me_no} のデータを修正します。直したい箇所を書き換えて「保存」を押してください。")
                         
                         new_cat = st.text_input("カテゴリ", value=clean_data_str(target_row.get("カテゴリ", "")))
                         new_model = st.text_input("型式 (例: ACCURO)", value=normalize_stored_model(
                             target_row.get("カテゴリ", ""), target_row.get("機種", "")
                         ))
                         new_sn = st.text_input("シリアルNo", value=clean_data_str(target_row.get("シリアルNo", "")))
+                        new_legacy = st.text_input(
+                            "旧番号（複数はカンマ区切り）",
+                            value=clean_data_str(target_row.get("旧番号", "") or target_row.get("旧管理番号", "")),
+                            placeholder="例: ME-123, OLD456",
+                        )
                         new_year = st.text_input("製造年月日", value=clean_data_str(target_row.get("製造年月日", "")))
                         
                         new_location = st.text_input("設置場所", value=clean_data_str(target_row.get("設置場所", "")))
@@ -1506,6 +1551,9 @@ with tabs[1]:
                             df_master_edit.loc[mask_m, "導入形態"] = new_acq_type
                             df_master_edit.loc[mask_m, "購入金額"] = new_price
                             df_master_edit.loc[mask_m, "納入日"] = str(new_delivery)
+                            if "旧番号" not in df_master_edit.columns:
+                                df_master_edit["旧番号"] = ""
+                            df_master_edit.loc[mask_m, "旧番号"] = clean_data_str(new_legacy)
                             conn.update(worksheet="機器マスター", data=df_master_edit)
 
                             try:
@@ -1526,7 +1574,7 @@ with tabs[1]:
                             st.success(f"{clean_edit_me_no} のデータを最新に修正し、過去の履歴にも完全に同期しました！")
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{clean_edit_me_no} のデータを修正・同期")
                 else:
-                    st.warning("指定された 管理番号 は登録されていません。")
+                    st.warning("指定された管理番号・旧番号は登録されていません。")
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
 
@@ -1841,16 +1889,22 @@ with tabs[3]:
     for field_key in ("sticker_model", "sticker_serial", "sticker_me_display", "sticker_delivery"):
         st.session_state.setdefault(field_key, "")
 
-    target_qr_me = st.text_input("管理番号を入力", placeholder="例: INP0001", key="sticker_me_no")
+    target_qr_me = st.text_input("管理番号・旧番号を入力", placeholder="例: INP0001", key="sticker_me_no")
     master_info = lookup_device_for_sticker(df_m_qr, target_qr_me) if target_qr_me.strip() else {}
     apply_sticker_master_lookup(target_qr_me, master_info)
 
     if master_info:
-        st.info("機器マスターから情報を読み込みました。")
+        if master_info.get("matched_via") == "旧番号":
+            st.info(
+                f"旧番号「{clean_data_str(target_qr_me)}」で見つかりました。"
+                f" シールの管理番号は {master_info.get('me_no', '')} です。"
+            )
+        else:
+            st.info("機器マスターから情報を読み込みました。")
     elif target_qr_me.strip():
         st.warning(
-            f"管理番号「{clean_data_str(target_qr_me)}」は機器マスターに見つかりません。"
-            " 手入力するか、管理番号の表記（例: INP0001）を確認してください。"
+            f"「{clean_data_str(target_qr_me)}」は機器マスターに見つかりません。"
+            " 管理番号・旧番号を確認するか、手入力してください。"
         )
 
     col_s1, col_s2 = st.columns(2)
@@ -1926,6 +1980,10 @@ with tabs[4]:
     if show_form:
         with st.form("direct_reg_form"):
             man_me_no = st.text_input("1. 管理番号 (必須)", placeholder="例: Y0001")
+            man_legacy_me = st.text_input(
+                "1b. 旧番号（任意・複数はカンマ区切り）",
+                placeholder="例: ME-123, OLD456",
+            )
             
             st.write("2. 機器種類（カテゴリ）※必須")
             sel_cat = st.selectbox(" 過去のリストから選ぶ", [""] + history_categories)
