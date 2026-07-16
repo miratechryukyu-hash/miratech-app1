@@ -78,7 +78,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-16b"
+APP_VERSION = "2026-07-16c"
 
 LEGACY_ME_COLUMNS = ("旧番号", "旧管理番号")
 
@@ -1769,45 +1769,52 @@ with tabs[2]:
         sub_tab1, sub_tab2 = st.tabs(["機器カルテ（ワンタッチ照合）", "日次点検実績（グラフ）"])
 
         with sub_tab1:
-            st.write("一覧から機器を選んでください")
+            karte_keyword = st.text_input(
+                "管理番号・旧番号 または シリアルNo を入力して検索",
+                placeholder="例: INP0001 または 旧番号",
+                key="karte_search_keyword",
+            ).strip()
+
             if not df_master.empty and "管理番号" in df_master.columns:
-                machine_labels = []
-                machine_rows = []
-                for _, row in df_master.iterrows():
-                    me = clean_data_str(row.get("管理番号", "不明"))
-                    cat = clean_data_str(row.get("カテゴリ", ""))
-                    model = normalize_stored_model(cat, row.get("機種", "")) or "不明な機器"
-                    machine_labels.append(f"{me} | {model}")
-                    machine_rows.append(row)
+                master_row, match_type = find_device_row(df_master, karte_keyword) if karte_keyword else (None, None)
 
-                display_dataframe(df_master, hide_index=True, use_container_width=True)
+                if master_row is not None:
+                    if match_type == "旧番号":
+                        st.info(
+                            f"旧番号「{clean_data_str(karte_keyword)}」で見つかりました。"
+                            f" 現在の管理番号は {clean_data_str(master_row.get('管理番号', ''))} です。"
+                        )
+                    else:
+                        st.success("登録済みの機器が見つかりました。")
 
-                selected_label = st.selectbox(
-                    "詳細を見たい機器を選択",
-                    [""] + machine_labels,
-                    key="karte_machine_select",
-                )
-
-                if selected_label:
-                    idx = machine_labels.index(selected_label)
-                    target_me = clean_data_str(machine_rows[idx].get("管理番号", "不明"))
+                    target_me = clean_data_str(master_row.get("管理番号", ""))
                     model_name = normalize_stored_model(
-                        machine_rows[idx].get("カテゴリ", ""),
-                        machine_rows[idx].get("機種", ""),
+                        master_row.get("カテゴリ", ""),
+                        master_row.get("機種", ""),
                     ) or "不明な機器"
-                    
+                    device_category = clean_data_str(master_row.get("カテゴリ", ""))
+                    device_model = normalize_stored_model(device_category, master_row.get("機種", ""))
+
+                    col_k1, col_k2 = st.columns(2)
+                    with col_k1:
+                        st.text_input("管理番号", value=target_me, disabled=True, key="karte_disp_me")
+                        st.text_input("機器の種類", value=device_category, disabled=True, key="karte_disp_cat")
+                    with col_k2:
+                        st.text_input("シリアルNo", value=clean_data_str(master_row.get("シリアルNo", "")), disabled=True, key="karte_disp_sn")
+                        st.text_input("型式", value=device_model, disabled=True, key="karte_disp_model")
+
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
-                    
+
                     hist_df = pd.DataFrame()
                     if not df_history.empty and "管理番号" in df_history.columns:
                         clean_hist_search_me = clean_series(df_history["管理番号"])
                         hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
-                        
+
                     if not hist_df.empty:
                         st.write("#### 過去の点検・修理履歴")
                         st.dataframe(_sanitize_dataframe(hist_df), use_container_width=True, hide_index=True)
-                        
+
                         st.markdown("---")
                         st.write("#### 点検結果履歴（報告書表示）")
                         st.write("履歴から特定の日の点検報告書を、点検入力タブと同じ形式で表示・印刷できます。")
@@ -1843,6 +1850,8 @@ with tabs[2]:
                             )
                     else:
                         st.info("この機器の点検・修理履歴はありません。")
+                elif karte_keyword:
+                    st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
             else:
                 st.info("機器マスターにまだデータがありません。")
 
@@ -2024,6 +2033,7 @@ with tabs[4]:
                         else:
                             new_master_row = pd.DataFrame([{
                                 "管理番号": protect_zeros(man_me_no),
+                                "旧番号": clean_data_str(man_legacy_me),
                                 "カテゴリ": final_cat,
                                 "メーカー": man_maker,
                                 "機種": model_for_spreadsheet(man_model),
