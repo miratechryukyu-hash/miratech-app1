@@ -18,6 +18,7 @@ import time
 import html
 import hashlib
 from pathlib import Path
+import calendar
 
 def _is_streamlit_cloud():
     """Streamlit Community Cloud 上で動いているか判定"""
@@ -841,6 +842,729 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         "memo": memo,
     }
 
+# ==========================================
+# 日常点検（動作点検）— 超音波診断装置・保育器
+# ==========================================
+DAILY_INSPECTION_CATEGORIES = {"超音波診断装置", "保育器"}
+
+DAILY_CHECK_ITEMS = {
+    "超音波診断装置": [
+        "電源投入・起動正常",
+        "表示画面・タッチパネル正常",
+        "プローブ接続・認識正常",
+        "画像表示正常",
+        "冷却ファン作動・異音なし",
+        "外装・コード類異常なし",
+    ],
+    "保育器": [
+        "表示・設定温度確認",
+        "温度警報作動確認",
+        "ヒータ作動確認",
+        "キャノピ開閉動作",
+        "外装・清潔状態",
+        "電源コード・接続部",
+    ],
+}
+
+DAILY_HISTORY_COLUMNS = [
+    "点検日", "管理番号", "カテゴリ", "シリアルNo", "機種",
+    "実施者", "総合判定", "詳細データ", "備考",
+]
+
+def ensure_daily_history_worksheet():
+    """日常点検履歴シートが無ければ自動作成"""
+    client, spreadsheet_id = _get_sheet_client()
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        sh.worksheet("日常点検履歴")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="日常点検履歴", rows=1000, cols=len(DAILY_HISTORY_COLUMNS))
+        ws.update([DAILY_HISTORY_COLUMNS], "A1")
+    st.cache_data.clear()
+
+def validate_daily_checks(checks):
+    ng_items = []
+    incomplete_items = []
+    for label, val in checks.items():
+        if is_unselected(val):
+            incomplete_items.append(label)
+        elif val == "NG":
+            ng_items.append(label)
+    return ng_items, incomplete_items
+
+def build_daily_detail_text(checks):
+    return " | ".join(f"{k}:{v}" for k, v in checks.items())
+
+def save_daily_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
+                                    check_date, inspector, overall_result, memo, detail_text):
+    ensure_daily_history_worksheet()
+    existing = safe_read_worksheet(conn, "日常点検履歴", DAILY_HISTORY_COLUMNS)
+    if existing.empty:
+        existing = pd.DataFrame(columns=DAILY_HISTORY_COLUMNS)
+
+    new_row = {
+        "点検日": str(check_date),
+        "管理番号": protect_zeros(final_me_no),
+        "カテゴリ": device_category,
+        "シリアルNo": protect_zeros(final_sn),
+        "機種": model_for_spreadsheet(device_model),
+        "実施者": inspector,
+        "総合判定": overall_result,
+        "詳細データ": detail_text,
+        "備考": memo,
+    }
+    for col in existing.columns:
+        if col not in new_row:
+            new_row[col] = ""
+
+    updated = pd.concat([existing, pd.DataFrame([new_row])[existing.columns]], ignore_index=True)
+    conn.update(worksheet="日常点検履歴", data=updated)
+
+def execute_daily_inspection_save(conn, final_me_no, final_sn, device_category, device_model,
+                                  check_date, inspector, overall_result, memo, detail_text,
+                                  msg_key="daily_check_registered_msg"):
+    save_daily_inspection_to_sheets(
+        conn, final_me_no, final_sn, device_category, device_model,
+        check_date, inspector, overall_result, memo, detail_text,
+    )
+    write_log(inspector, f"{final_me_no} の日常点検を登録 ({overall_result})")
+    st.session_state["last_daily_check_date"] = check_date
+    st.session_state[msg_key] = f"{final_me_no} の日常点検を登録しました。（{overall_result}）"
+    return {
+        "check_date": check_date,
+        "final_me_no": final_me_no,
+        "model_name": model_for_spreadsheet(device_model),
+        "device_category": device_category,
+        "inspector": inspector,
+        "overall_result": overall_result,
+        "detail_text": detail_text,
+        "memo": memo,
+    }
+
+def render_daily_inspection_report(check_date, me_no, device_category, model_name, inspector,
+                                   overall_result, detail_text="", memo=""):
+    st.write(f"## 日常点検（動作点検）記録 （{check_date} 実施分）")
+    info_df = pd.DataFrame({
+        "管理番号": [me_no],
+        "機器種類": [device_category],
+        "型式": [model_name],
+        "実施者": [inspector],
+        "総合判定": [overall_result],
+    })
+    st.table(info_df)
+
+    item_names, item_results, item_judges = parse_detail_text_to_table(detail_text)
+    if item_names:
+        st.table(pd.DataFrame({
+            "点検項目": item_names,
+            "判定": item_judges,
+        }))
+
+    if memo and str(memo).strip().lower() not in ("", "nan"):
+        st.info(f"備考:\n{memo}")
+
+def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_prefix="daily",
+                                 locked_keyword=False):
+    msg_key = f"{form_key_prefix}_registered_msg"
+    pending_key = f"{form_key_prefix}_pending_save"
+    search_key = f"{form_key_prefix}_last_search_keyword"
+
+    if st.session_state.get(msg_key):
+        st.success(st.session_state[msg_key])
+
+    if locked_keyword and initial_keyword:
+        st.success(f"対象機器: {initial_keyword}")
+        input_keyword = clean_data_str(initial_keyword)
+    else:
+        input_keyword = st.text_input(
+            "管理番号・旧番号 または シリアルNo を入力して検索",
+            value=initial_keyword,
+            placeholder="例: US0001 または 旧番号",
+            key=f"{form_key_prefix}_search_keyword",
+            disabled=locked_keyword,
+        ).strip()
+
+    if input_keyword != st.session_state.get(search_key, ""):
+        st.session_state.pop(msg_key, None)
+        st.session_state.pop(pending_key, None)
+        st.session_state[search_key] = input_keyword
+
+    master_row = None
+    match_type = None
+    if input_keyword and not df_master.empty:
+        master_row, match_type = find_device_row(df_master, input_keyword)
+
+    if master_row is None:
+        if input_keyword:
+            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+        else:
+            st.info("日常点検は「超音波診断装置」と「保育器」のみ対象です。管理番号等を入力して検索してください。")
+        return
+
+    final_me_no = clean_data_str(master_row.get("管理番号", ""))
+    final_sn = clean_data_str(master_row.get("シリアルNo", ""))
+    device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
+    device_model = normalize_stored_model(device_category, master_row.get("機種", ""))
+
+    if match_type == "旧番号":
+        st.info(
+            f"旧番号「{clean_data_str(input_keyword)}」で見つかりました。"
+            f" 現在の管理番号は {final_me_no} です。"
+        )
+    elif not locked_keyword:
+        st.success("登録済みの機器が見つかりました。")
+
+    if device_category not in DAILY_INSPECTION_CATEGORIES:
+        st.error(
+            f"「{device_category}」は日常点検の対象外です。"
+            f" 対象: {', '.join(sorted(DAILY_INSPECTION_CATEGORIES))}"
+        )
+        return
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.text_input("管理番号", value=final_me_no, disabled=True, key=f"{form_key_prefix}_disp_me")
+        st.text_input("機器の種類", value=device_category, disabled=True, key=f"{form_key_prefix}_disp_cat")
+    with col_m2:
+        st.text_input("シリアルNo", value=final_sn, disabled=True, key=f"{form_key_prefix}_disp_sn")
+        st.text_input("型式", value=device_model, disabled=True, key=f"{form_key_prefix}_disp_model")
+
+    check_labels = DAILY_CHECK_ITEMS[device_category]
+    daily_checks = {label: "---" for label in check_labels}
+
+    st.markdown("---")
+    st.write("**日常点検項目（OK / NG を選択）**")
+
+    if "last_daily_check_date" not in st.session_state:
+        st.session_state["last_daily_check_date"] = date.today()
+
+    saved_report = None
+    with st.form(f"{form_key_prefix}_check_form"):
+        check_date = st.date_input("点検日", value=st.session_state["last_daily_check_date"])
+        inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
+
+        cols = st.columns(2)
+        for idx, label in enumerate(check_labels):
+            with cols[idx % 2]:
+                daily_checks[label] = st.radio(
+                    label, ["OK", "NG", "---"], horizontal=True, index=None, key=f"{form_key_prefix}_chk_{idx}",
+                )
+
+        memo = st.text_area("備考", placeholder="特記事項があれば記入してください")
+        submitted = st.form_submit_button("日常点検を保存", type="primary", use_container_width=True)
+
+    if submitted:
+        if not inspector.strip():
+            st.warning("実施者を入力してください。")
+        else:
+            ng_items, incomplete_items = validate_daily_checks(daily_checks)
+            detail_text = build_daily_detail_text(daily_checks)
+            overall_result = "日常NG" if ng_items else "日常OK"
+            save_payload = {
+                "final_me_no": final_me_no,
+                "final_sn": final_sn,
+                "device_category": device_category,
+                "device_model": device_model,
+                "check_date": check_date,
+                "inspector": inspector,
+                "overall_result": overall_result,
+                "memo": memo,
+                "detail_text": detail_text,
+                "incomplete_items": incomplete_items,
+                "ng_items": ng_items,
+                "msg_key": msg_key,
+            }
+
+            if incomplete_items:
+                st.error("未選択の項目があります。すべて OK / NG を選択してください。")
+                st.warning("未設定: " + "、".join(incomplete_items))
+                st.session_state[pending_key] = save_payload
+            else:
+                if ng_items:
+                    st.warning("NG項目: " + "、".join(ng_items))
+                st.session_state.pop(pending_key, None)
+                try:
+                    with st.spinner("保存しています..."):
+                        saved_report = execute_daily_inspection_save(
+                            conn,
+                            **{k: v for k, v in save_payload.items()
+                               if k not in ("incomplete_items", "ng_items", "msg_key")},
+                            msg_key=msg_key,
+                        )
+                    st.success(st.session_state[msg_key])
+                except Exception as e:
+                    st.error(f"保存エラー: {e}")
+
+    pending = st.session_state.get(pending_key)
+    if pending:
+        st.markdown("---")
+        st.warning("未選択の項目があります。このまま保存しますか？")
+        st.write("未設定: " + "、".join(pending.get("incomplete_items", [])))
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            if st.button("Yes（保存する）", type="primary", use_container_width=True,
+                         key=f"{form_key_prefix}_confirm_yes"):
+                try:
+                    with st.spinner("保存しています..."):
+                        saved_report = execute_daily_inspection_save(
+                            conn,
+                            **{k: v for k, v in pending.items()
+                               if k not in ("incomplete_items", "ng_items", "msg_key")},
+                            msg_key=pending.get("msg_key", msg_key),
+                        )
+                    st.session_state.pop(pending_key, None)
+                    st.success(st.session_state[pending.get("msg_key", msg_key)])
+                except Exception as e:
+                    st.error(f"保存エラー: {e}")
+        with col_no:
+            if st.button("No（キャンセル）", use_container_width=True, key=f"{form_key_prefix}_confirm_no"):
+                st.session_state.pop(pending_key, None)
+                st.info("保存をキャンセルしました。")
+                st.rerun()
+
+    if saved_report:
+        render_daily_inspection_report(
+            saved_report["check_date"],
+            saved_report["final_me_no"],
+            saved_report["device_category"],
+            saved_report["model_name"],
+            saved_report["inspector"],
+            saved_report["overall_result"],
+            saved_report["detail_text"],
+            saved_report["memo"],
+        )
+
+def parse_daily_detail_to_dict(detail_text):
+    result = {}
+    if not detail_text or str(detail_text).strip().lower() in ("", "nan"):
+        return result
+    for part in str(detail_text).split("|"):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        key, val = part.split(":", 1)
+        result[key.strip()] = val.strip()
+    return result
+
+def parse_check_date_flexible(date_str):
+    s = clean_data_str(date_str)
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            continue
+    matched = re.match(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
+    if matched:
+        return date(int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+    return None
+
+def list_daily_inspection_devices(df_master):
+    if df_master is None or df_master.empty or "カテゴリ" not in df_master.columns:
+        return []
+    devices = []
+    for _, row in df_master.iterrows():
+        category = clean_data_str(row.get("カテゴリ", ""))
+        if category not in DAILY_INSPECTION_CATEGORIES:
+            continue
+        me_no = clean_data_str(row.get("管理番号", ""))
+        if not me_no:
+            continue
+        model = normalize_stored_model(category, row.get("機種", ""))
+        label = f"{me_no} | {category} | {model or '型式未登録'}"
+        devices.append({
+            "me_no": me_no,
+            "label": label,
+            "category": category,
+            "model": model,
+            "serial_no": clean_data_str(row.get("シリアルNo", "")),
+            "location": clean_data_str(row.get("設置場所", "")),
+        })
+    return sorted(devices, key=lambda d: d["me_no"])
+
+def load_daily_history_for_device_month(conn, me_no, year, month):
+    df = safe_read_worksheet(conn, "日常点検履歴", DAILY_HISTORY_COLUMNS)
+    if df.empty or "管理番号" not in df.columns:
+        return pd.DataFrame(columns=DAILY_HISTORY_COLUMNS)
+
+    clean_me = clean_data_str(me_no)
+    filtered = df[clean_series(df["管理番号"]) == clean_me].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=DAILY_HISTORY_COLUMNS)
+
+    rows = []
+    for _, row in filtered.iterrows():
+        check_day = parse_check_date_flexible(row.get("点検日", ""))
+        if check_day and check_day.year == year and check_day.month == month:
+            rows.append(row)
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=DAILY_HISTORY_COLUMNS)
+
+def build_monthly_daily_table_rows(device_category, month_df, year, month):
+    check_labels = DAILY_CHECK_ITEMS.get(device_category, [])
+    num_days = calendar.monthrange(year, month)[1]
+    by_day = {}
+    for _, row in month_df.iterrows():
+        check_day = parse_check_date_flexible(row.get("点検日", ""))
+        if check_day:
+            by_day[check_day.day] = row
+
+    header = ["点検項目"] + [str(day) for day in range(1, num_days + 1)]
+    rows = [header]
+
+    for label in check_labels:
+        row = [label]
+        for day in range(1, num_days + 1):
+            if day in by_day:
+                detail = parse_daily_detail_to_dict(by_day[day].get("詳細データ", ""))
+                val = detail.get(label, "")
+                row.append(val if val in ("OK", "NG") else "")
+            else:
+                row.append("")
+        rows.append(row)
+
+    overall_row = ["総合判定"]
+    inspector_row = ["実施者"]
+    for day in range(1, num_days + 1):
+        if day in by_day:
+            overall_row.append(clean_data_str(by_day[day].get("総合判定", "")))
+            inspector_row.append(clean_data_str(by_day[day].get("実施者", "")))
+        else:
+            overall_row.append("")
+            inspector_row.append("")
+    rows.extend([overall_row, inspector_row])
+    return rows, num_days, len(by_day)
+
+def _daily_monthly_pdf_font():
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    font_name = "HeiseiKakuGo-W5"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+    except Exception:
+        font_name = "Helvetica"
+    return font_name
+
+def _daily_monthly_pdf_paragraph(text, font_name, font_size=7, align=0):
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    style = ParagraphStyle(
+        name=f"daily_pdf_{font_size}_{align}",
+        fontName=font_name,
+        fontSize=font_size,
+        leading=font_size + 2,
+        alignment=align,
+    )
+    safe_text = html.escape(str(text or "")).replace("\n", "<br/>")
+    return Paragraph(safe_text, style)
+
+def _build_monthly_pdf_story(facility_name, device_info, year, month, table_rows):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Table, TableStyle, Spacer
+
+    font_name = _daily_monthly_pdf_font()
+    page_size = landscape(A4)
+    me_no = device_info["me_no"]
+    category = device_info["category"]
+    model = device_info.get("model", "")
+    serial_no = device_info.get("serial_no", "")
+    location = device_info.get("location", "")
+
+    story = [
+        _daily_monthly_pdf_paragraph(
+            f"医療機器 日常点検記録表（動作点検） — {year}年{month}月",
+            font_name, 12, align=1,
+        ),
+        Spacer(1, 4 * mm),
+        _daily_monthly_pdf_paragraph(
+            f"{facility_name}　|　管理番号: {me_no}　|　{category}　|　型式: {model or '-'}　|　"
+            f"シリアルNo: {serial_no or '-'}　|　設置場所: {location or '-'}",
+            font_name, 8,
+        ),
+        Spacer(1, 4 * mm),
+    ]
+
+    num_cols = len(table_rows[0])
+    usable_width = page_size[0] - 16 * mm
+    label_width = 42 * mm
+    day_width = max(5.5 * mm, (usable_width - label_width) / max(num_cols - 1, 1))
+    col_widths = [label_width] + [day_width] * (num_cols - 1)
+
+    pdf_table_data = []
+    for row_idx, row in enumerate(table_rows):
+        pdf_row = []
+        for col_idx, cell in enumerate(row):
+            size = 6 if col_idx > 0 else 7
+            align = 1 if row_idx == 0 or col_idx > 0 else 0
+            pdf_row.append(_daily_monthly_pdf_paragraph(cell, font_name, size, align=align))
+        pdf_table_data.append(pdf_row)
+
+    table = Table(pdf_table_data, colWidths=col_widths, repeatRows=1)
+    style_cmds = [
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
+        ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#f5f5f5")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+    ]
+    for row_idx, row in enumerate(table_rows):
+        if row_idx == 0:
+            continue
+        for col_idx, cell in enumerate(row):
+            if col_idx == 0:
+                continue
+            if cell == "NG":
+                style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#ffcdd2")))
+            elif cell == "OK":
+                style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#c8e6c9")))
+    table.setStyle(TableStyle(style_cmds))
+
+    story.extend([
+        table,
+        Spacer(1, 3 * mm),
+        _daily_monthly_pdf_paragraph(
+            "※ 空欄は未実施。印刷日: "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M')}　|　PDF出力: miratech 日常点検管理",
+            font_name, 7,
+        ),
+    ])
+    return story
+
+def build_monthly_daily_inspection_pdf_bytes(facility_name, device_info, year, month, table_rows):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+    )
+    doc.build(_build_monthly_pdf_story(facility_name, device_info, year, month, table_rows))
+    buf.seek(0)
+    return buf.getvalue()
+
+def build_monthly_daily_inspection_pdf_for_devices(facility_name, devices_data, year, month):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import mm
+    from reportlab.platypus import PageBreak, SimpleDocTemplate
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=10 * mm,
+        bottomMargin=10 * mm,
+    )
+    story = []
+    for idx, item in enumerate(devices_data):
+        if idx > 0:
+            story.append(PageBreak())
+        story.extend(_build_monthly_pdf_story(
+            facility_name, item["device_info"], year, month, item["table_rows"],
+        ))
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
+
+def build_monthly_daily_inspection_html(facility_name, device_info, year, month, table_rows, record_count):
+    me_no = html.escape(device_info["me_no"])
+    category = html.escape(device_info["category"])
+    model = html.escape(device_info.get("model", "") or "-")
+    serial_no = html.escape(device_info.get("serial_no", "") or "-")
+    location = html.escape(device_info.get("location", "") or "-")
+
+    header_cells = "".join(
+        f'<th>{html.escape(str(cell))}</th>' for cell in table_rows[0]
+    )
+    body_rows = []
+    for row in table_rows[1:]:
+        cells = []
+        for col_idx, cell in enumerate(row):
+            cls = "label-col" if col_idx == 0 else "day-col"
+            val = html.escape(str(cell))
+            if col_idx > 0 and cell == "NG":
+                cls += " ng"
+            elif col_idx > 0 and cell == "OK":
+                cls += " ok"
+            cells.append(f'<td class="{cls}">{val}</td>')
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return f"""
+    <div class="daily-monthly-report">
+        <style>
+            @page {{ size: A4 landscape; margin: 10mm; }}
+            .daily-monthly-report {{
+                font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+                color: #111;
+                background: #fff;
+                padding: 8px;
+            }}
+            .daily-monthly-report h2 {{
+                text-align: center;
+                margin: 0 0 8px 0;
+                font-size: 18px;
+                border-bottom: 2px solid #333;
+                padding-bottom: 6px;
+            }}
+            .daily-monthly-report .meta {{
+                font-size: 12px;
+                margin-bottom: 10px;
+                line-height: 1.5;
+            }}
+            .daily-monthly-report table {{
+                width: 100%;
+                border-collapse: collapse;
+                table-layout: fixed;
+                font-size: 10px;
+            }}
+            .daily-monthly-report th, .daily-monthly-report td {{
+                border: 1px solid #666;
+                padding: 3px 2px;
+                text-align: center;
+                word-break: break-all;
+            }}
+            .daily-monthly-report th {{
+                background: #ececec;
+            }}
+            .daily-monthly-report .label-col {{
+                text-align: left;
+                width: 120px;
+                background: #f7f7f7;
+                font-size: 9px;
+            }}
+            .daily-monthly-report .day-col.ok {{ background: #e8f5e9; font-weight: bold; }}
+            .daily-monthly-report .day-col.ng {{ background: #ffcdd2; font-weight: bold; color: #b71c1c; }}
+            .daily-monthly-report .footnote {{
+                margin-top: 8px;
+                font-size: 10px;
+                color: #444;
+            }}
+            @media print {{
+                header, [data-testid="stSidebar"], footer, .no-print {{ display: none !important; }}
+                .daily-monthly-report {{ padding: 0; }}
+            }}
+        </style>
+        <h2>医療機器 日常点検記録表（動作点検） — {year}年{month}月</h2>
+        <div class="meta">
+            <b>{html.escape(facility_name)}</b><br>
+            管理番号: {me_no}　|　{category}　|　型式: {model}　|　シリアルNo: {serial_no}　|　設置場所: {location}<br>
+            当月記録件数: {record_count} 件
+        </div>
+        <table>
+            <thead><tr>{header_cells}</tr></thead>
+            <tbody>{"".join(body_rows)}</tbody>
+        </table>
+        <div class="footnote">
+            ※ 空欄は未実施。ブラウザの「印刷」→「PDFに保存」でA4横向きPDF化できます（Cmd/Ctrl + P）。
+        </div>
+    </div>
+    """
+
+def render_monthly_daily_inspection_export(conn, df_master, facility_name):
+    st.markdown("#### 月次日常点検記録表（A4 PDF・印刷）")
+    st.caption("指定した年月の日常点検結果を、日付×点検項目の1ヶ月表として出力できます。")
+
+    devices = list_daily_inspection_devices(df_master)
+    if not devices:
+        st.info("日常点検対象の機器（超音波診断装置・保育器）がマスターに登録されていません。")
+        return
+
+    today = date.today()
+    col_y, col_m, col_mode = st.columns([1, 1, 1.2])
+    with col_y:
+        target_year = st.number_input("年", min_value=2020, max_value=2100, value=today.year, key="monthly_daily_year")
+    with col_m:
+        target_month = st.selectbox("月", list(range(1, 13)), index=today.month - 1, key="monthly_daily_month")
+    with col_mode:
+        export_mode = st.radio(
+            "出力対象",
+            ["1台ずつ", "対象機器すべて（1 PDF）"],
+            horizontal=True,
+            key="monthly_daily_export_mode",
+        )
+
+    if export_mode == "1台ずつ":
+        device_labels = [d["label"] for d in devices]
+        selected_label = st.selectbox("対象機器", device_labels, key="monthly_daily_device")
+        selected_devices = [d for d in devices if d["label"] == selected_label]
+    else:
+        selected_devices = devices
+        st.info(f"対象機器 {len(selected_devices)} 台分を1つのPDFにまとめます（機器ごとに1ページ）。")
+
+    if st.button("月次記録表を生成", type="primary", key="monthly_daily_generate"):
+        devices_data = []
+        preview_items = []
+        for device in selected_devices:
+            month_df = load_daily_history_for_device_month(conn, device["me_no"], target_year, target_month)
+            table_rows, _, record_count = build_monthly_daily_table_rows(
+                device["category"], month_df, target_year, target_month,
+            )
+            device_info = {
+                "me_no": device["me_no"],
+                "category": device["category"],
+                "model": device["model"],
+                "serial_no": device["serial_no"],
+                "location": device["location"],
+            }
+            devices_data.append({
+                "device_info": device_info,
+                "table_rows": table_rows,
+                "record_count": record_count,
+            })
+            preview_items.append({
+                "device_info": device_info,
+                "table_rows": table_rows,
+                "record_count": record_count,
+                "html": build_monthly_daily_inspection_html(
+                    facility_name, device_info, target_year, target_month, table_rows, record_count,
+                ),
+            })
+
+        if len(devices_data) == 1:
+            pdf_bytes = build_monthly_daily_inspection_pdf_bytes(
+                facility_name, devices_data[0]["device_info"], target_year, target_month, devices_data[0]["table_rows"],
+            )
+            pdf_name = f"日常点検_{devices_data[0]['device_info']['me_no']}_{target_year}{target_month:02d}.pdf"
+        else:
+            pdf_bytes = build_monthly_daily_inspection_pdf_for_devices(
+                facility_name, devices_data, target_year, target_month,
+            )
+            pdf_name = f"日常点検_全機器_{target_year}{target_month:02d}.pdf"
+
+        st.session_state["monthly_daily_pdf_bytes"] = pdf_bytes
+        st.session_state["monthly_daily_pdf_name"] = pdf_name
+        st.session_state["monthly_daily_preview_items"] = preview_items
+
+    if st.session_state.get("monthly_daily_pdf_bytes"):
+        st.download_button(
+            "PDFをダウンロード",
+            data=st.session_state["monthly_daily_pdf_bytes"],
+            file_name=st.session_state.get("monthly_daily_pdf_name", "daily_inspection.pdf"),
+            mime="application/pdf",
+            type="primary",
+            key="monthly_daily_pdf_download",
+        )
+        st.caption("ダウンロードしたPDFはA4横向きです。印刷設定も「横向き」を選んでください。")
+
+    preview_items = st.session_state.get("monthly_daily_preview_items", [])
+    if preview_items:
+        st.markdown("---")
+        st.markdown("##### 印刷プレビュー")
+        st.info("下のプレビュー表示中に Cmd/Ctrl + P でもPDF保存できます。")
+        for item in preview_items:
+            st.markdown(item["html"], unsafe_allow_html=True)
+            if len(preview_items) > 1:
+                st.markdown("---")
+
 # --- ログ書き込み用共通関数 ---
 def write_log(user_name, action):
     try:
@@ -1102,73 +1826,85 @@ if not df_master_global.empty and "カテゴリ" in df_master_global.columns:
 category_options = sorted(set(BASE_CATEGORIES + saved_categories))
 
 # ==========================================
-# 【ルートB】QRコードを読み取った場合（トラブル報告画面へ直行）
+# 【ルートB】QRコードを読み取った場合（故障報告 / 日常点検）
 # ==========================================
 if url_me_no:
     st.markdown(f"<h2 style='text-align: center; color: #FF4B4B;'>{facility_name}</h2>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center;'>機器トラブル報告システム</h3>", unsafe_allow_html=True)
-    
-    st.success(f"対象機器: {url_me_no}")
-    
-    with st.form("nurse_report_form"):
-        rep_date = st.date_input("発生日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
-        rep_dept = st.selectbox("あなたの部署", ["選択してください", "外来", "一般病棟", "オペ室"])
-        rep_name = st.text_input("報告者名", value=st.session_state.get("current_user_name", ""))
-        c1, c2 = st.columns(2)
-        with c1:
-            err_power = st.checkbox("電源不良")
-            err_error = st.checkbox("エラー表示")
-        with c2:
-            err_alarm = st.checkbox("アラーム")
-            err_drop = st.checkbox("落下・破損")
-        rep_detail = st.text_area("詳細内容")
-        
-        if st.form_submit_button("報告を送信する", type="primary", use_container_width=True):
-            symptoms = []
-            if err_power: symptoms.append("電源不良")
-            if err_error: symptoms.append("エラー表示")
-            if err_alarm: symptoms.append("アラーム")
-            if err_drop: symptoms.append("落下・破損")
-            
-            symptom_str = "、".join(symptoms)
-            if rep_detail:
-                if symptom_str:
-                    symptom_str += f" (詳細: {rep_detail})"
-                else:
-                    symptom_str = f"その他 (詳細: {rep_detail})"
-            elif not symptom_str:
-                symptom_str = "記載なし"
 
-            try:
-                existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況"])
-                
-                new_report = pd.DataFrame([{
-                    "報告日": str(date.today()),
-                    "発生日": str(rep_date),
-                    "管理番号": url_me_no,
-                    "機種": "不明な機器",
-                    "報告者": rep_name,
-                    "部署": rep_dept,
-                    "症状": symptom_str,
-                    "対応状況": "未対応"
-                }])
-                
-                updated_df = pd.concat([existing_data, new_report], ignore_index=True)
-                conn.update(worksheet="故障報告", data=updated_df)
-                
-                write_log(f"現場({rep_name})", f"{url_me_no} の故障報告を送信")
-                
-                st.success("報告を受け付けました。ご協力ありがとうございます。")
-            except Exception as e:
-                st.error(f"保存エラー: {e}")
+    qr_tab_fault, qr_tab_daily = st.tabs(["故障報告", "日常点検"])
+
+    with qr_tab_fault:
+        st.markdown("<h3 style='text-align: center;'>機器トラブル報告</h3>", unsafe_allow_html=True)
+        st.success(f"対象機器: {url_me_no}")
+
+        with st.form("nurse_report_form"):
+            rep_date = st.date_input("発生日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            rep_dept = st.selectbox("あなたの部署", ["選択してください", "外来", "一般病棟", "オペ室"])
+            rep_name = st.text_input("報告者名", value=st.session_state.get("current_user_name", ""))
+            c1, c2 = st.columns(2)
+            with c1:
+                err_power = st.checkbox("電源不良")
+                err_error = st.checkbox("エラー表示")
+            with c2:
+                err_alarm = st.checkbox("アラーム")
+                err_drop = st.checkbox("落下・破損")
+            rep_detail = st.text_area("詳細内容")
+
+            if st.form_submit_button("報告を送信する", type="primary", use_container_width=True):
+                symptoms = []
+                if err_power: symptoms.append("電源不良")
+                if err_error: symptoms.append("エラー表示")
+                if err_alarm: symptoms.append("アラーム")
+                if err_drop: symptoms.append("落下・破損")
+
+                symptom_str = "、".join(symptoms)
+                if rep_detail:
+                    if symptom_str:
+                        symptom_str += f" (詳細: {rep_detail})"
+                    else:
+                        symptom_str = f"その他 (詳細: {rep_detail})"
+                elif not symptom_str:
+                    symptom_str = "記載なし"
+
+                try:
+                    existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況"])
+
+                    new_report = pd.DataFrame([{
+                        "報告日": str(date.today()),
+                        "発生日": str(rep_date),
+                        "管理番号": url_me_no,
+                        "機種": "不明な機器",
+                        "報告者": rep_name,
+                        "部署": rep_dept,
+                        "症状": symptom_str,
+                        "対応状況": "未対応"
+                    }])
+
+                    updated_df = pd.concat([existing_data, new_report], ignore_index=True)
+                    conn.update(worksheet="故障報告", data=updated_df)
+
+                    write_log(f"現場({rep_name})", f"{url_me_no} の故障報告を送信")
+
+                    st.success("報告を受け付けました。ご協力ありがとうございます。")
+                except Exception as e:
+                    st.error(f"保存エラー: {e}")
+
+    with qr_tab_daily:
+        st.markdown("<h3 style='text-align: center;'>日常点検（動作点検）</h3>", unsafe_allow_html=True)
+        render_daily_inspection_form(
+            conn, df_master_global,
+            initial_keyword=url_me_no,
+            form_key_prefix="qr_daily",
+            locked_keyword=True,
+        )
 
     if st.button("ログアウト"):
         write_log(st.session_state["current_user_name"], "ログアウト")
         logout_user()
-        st.query_params.clear() 
+        st.query_params.clear()
         st.rerun()
-        
-    st.stop() 
+
+    st.stop()
 
 # ==========================================
 # 【ルートA】直接アクセスした場合（管理画面へ）
@@ -1183,7 +1919,7 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "ユーザー・ログ管理"]
+tab_names = ["点検入力", "日常点検", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "ユーザー・ログ管理"]
 tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
@@ -1440,8 +2176,18 @@ with tabs[0]:
                 saved_report["memo"],
             )
 
-# ====== タブ2：マスター ======
+# ====== タブ2：日常点検 ======
 with tabs[1]:
+    st.subheader("日常点検（動作点検）")
+    st.caption("対象: 超音波診断装置・保育器（毎日の動作確認）")
+    daily_input_tab, daily_print_tab = st.tabs(["点検入力", "月次PDF・印刷"])
+    with daily_input_tab:
+        render_daily_inspection_form(conn, df_master_global, form_key_prefix="admin_daily")
+    with daily_print_tab:
+        render_monthly_daily_inspection_export(conn, df_master_global, facility_name)
+
+# ====== タブ3：マスター ======
+with tabs[2]:
     st.subheader("機器台帳 ＆ データ管理")
     
     # サブタブに「故障対応・修理入力」を追加して3つに拡張
@@ -1755,8 +2501,8 @@ with tabs[1]:
         except Exception as e:
             st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
-# ====== タブ3：機器カルテ・実績 ======
-with tabs[2]:
+# ====== タブ4：機器カルテ・実績 ======
+with tabs[3]:
     st.subheader("機器カルテ照合 ＆ 日次実績")
     
     if st.button("最新のデータを読み込む", key="refresh_history_tab"):
@@ -1889,8 +2635,8 @@ with tabs[2]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ4：QRコード・管理番号シール ======
-with tabs[3]:
+# ====== タブ5：QRコード・管理番号シール ======
+with tabs[4]:
     st.subheader("管理番号シール ＆ QRコード")
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
@@ -1958,8 +2704,8 @@ with tabs[3]:
             button_key="tepra_qr_tab",
         )
 
-# ====== タブ5：新規機器の登録 ======
-with tabs[4]:
+# ====== タブ6：新規機器の登録 ======
+with tabs[5]:
     st.subheader("新規機器の直接登録")
     st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
     
@@ -2076,11 +2822,11 @@ with tabs[4]:
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
 
-# ====== タブ5：ユーザー・ログ管理 ======
+# ====== タブ7：ユーザー・ログ管理 ======
 try:
     df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
-    
-    with tabs[5]:
+
+    with tabs[6]:
         st.subheader("ユーザー承認・アクセスログ管理")
         
         st.markdown("#### ユーザーIDの承認待ち一覧")
