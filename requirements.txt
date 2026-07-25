@@ -9,3 +9,4 @@ google-auth==2.55.2
 qrcode
 pillow
 requests
+reportlab
