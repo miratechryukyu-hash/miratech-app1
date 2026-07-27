@@ -5,6 +5,7 @@ import gspread
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 import pandas as pd
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from itsdangerous import URLSafeTimedSerializer
 import qrcode
 from io import BytesIO
@@ -79,7 +80,15 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-16c"
+APP_VERSION = "2026-07-27a"
+
+JST = ZoneInfo("Asia/Tokyo")
+
+def now_jst():
+    return datetime.now(JST)
+
+def format_jst(dt=None, fmt="%Y-%m-%d %H:%M:%S"):
+    return (dt or now_jst()).strftime(fmt)
 
 LEGACY_ME_COLUMNS = ("旧番号", "旧管理番号")
 
@@ -383,6 +392,19 @@ def _inject_pc_unified_layout():
         [data-testid="stSidebar"] > div:first-child {
             width: 16rem !important;
             min-width: 16rem !important;
+        }
+        /* 機器検索結果（disabled 入力）を濃く表示 */
+        div[data-testid="stTextInput"] input:disabled {
+            -webkit-text-fill-color: #111827 !important;
+            color: #111827 !important;
+            opacity: 1 !important;
+            background-color: #e5e7eb !important;
+            border: 1px solid #6b7280 !important;
+            font-weight: 700 !important;
+        }
+        div[data-testid="stTextInput"] label {
+            color: #1f2937 !important;
+            font-weight: 600 !important;
         }
         </style>
         """,
@@ -1326,7 +1348,7 @@ def _build_monthly_pdf_story(facility_name, device_info, year, month, table_rows
         Spacer(1, 3 * mm),
         _daily_monthly_pdf_paragraph(
             "※ 空欄は未実施。印刷日: "
-            f"{datetime.now().strftime('%Y-%m-%d %H:%M')}　|　PDF出力: miratech 日常点検管理",
+            f"{format_jst(fmt='%Y-%m-%d %H:%M')}　|　PDF出力: miratech 日常点検管理",
             font_name, 7,
         ),
     ])
@@ -1572,7 +1594,7 @@ def write_log(user_name, action):
         df_logs = safe_read_worksheet(conn, "アクセスログ", ["日時", "ユーザー名", "アクション"])
         
         new_log = pd.DataFrame([{
-            "日時": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "日時": format_jst(),
             "ユーザー名": user_name,
             "アクション": action
         }])
@@ -1600,7 +1622,7 @@ def save_auth_cookie(user_id, user_name):
     get_cookie_manager().set(
         AUTH_COOKIE_NAME,
         token,
-        expires_at=datetime.now() + timedelta(days=SESSION_MAX_AGE_DAYS),
+        expires_at=now_jst() + timedelta(days=SESSION_MAX_AGE_DAYS),
         key="save_auth_cookie",
     )
     touch_activity()
@@ -1620,7 +1642,7 @@ def touch_activity():
     get_cookie_manager().set(
         LAST_ACTIVE_COOKIE,
         str(int(now)),
-        expires_at=datetime.now() + timedelta(days=SESSION_MAX_AGE_DAYS),
+        expires_at=now_jst() + timedelta(days=SESSION_MAX_AGE_DAYS),
         key="touch_last_active",
     )
 
