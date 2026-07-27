@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-27a"
+APP_VERSION = "2026-07-27b"
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -393,18 +393,34 @@ def _inject_pc_unified_layout():
             width: 16rem !important;
             min-width: 16rem !important;
         }
-        /* 機器検索結果（disabled 入力）を濃く表示 */
-        div[data-testid="stTextInput"] input:disabled {
+        /* 機器検索・入力欄を濃く表示（ラベル・入力文字・検索結果を統一） */
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextInput"] label p,
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"],
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p {
+            color: #111827 !important;
+            font-weight: 700 !important;
+            opacity: 1 !important;
+        }
+        div[data-testid="stTextInput"] input {
             -webkit-text-fill-color: #111827 !important;
             color: #111827 !important;
             opacity: 1 !important;
-            background-color: #e5e7eb !important;
+            font-weight: 600 !important;
             border: 1px solid #6b7280 !important;
+        }
+        div[data-testid="stTextInput"] input:disabled {
+            background-color: #e5e7eb !important;
             font-weight: 700 !important;
         }
-        div[data-testid="stTextInput"] label {
-            color: #1f2937 !important;
-            font-weight: 600 !important;
+        div[data-testid="stTextInput"] input:not(:disabled) {
+            background-color: #ffffff !important;
+        }
+        div[data-testid="stTextInput"] input::placeholder {
+            color: #374151 !important;
+            opacity: 1 !important;
+            font-weight: 500 !important;
+            -webkit-text-fill-color: #374151 !important;
         }
         </style>
         """,

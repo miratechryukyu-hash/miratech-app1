@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-27a"
+APP_VERSION = "2026-07-27b"
 
 JST = ZoneInfo("Asia/Tokyo")
 
