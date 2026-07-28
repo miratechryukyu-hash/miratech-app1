@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-28a"
+APP_VERSION = "2026-07-28b"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -917,6 +917,170 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     new_hist_df = pd.DataFrame([new_hist_row])
     updated_history = pd.concat([existing_history, new_hist_df[existing_history.columns]], ignore_index=True)
     conn.update(worksheet="点検履歴", data=updated_history)
+
+FAULT_REPORT_COLUMNS = [
+    "報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況",
+]
+INSPECTION_HISTORY_COLUMNS = [
+    "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
+    "実施者", "判定", "詳細データ", "備考",
+]
+
+def is_fault_pending(status_val):
+    status = clean_data_str(status_val).lower()
+    return status in ("", "未対応", "nan", "none")
+
+def _fault_report_label(row):
+    me = clean_data_str(row.get("管理番号", "不明"))
+    model = clean_data_str(row.get("機種", "不明"))
+    dept = clean_data_str(row.get("部署", ""))
+    symptom = clean_data_str(row.get("症状", ""))
+    rep_date = clean_data_str(row.get("報告日", ""))
+    return f"{me} - {model} ({dept} / 症状: {symptom}) 報告日: {rep_date}"
+
+def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
+                           chk_r1, chk_r2, chk_r3, repair_result, repair_memo, inspector):
+    """故障報告の対応完了・点検履歴・機器マスターを更新"""
+    st.cache_data.clear()
+    df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS, raise_on_fail=True)
+    if "対応状況" not in df_failed.columns:
+        df_failed["対応状況"] = "未対応"
+
+    if selected_idx not in df_failed.index:
+        raise ValueError("選択した故障報告が見つかりません。画面を更新して再度お試しください。")
+
+    current_status = clean_data_str(df_failed.at[selected_idx, "対応状況"])
+    if not is_fault_pending(current_status):
+        raise ValueError(f"この故障報告は既に対応済みです（{current_status}）")
+
+    job_data = df_failed.loc[selected_idx]
+    target_me = clean_data_str(job_data.get("管理番号", ""))
+    if not target_me:
+        raise ValueError("管理番号が空の故障報告は処理できません。")
+
+    df_failed.at[selected_idx, "対応状況"] = f"対応済 ({repair_date})"
+    conn.update(worksheet="故障報告", data=_sanitize_dataframe(df_failed))
+
+    chk_str = f"外観:{'〇' if chk_r1 else '×'}, 作動:{'〇' if chk_r2 else '×'}, 警報:{'〇' if chk_r3 else '×'}"
+    detail_text = f"【故障修理後点検】 処置: {repair_detail} / 安全確認: {chk_str}"
+
+    df_m_lookup = safe_read_worksheet(
+        conn, "機器マスター", ["管理番号", "カテゴリ", "製造年月日", "最終点検日", "最終判定", "最終実施者"],
+        raise_on_fail=True,
+    )
+    device_category = "その他"
+    scan_year_val = ""
+    m_row = df_m_lookup[clean_series(df_m_lookup["管理番号"]) == target_me]
+    if not m_row.empty:
+        device_category = clean_data_str(m_row.iloc[0].get("カテゴリ", "その他"))
+        scan_year_val = clean_data_str(m_row.iloc[0].get("製造年月日", ""))
+
+    existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
+    if existing_history.empty:
+        existing_history = pd.DataFrame(columns=INSPECTION_HISTORY_COLUMNS)
+
+    new_hist_row = {
+        "点検日": str(repair_date),
+        "管理番号": protect_zeros(target_me),
+        "カテゴリ": device_category,
+        "シリアルNo": protect_zeros(clean_data_str(job_data.get("シリアルNo", ""))),
+        "製造年月日": scan_year_val,
+        "機種": clean_data_str(job_data.get("機種", "")),
+        "実施者": inspector,
+        "判定": repair_result,
+        "詳細データ": detail_text,
+        "備考": f"元故障症状: {clean_data_str(job_data.get('症状', ''))} / 備考: {repair_memo}",
+    }
+    for col in existing_history.columns:
+        if col not in new_hist_row:
+            new_hist_row[col] = ""
+    new_hist_df = pd.DataFrame([new_hist_row])
+    updated_history = pd.concat(
+        [existing_history, new_hist_df[existing_history.columns]], ignore_index=True,
+    )
+    conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
+
+    if not df_m_lookup.empty:
+        for col in ["最終点検日", "最終判定", "最終実施者"]:
+            if col not in df_m_lookup.columns:
+                df_m_lookup[col] = ""
+        mask_m = clean_series(df_m_lookup["管理番号"]) == target_me
+        if mask_m.any():
+            df_m_lookup.loc[mask_m, "最終点検日"] = str(repair_date)
+            df_m_lookup.loc[mask_m, "最終判定"] = f"{repair_result}(故障対応)"
+            df_m_lookup.loc[mask_m, "最終実施者"] = inspector
+            conn.update(worksheet="機器マスター", data=_sanitize_dataframe(df_m_lookup))
+
+    write_log(inspector, f"{target_me} の故障対応・修理点検を完了")
+    return target_me, job_data, detail_text
+
+def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
+                              chk_r1, chk_r2, chk_r3, repair_result, inspector):
+    return f"""
+    <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
+        <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">医療機器 修理・点検完了報告書</h2>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+            <div><b>提出先:</b> 現場責任者 / 看護師長 殿</div>
+            <div><b>完了報告日:</b> {html.escape(str(repair_date))}</div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
+            <tr>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>管理番号</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{html.escape(str(target_me))}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>対象機種</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{html.escape(clean_data_str(job_data.get('機種', '')))}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>故障発生部署</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('部署', '')))}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>初期報告者</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('報告者', '')))}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>現場報告の症状</b></td>
+                <td colspan="3" style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('症状', '')))}</td>
+            </tr>
+        </table>
+        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 修理・処置内容</h4>
+        <div style="padding: 10px; border: 1px solid #aaa; min-height: 50px; margin-bottom: 20px; background-color: #fafafa;">
+            {html.escape(str(repair_detail)).replace(chr(10), '<br/>')}
+        </div>
+        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 出荷前・現場安全点検結果 (翌日実施分含む)</h4>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px; text-align: center;">
+            <tr style="background-color: #f0f0f0;">
+                <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
+                <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
+                <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
+                <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">1. 外観・筐体破損チェック</td>
+                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r1 else '不適合'}</td>
+                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">3. 各種警報・アラーム作動確認</td>
+                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r3 else '不適合'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">2. 通電・実作動シーケンスチェック</td>
+                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r2 else '不適合'}</td>
+                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">4. その他総合安全性</td>
+                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">適合</td>
+            </tr>
+        </table>
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 20px;">
+            <tr>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>総合判定</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; font-size: 16px; color: red; font-weight: bold;">{html.escape(str(repair_result))}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>点検技術者（実施者）</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; text-align: center;">{html.escape(str(inspector))} (印)</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>施設側 収領・確認印</b></td>
+                <td colspan="3" style="padding: 25px; border: 1px solid #aaa; text-align: right; color: #ccc;">確認日: &nbsp;&nbsp;&nbsp;&nbsp;年 &nbsp;&nbsp;&nbsp;月 &nbsp;&nbsp;&nbsp;日 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; サイン / 職印欄: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
+            </tr>
+        </table>
+        <p style="text-align: right; font-size: 11px; color: gray; margin-top: 15px; margin-bottom: 0;">技術管理・保守責任: miratech 琉球 医療機器管理システム</p>
+    </div>
+    """
 
 def _validate_radio_check_dict(checks_dict, ng_items, incomplete_items):
     for label, val in checks_dict.items():
@@ -2583,182 +2747,98 @@ with tabs[2]:
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
 
-    # 【新機能】未対応の故障報告の一覧から修理・点検・報告書生成を一括で行う
+    # 未対応の故障報告の一覧から修理・点検・報告書生成を一括で行う
     with sub_m3:
         st.markdown("#### 故障対応・修理完了の入力")
         st.write("現場から上がった故障報告に対して、修理対応と安全点検の結果を入力します。")
 
-        try:
-            df_failed = safe_read_worksheet(conn, "故障報告")
-            
-            if df_failed.empty:
-                st.info("現在、故障報告データはありません。")
-            elif "対応状況" not in df_failed.columns:
-                st.warning("故障報告シートに「対応状況」列がありません。")
-            else:
-                # 「対応状況」が未対応のものだけを抽出
-                df_pending = df_failed[df_failed["対応状況"].astype(str).str.strip() == "未対応"]
-                
-                if df_pending.empty:
-                    st.success("現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
+        if st.session_state.get("repair_saved_report"):
+            report = st.session_state["repair_saved_report"]
+            st.success(f"{report['target_me']} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
+            st.markdown("---")
+            st.subheader("提出用 報告書の印刷レイアウト")
+            st.markdown(report["html"], unsafe_allow_html=True)
+            st.info("Cmd/Ctrl + P で印刷またはPDF保存できます。")
+            if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
+                st.session_state.pop("repair_saved_report", None)
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            try:
+                df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
+                if df_failed.empty:
+                    st.info("現在、故障報告データはありません。")
                 else:
-                    st.warning(f"現在、**{len(df_pending)} 件** の未対応の故障報告があります。")
-                    
-                    # どの故障対応を行うか選択するプルダウン
-                    pending_options = df_pending.apply(
-                        lambda r: f"{r['管理番号']} - {r['機種']} ({r['部署']} / 症状: {r['症状']}) 報告日: {r['報告日']}", axis=1
-                    ).tolist()
-                    
-                    selected_job = st.selectbox("対応する故障報告を選択してください", pending_options)
-                    
-                    # 選択された行のインデックスとデータを特定
-                    selected_idx = df_pending.index[pending_options.index(selected_job)]
-                    job_data = df_failed.loc[selected_idx]
-                    target_me = job_data["管理番号"]
-                    
-                    with st.form("repair_form"):
-                        st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
-                        
-                        repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
-                        repair_detail = st.text_area("修理・処置内容", placeholder="例: 包包交換、内部清掃、設定リセット実施")
-                        
-                        st.write("修理後の安全点検チェック（エビデンス確保）")
-                        chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
-                        chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
-                        chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
-                        
-                        repair_result = st.radio("総合評価", ["使用可", "メーカー修理依頼", "廃棄手続き"], horizontal=True)
-                        repair_memo = st.text_area("備考（特記事項があれば）")
-                        
-                        submit_repair = st.form_submit_button("修理・点検完了を確定する", type="primary")
-                    
-                    if submit_repair:
-                        # 1. 故障報告シートのステータスを更新
-                        df_failed.at[selected_idx, "対応状況"] = f"対応済 ({repair_date})"
-                        conn.update(worksheet="故障報告", data=df_failed)
-                        
-                        # 2. 点検履歴シートに修理点検エビデンスを1行追加
-                        df_history = safe_read_worksheet(conn, "点検履歴")
-                        
-                        # チェック状況を文字化
-                        chk_str = f"外観:{'〇' if chk_r1 else '×'}, 作動:{'〇' if chk_r2 else '×'}, 警報:{'〇' if chk_r3 else '×'}"
-                        detail_text = f"【故障修理後点検】 処置: {repair_detail} / 安全確認: {chk_str}"
-                        
-                        # 機器マスターから現在の基本情報を引っ張ってくる
-                        df_m_lookup = safe_read_worksheet(conn, "機器マスター")
-                        m_row = df_m_lookup[clean_series(df_m_lookup["管理番号"]) == clean_data_str(target_me)]
-                        device_category = "その他"
-                        scan_year_val = ""
-                        if not m_row.empty:
-                            device_category = clean_data_str(m_row.iloc[0].get("カテゴリ", "その他"))
-                            scan_year_val = clean_data_str(m_row.iloc[0].get("製造年月日", ""))
-                        
-                        history_dict = {
-                            "点検日": str(repair_date), 
-                            "管理番号": protect_zeros(target_me), 
-                            "カテゴリ": device_category,
-                            "シリアルNo": protect_zeros(job_data.get("シリアルNo", "")), 
-                            "製造年月日": scan_year_val, 
-                            "機種": job_data["機種"], 
-                            "実施者": st.session_state.get("current_user_name", "ME"), 
-                            "判定": repair_result, 
-                            "詳細データ": detail_text,
-                            "備考": f"元故障症状: {job_data['症状']} / 備考: {repair_memo}"
-                        }
-                        df_history = pd.concat([df_history, pd.DataFrame([history_dict])], ignore_index=True)
-                        conn.update(worksheet="点検履歴", data=df_history)
-                        
-                        # 3. 機器マスターの最終点検情報も更新
-                        if not df_m_lookup.empty:
-                            mask_m = clean_series(df_m_lookup["管理番号"]) == clean_data_str(target_me)
-                            if mask_m.any():
-                                df_m_lookup.loc[mask_m, "最終点検日"] = str(repair_date)
-                                df_m_lookup.loc[mask_m, "最終判定"] = f"{repair_result}(故障対応)"
-                                df_m_lookup.loc[mask_m, "最終実施者"] = st.session_state.get("current_user_name", "ME")
-                                conn.update(worksheet="機器マスター", data=df_m_lookup)
-                        
-                        st.cache_data.clear()
-                        st.success(f"{target_me} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
-                        write_log(st.session_state.get("current_user_name", "ME"), f"{target_me} の故障対応・修理点検を完了")
-                        
-                        # 4. その場で即座に印刷・PDF化できる「修理・点検報告書」を画面に出現させる
-                        st.markdown("---")
-                        st.subheader("提出用 報告書の印刷レイアウト")
-                        
-                        html_report = f"""
-                        <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
-                            <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">医療機器 修理・点検完了報告書</h2>
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                                <div><b>提出先:</b> 現場責任者 / 看護師長 殿</div>
-                                <div><b>完了報告日:</b> {repair_date}</div>
-                            </div>
-                            <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
-                                <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>管理番号</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{target_me}</td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>対象機種</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{job_data['機種']}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>故障発生部署</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa;">{job_data['部署']}</td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>初期報告者</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa;">{job_data['報告者']}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>現場報告の症状</b></td>
-                                    <td colspan="3" style="padding: 10px; border: 1px solid #aaa;">{job_data['症状']}</td>
-                                </tr>
-                            </table>
-                            
-                            <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 修理・処置内容</h4>
-                            <div style="padding: 10px; border: 1px solid #aaa; min-height: 50px; margin-bottom: 20px; background-color: #fafafa;">
-                                {repair_detail}
-                            </div>
-                            
-                            <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 出荷前・現場安全点検結果 (翌日実施分含む)</h4>
-                            <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px; text-align: center;">
-                                <tr style="background-color: #f0f0f0;">
-                                    <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
-                                    <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
-                                    <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
-                                    <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">1. 外観・筐体破損チェック</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r1 else '不適合'}</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">3. 各種警報・アラーム作動確認</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r3 else '不適合'}</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">2. 通電・実作動シーケンスチェック</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r2 else '不適合'}</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">4. その他総合安全性</td>
-                                    <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">適合</td>
-                                </tr>
-                            </table>
-                            
-                            <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 20px;">
-                                <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>総合判定</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; font-size: 16px; color: red; font-weight: bold;">{repair_result}</td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>点検技術者（実施者）</b></td>
-                                    <td style="padding: 10px; border: 1px solid #aaa; text-align: center;">{st.session_state.get("current_user_name", "ME")} (印)</td>
-                                </tr>
-                                <tr>
-                                    <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>施設側 収領・確認印</b></td>
-                                    <td colspan="3" style="padding: 25px; border: 1px solid #aaa; text-align: right; color: #ccc;">確認日: &nbsp;&nbsp;&nbsp;&nbsp;年 &nbsp;&nbsp;&nbsp;月 &nbsp;&nbsp;&nbsp;日 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; サイン / 職印欄: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-                                </tr>
-                            </table>
-                            <p style="text-align: right; font-size: 11px; color: gray; margin-top: 15px; margin-bottom: 0;">技術管理・保守責任: miratech 琉球 医療機器管理システム</p>
-                        </div>
-                        """
-                        st.markdown(html_report, unsafe_allow_html=True)
-                        st.info("このまま紙に印刷またはPDF化する場合は、ブラウザの印刷機能（Ctrl + P 又は Cmd + P）を実行してください。自動的にキレイなA4報告書枠のみが印刷されます。")
-                        st.button("次の対応入力をする（画面をリフレッシュ）")
+                    if "対応状況" not in df_failed.columns:
+                        df_failed["対応状況"] = "未対応"
 
-        except Exception as e:
-            st.error(f"故障データの処理中にエラーが発生しました: {e}")
+                    pending_mask = df_failed["対応状況"].apply(is_fault_pending)
+                    df_pending = df_failed[pending_mask]
+
+                    if df_pending.empty:
+                        st.success("現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
+                    else:
+                        st.warning(f"現在、**{len(df_pending)} 件** の未対応の故障報告があります。")
+
+                        pending_labels = {}
+                        for row_idx, row in df_pending.iterrows():
+                            pending_labels[_fault_report_label(row)] = row_idx
+
+                        selected_job = st.selectbox(
+                            "対応する故障報告を選択してください",
+                            list(pending_labels.keys()),
+                            key="repair_job_select",
+                        )
+                        selected_idx = pending_labels[selected_job]
+                        target_me = clean_data_str(df_failed.loc[selected_idx].get("管理番号", ""))
+
+                        with st.form("repair_form"):
+                            st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
+                            repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
+                            repair_detail = st.text_area(
+                                "修理・処置内容",
+                                placeholder="例: 包包交換、内部清掃、設定リセット実施",
+                            )
+                            st.write("修理後の安全点検チェック（エビデンス確保）")
+                            chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
+                            chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
+                            chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
+                            repair_result = st.radio(
+                                "総合評価", ["使用可", "メーカー修理依頼", "廃棄手続き"], horizontal=True,
+                            )
+                            repair_memo = st.text_area("備考（特記事項があれば）")
+
+                            if st.form_submit_button("修理・点検完了を確定する", type="primary"):
+                                inspector = st.session_state.get("current_user_name", "ME")
+                                try:
+                                    saved_me, job_data, _detail = save_repair_completion(
+                                        conn,
+                                        selected_idx,
+                                        repair_date,
+                                        repair_detail,
+                                        chk_r1,
+                                        chk_r2,
+                                        chk_r3,
+                                        repair_result,
+                                        repair_memo,
+                                        inspector,
+                                    )
+                                    st.session_state["repair_saved_report"] = {
+                                        "target_me": saved_me,
+                                        "html": _build_repair_report_html(
+                                            saved_me, job_data, repair_date, repair_detail,
+                                            chk_r1, chk_r2, chk_r3, repair_result, inspector,
+                                        ),
+                                    }
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except SheetReadError as e:
+                                    st.error(f"スプレッドシート読み込みエラー: {e}")
+                                except Exception as e:
+                                    st.error(f"保存に失敗しました: {e}")
+
+            except Exception as e:
+                st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
 # ====== タブ4：機器カルテ・実績 ======
 with tabs[3]:
