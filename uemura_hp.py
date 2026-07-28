@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-28e"
+APP_VERSION = "2026-07-28b"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -110,15 +110,6 @@ def format_jst(dt=None, fmt="%Y-%m-%d %H:%M:%S"):
     return (dt or now_jst()).strftime(fmt)
 
 LEGACY_ME_COLUMNS = ("旧番号", "旧管理番号")
-
-INSPECTION_HISTORY_COLUMNS = [
-    "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
-    "実施者", "判定", "詳細データ", "備考",
-]
-INSPECTION_HISTORY_ALIASES = {
-    "管理番号": ["管理No", "管理Ｎｏ", "ME_NO", "me_no"],
-    "シリアルNo": ["シリアル番号", "シリアルNO", "S/N", "Serial"],
-}
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -421,34 +412,20 @@ def _inject_pc_unified_layout():
             width: 16rem !important;
             min-width: 16rem !important;
         }
-        /* 機器検索・入力欄を濃く表示（ラベル・入力文字・検索結果を統一） */
-        div[data-testid="stTextInput"] label,
-        div[data-testid="stTextInput"] label p,
-        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"],
-        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p {
-            color: #111827 !important;
-            font-weight: 700 !important;
-            opacity: 1 !important;
-        }
-        div[data-testid="stTextInput"] input {
+        /* 機器検索結果（disabled 入力）を濃く表示 */
+        div[data-testid="stTextInput"] input:disabled {
             -webkit-text-fill-color: #111827 !important;
             color: #111827 !important;
             opacity: 1 !important;
-            font-weight: 600 !important;
-            border: 1px solid #6b7280 !important;
-        }
-        div[data-testid="stTextInput"] input:disabled {
             background-color: #e5e7eb !important;
+            border: 1px solid #6b7280 !important;
             font-weight: 700 !important;
         }
-        div[data-testid="stTextInput"] input:not(:disabled) {
-            background-color: #ffffff !important;
-        }
-        div[data-testid="stTextInput"] input::placeholder {
-            color: #374151 !important;
-            opacity: 1 !important;
-            font-weight: 500 !important;
-            -webkit-text-fill-color: #374151 !important;
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"],
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p {
+            color: #1f2937 !important;
+            font-weight: 600 !important;
         }
         </style>
         """,
@@ -535,53 +512,12 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
 def clean_series(series):
     return series.astype(str).str.replace("'", "", regex=False).str.replace(r'\.0$', '', regex=True).str.replace(r'^nan$', '', flags=re.IGNORECASE, regex=True).str.strip()
 
-# ゼロ落ち・数値化防止（スプレッドシート用）
+# ゼロ落ち防止用の関数
 def protect_zeros(val_str):
-    s = clean_data_str(val_str)
-    if not s:
-        return ""
-    core = s.lstrip("'")
-    return f"'{core}"
-
-def normalize_inspection_history_df(df):
-    """点検履歴シートを標準列構成に揃える（列欠落・別名ヘッダーに対応）"""
-    if df is None or df.empty:
-        return pd.DataFrame(columns=INSPECTION_HISTORY_COLUMNS)
-    out = df.copy()
-    rename_map = {}
-    for std_col, aliases in INSPECTION_HISTORY_ALIASES.items():
-        if std_col in out.columns:
-            continue
-        for alias in aliases:
-            if alias in out.columns:
-                rename_map[alias] = std_col
-                break
-    if rename_map:
-        out = out.rename(columns=rename_map)
-    for col in INSPECTION_HISTORY_COLUMNS:
-        if col not in out.columns:
-            out[col] = ""
-    return out[INSPECTION_HISTORY_COLUMNS]
-
-def _history_cell_value(col, val):
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return ""
-    if col in ("管理番号", "シリアルNo"):
-        return protect_zeros(val)
-    if col == "機種":
-        return model_for_spreadsheet(val)
-    if col == "詳細データ":
-        return str(val)
-    return clean_data_str(val)
-
-def append_inspection_history_row(conn, row_dict):
-    """点検履歴に1行追加（管理番号・シリアルNo を必ず標準列へ書き込む）"""
-    existing = normalize_inspection_history_df(
-        safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS),
-    )
-    new_row = {_col: _history_cell_value(_col, row_dict.get(_col, "")) for _col in INSPECTION_HISTORY_COLUMNS}
-    updated = pd.concat([existing, pd.DataFrame([new_row])], ignore_index=True)
-    conn.update(worksheet="点検履歴", data=updated.fillna(""))
+    val_str = str(val_str).strip()
+    if val_str.startswith("0") and val_str.isdigit():
+        return f"'{val_str}"
+    return val_str
 
 def build_device_qr_url(me_no):
     clean_url = APP_URL.rstrip("/")
@@ -943,25 +879,42 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     df_master.loc[mask, "最終実施者"] = inspector
     conn.update(worksheet="機器マスター", data=df_master)
 
-    master_row = df_master.loc[mask].iloc[0]
-    me_no = clean_data_str(final_me_no) or clean_data_str(master_row.get("管理番号", ""))
-    serial_no = clean_data_str(final_sn) or clean_data_str(master_row.get("シリアルNo", ""))
+    history_columns = [
+        "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
+        "実施者", "判定", "詳細データ", "備考",
+    ]
+    existing_history = safe_read_worksheet(conn, "点検履歴", history_columns)
+    if existing_history.empty:
+        existing_history = pd.DataFrame(columns=history_columns)
 
-    append_inspection_history_row(conn, {
+    new_hist_row = {
         "点検日": str(check_date),
-        "管理番号": me_no,
+        "管理番号": protect_zeros(final_me_no),
         "カテゴリ": device_category,
-        "シリアルNo": serial_no,
-        "製造年月日": scan_year_val or clean_data_str(master_row.get("製造年月日", "")),
-        "機種": device_model,
+        "シリアルNo": protect_zeros(final_sn),
+        "製造年月日": scan_year_val,
+        "機種": model_for_spreadsheet(device_model),
         "実施者": inspector,
         "判定": result,
         "詳細データ": detail_text,
         "備考": memo,
-    })
+    }
+    for col in existing_history.columns:
+        if col not in new_hist_row:
+            new_hist_row[col] = ""
+
+    new_hist_df = pd.DataFrame([new_hist_row])
+    updated_history = pd.concat(
+        [existing_history, new_hist_df[existing_history.columns]], ignore_index=True,
+    )
+    conn.update(worksheet="点検履歴", data=updated_history)
 
 FAULT_REPORT_COLUMNS = [
     "報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況",
+]
+INSPECTION_HISTORY_COLUMNS = [
+    "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
+    "実施者", "判定", "詳細データ", "備考",
 ]
 
 def is_fault_pending(status_val):
@@ -1008,25 +961,35 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
     )
     device_category = "その他"
     scan_year_val = ""
-    serial_no = ""
     m_row = df_m_lookup[clean_series(df_m_lookup["管理番号"]) == target_me]
     if not m_row.empty:
         device_category = clean_data_str(m_row.iloc[0].get("カテゴリ", "その他"))
         scan_year_val = clean_data_str(m_row.iloc[0].get("製造年月日", ""))
-        serial_no = clean_data_str(m_row.iloc[0].get("シリアルNo", ""))
 
-    append_inspection_history_row(conn, {
+    existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
+    if existing_history.empty:
+        existing_history = pd.DataFrame(columns=INSPECTION_HISTORY_COLUMNS)
+
+    new_hist_row = {
         "点検日": str(repair_date),
-        "管理番号": target_me,
+        "管理番号": protect_zeros(target_me),
         "カテゴリ": device_category,
-        "シリアルNo": serial_no,
+        "シリアルNo": protect_zeros(clean_data_str(job_data.get("シリアルNo", ""))),
         "製造年月日": scan_year_val,
         "機種": clean_data_str(job_data.get("機種", "")),
         "実施者": inspector,
         "判定": repair_result,
         "詳細データ": detail_text,
         "備考": f"元故障症状: {clean_data_str(job_data.get('症状', ''))} / 備考: {repair_memo}",
-    })
+    }
+    for col in existing_history.columns:
+        if col not in new_hist_row:
+            new_hist_row[col] = ""
+    new_hist_df = pd.DataFrame([new_hist_row])
+    updated_history = pd.concat(
+        [existing_history, new_hist_df[existing_history.columns]], ignore_index=True,
+    )
+    conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
     if not df_m_lookup.empty:
         for col in ["最終点検日", "最終判定", "最終実施者"]:
