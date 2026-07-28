@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-28d"
+APP_VERSION = "2026-07-28e"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -404,7 +404,7 @@ def _render_ai_nameplate_scanner():
 st.set_page_config(page_title="miratech 医療機器管理システム", layout="centered")
 
 def _inject_pc_unified_layout():
-    """タブレットでも PC と同じメイン幅・余白。入力欄の枠が途切れないよう調整"""
+    """タブレットでも PC と同じメイン幅・余白になるよう CSS で統一"""
     st.markdown(
         """
         <style>
@@ -412,105 +412,43 @@ def _inject_pc_unified_layout():
         div.stMainBlockContainer {
             max-width: 46rem !important;
             padding-top: 2rem !important;
-            padding-left: 1.25rem !important;
-            padding-right: 1.25rem !important;
+            padding-left: 1.5rem !important;
+            padding-right: 1.5rem !important;
             margin-left: auto !important;
             margin-right: auto !important;
-            overflow: visible !important;
-        }
-        section.main [data-testid="stVerticalBlock"],
-        section.main [data-testid="stHorizontalBlock"],
-        section.main [data-testid="column"],
-        section.main [data-testid="stForm"] {
-            overflow: visible !important;
         }
         [data-testid="stSidebar"] > div:first-child {
             width: 16rem !important;
             min-width: 16rem !important;
         }
-
-        /* 入力ウィジェット共通：枠線が切れないよう wrapper ごと整える */
-        div[data-testid="stTextInput"],
-        div[data-testid="stTextArea"],
-        div[data-testid="stNumberInput"],
-        div[data-testid="stDateInput"],
-        div[data-testid="stSelectbox"] {
-            overflow: visible !important;
-            margin-bottom: 0.35rem !important;
-            padding: 1px 2px 3px 2px !important;
-        }
-        div[data-testid="stTextInput"] > div,
-        div[data-testid="stTextArea"] > div,
-        div[data-testid="stNumberInput"] > div,
-        div[data-testid="stDateInput"] > div,
-        div[data-testid="stSelectbox"] > div {
-            overflow: visible !important;
-        }
-
-        /* ラベル（濃く表示） */
+        /* 機器検索・入力欄を濃く表示（ラベル・入力文字・検索結果を統一） */
         div[data-testid="stTextInput"] label,
         div[data-testid="stTextInput"] label p,
         div[data-testid="stTextInput"] [data-testid="stWidgetLabel"],
-        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p,
-        div[data-testid="stTextArea"] [data-testid="stWidgetLabel"],
-        div[data-testid="stTextArea"] [data-testid="stWidgetLabel"] p,
-        div[data-testid="stNumberInput"] [data-testid="stWidgetLabel"],
-        div[data-testid="stNumberInput"] [data-testid="stWidgetLabel"] p {
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p {
             color: #111827 !important;
             font-weight: 700 !important;
             opacity: 1 !important;
         }
-
-        /* テキスト入力・テキストエリア */
-        div[data-testid="stTextInput"] input,
-        div[data-testid="stTextArea"] textarea {
-            box-sizing: border-box !important;
-            width: 100% !important;
-            max-width: 100% !important;
-            min-height: 2.65rem !important;
+        div[data-testid="stTextInput"] input {
             -webkit-text-fill-color: #111827 !important;
             color: #111827 !important;
             opacity: 1 !important;
             font-weight: 600 !important;
-            background-color: #ffffff !important;
-            border: 2px solid #6b7280 !important;
-            border-radius: 8px !important;
-            padding: 0.5rem 0.75rem !important;
-            box-shadow: none !important;
-            overflow: visible !important;
+            border: 1px solid #6b7280 !important;
         }
-        div[data-testid="stTextInput"] input:disabled,
-        div[data-testid="stTextArea"] textarea:disabled {
+        div[data-testid="stTextInput"] input:disabled {
             background-color: #e5e7eb !important;
             font-weight: 700 !important;
-            border-color: #4b5563 !important;
         }
-        div[data-testid="stTextInput"] input::placeholder,
-        div[data-testid="stTextArea"] textarea::placeholder {
+        div[data-testid="stTextInput"] input:not(:disabled) {
+            background-color: #ffffff !important;
+        }
+        div[data-testid="stTextInput"] input::placeholder {
             color: #374151 !important;
             opacity: 1 !important;
             font-weight: 500 !important;
             -webkit-text-fill-color: #374151 !important;
-        }
-        div[data-testid="stTextInput"] input:focus,
-        div[data-testid="stTextArea"] textarea:focus {
-            border-color: #2563eb !important;
-            outline: 2px solid rgba(37, 99, 235, 0.2) !important;
-            outline-offset: 1px !important;
-        }
-
-        /* 数値・日付・セレクトも枠をはっきり */
-        div[data-testid="stNumberInput"] input,
-        div[data-testid="stDateInput"] input {
-            box-sizing: border-box !important;
-            border: 2px solid #6b7280 !important;
-            border-radius: 8px !important;
-        }
-        div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-            box-sizing: border-box !important;
-            border: 2px solid #6b7280 !important;
-            border-radius: 8px !important;
-            overflow: visible !important;
         }
         </style>
         """,
