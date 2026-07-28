@@ -80,7 +80,26 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-27b"
+APP_VERSION = "2026-07-28a"
+
+# 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
+INFUSION_PUMP_ALARM_ITEMS = [
+    "開始忘れ警報",
+    "流量設定無し警報",
+    "気泡検出",
+    "ドアオープン警報",
+    "輸液完了",
+    "消音",
+    "再警報",
+]
+INFUSION_PUMP_FUNCTION_ITEMS = [
+    "積算クリア機能",
+    "流量設定",
+    "日付・時刻設定",
+]
+
+def default_infusion_pump_checks():
+    return {label: "---" for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS}
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -393,18 +412,34 @@ def _inject_pc_unified_layout():
             width: 16rem !important;
             min-width: 16rem !important;
         }
-        /* 機器検索結果（disabled 入力）を濃く表示 */
-        div[data-testid="stTextInput"] input:disabled {
+        /* 機器検索・入力欄を濃く表示（ラベル・入力文字・検索結果を統一） */
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextInput"] label p,
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"],
+        div[data-testid="stTextInput"] [data-testid="stWidgetLabel"] p {
+            color: #111827 !important;
+            font-weight: 700 !important;
+            opacity: 1 !important;
+        }
+        div[data-testid="stTextInput"] input {
             -webkit-text-fill-color: #111827 !important;
             color: #111827 !important;
             opacity: 1 !important;
-            background-color: #e5e7eb !important;
+            font-weight: 600 !important;
             border: 1px solid #6b7280 !important;
+        }
+        div[data-testid="stTextInput"] input:disabled {
+            background-color: #e5e7eb !important;
             font-weight: 700 !important;
         }
-        div[data-testid="stTextInput"] label {
-            color: #1f2937 !important;
-            font-weight: 600 !important;
+        div[data-testid="stTextInput"] input:not(:disabled) {
+            background-color: #ffffff !important;
+        }
+        div[data-testid="stTextInput"] input::placeholder {
+            color: #374151 !important;
+            opacity: 1 !important;
+            font-weight: 500 !important;
+            -webkit-text-fill-color: #374151 !important;
         }
         </style>
         """,
@@ -700,7 +735,34 @@ def parse_detail_text_to_table(detail_text):
             item_judges.append(v.strip())
     return item_names, item_results, item_judges
 
-def render_inspection_report(check_date, me_no, model_name, inspector, result, detail_text="", memo=""):
+def render_inspection_report(check_date, me_no, model_name, inspector, result, detail_text="", memo="",
+                             device_category=""):
+    st.markdown("""
+    <style>
+    @media print {
+        header, [data-testid="stSidebar"], footer, .no-print { display: none !important; }
+        .block-container { max-width: 100% !important; padding-top: 0 !important; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    pdf_bytes = build_inspection_report_pdf_bytes(
+        check_date, me_no, model_name, inspector, result, detail_text, memo, device_category,
+    )
+    pdf_name = f"点検報告_{clean_data_str(me_no)}_{check_date}.pdf"
+    col_pdf, col_hint = st.columns([1, 2])
+    with col_pdf:
+        st.download_button(
+            "PDFをダウンロード",
+            data=pdf_bytes,
+            file_name=pdf_name,
+            mime="application/pdf",
+            type="primary",
+            key=f"inspection_pdf_{me_no}_{check_date}",
+        )
+    with col_hint:
+        st.caption("A4縦向きPDF。ブラウザの「印刷」→「PDFに保存」（Cmd/Ctrl + P）でも保存できます。")
+
     st.write(f"## 医療機器定期点検報告書 （{check_date} 実施分）")
     info_df = pd.DataFrame({
         "管理番号": [me_no],
@@ -722,7 +784,93 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     if memo and str(memo).strip().lower() not in ("", "nan"):
         st.info(f"備考・処置内容:\n{memo}")
 
-    st.info("キーボードの「Ctrl + P」（Macは「Cmd + P」）を押すと、この表だけが綺麗に印刷されます。")
+def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
+                                      detail_text="", memo="", device_category=""):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer
+
+    font_name = _daily_monthly_pdf_font()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=14 * mm, rightMargin=14 * mm,
+        topMargin=14 * mm, bottomMargin=14 * mm,
+    )
+    story = [
+        _daily_monthly_pdf_paragraph("医療機器定期点検報告書", font_name, 14, align=1),
+        _daily_monthly_pdf_paragraph(f"作業日: {check_date}", font_name, 10, align=1),
+        Spacer(1, 4 * mm),
+    ]
+
+    header_rows = [
+        ["管理番号", clean_data_str(me_no), "機種(型式)", clean_data_str(model_name)],
+        ["点検実施者", clean_data_str(inspector), "総合評価", clean_data_str(result)],
+    ]
+    if device_category:
+        header_rows.append(["機器種類", clean_data_str(device_category), "", ""])
+
+    header_table_data = []
+    for row in header_rows:
+        header_table_data.append([
+            _daily_monthly_pdf_paragraph(cell, font_name, 9) for cell in row
+        ])
+    header_table = Table(header_table_data, colWidths=[32 * mm, 52 * mm, 32 * mm, 52 * mm])
+    header_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8e8e8")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e8e8e8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([header_table, Spacer(1, 5 * mm)])
+
+    item_names, item_results, item_judges = parse_detail_text_to_table(detail_text)
+    if item_names:
+        story.append(_daily_monthly_pdf_paragraph("点検・測定結果", font_name, 11))
+        story.append(Spacer(1, 2 * mm))
+        detail_table_data = [[
+            _daily_monthly_pdf_paragraph("点検・測定項目", font_name, 8),
+            _daily_monthly_pdf_paragraph("点検実測値 / 結果", font_name, 8),
+            _daily_monthly_pdf_paragraph("判定", font_name, 8),
+        ]]
+        for name, res, judge in zip(item_names, item_results, item_judges):
+            detail_table_data.append([
+                _daily_monthly_pdf_paragraph(name, font_name, 8),
+                _daily_monthly_pdf_paragraph(res, font_name, 8),
+                _daily_monthly_pdf_paragraph(judge, font_name, 8),
+            ])
+        detail_table = Table(
+            detail_table_data,
+            colWidths=[62 * mm, 58 * mm, 28 * mm],
+            repeatRows=1,
+        )
+        style_cmds = [
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]
+        for row_idx, judge in enumerate(item_judges, start=1):
+            if judge == "NG":
+                style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#ffcdd2")))
+            elif judge == "OK":
+                style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#c8e6c9")))
+        detail_table.setStyle(TableStyle(style_cmds))
+        story.extend([detail_table, Spacer(1, 4 * mm)])
+
+    if memo and str(memo).strip().lower() not in ("", "nan"):
+        story.extend([
+            _daily_monthly_pdf_paragraph("備考・処置内容", font_name, 10),
+            _daily_monthly_pdf_paragraph(memo, font_name, 9),
+            Spacer(1, 3 * mm),
+        ])
+
+    story.append(_daily_monthly_pdf_paragraph(
+        f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')}　|　miratech 医療機器管理システム",
+        font_name, 7,
+    ))
+    doc.build(story)
+    return buf.getvalue()
 
 def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
                               scan_year_val, check_date, check_type, inspector, result,
@@ -770,12 +918,23 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     updated_history = pd.concat([existing_history, new_hist_df[existing_history.columns]], ignore_index=True)
     conn.update(worksheet="点検履歴", data=updated_history)
 
+def _validate_radio_check_dict(checks_dict, ng_items, incomplete_items):
+    for label, val in checks_dict.items():
+        if is_unselected(val):
+            incomplete_items.append(label)
+        elif val == "NG":
+            ng_items.append(label)
+
 def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
-                              flow_acc, occ_press, min_flow, max_flow, min_press, max_press):
+                              flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                              flow_unit="ml", press_unit="kPa",
+                              infusion_pump_checks=None,
+                              bubble_ad_water=0.0, bubble_ad_dry=0.0):
     """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
     ng_items = []
     incomplete_items = []
+    infusion_pump_checks = infusion_pump_checks or {}
 
     if check_type != "院内点検(miratech)":
         return ng_items, incomplete_items
@@ -790,24 +949,24 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             "セルフチェック機能": chk_e6,
             "表示部LED": chk_e7,
         }
-        for label, val in pump_checks.items():
-            if is_unselected(val):
-                incomplete_items.append(label)
-            elif val == "NG":
-                ng_items.append(label)
+        _validate_radio_check_dict(pump_checks, ng_items, incomplete_items)
+
+        if device_category == "輸液ポンプ":
+            _validate_radio_check_dict(infusion_pump_checks, ng_items, incomplete_items)
 
         if result == "使用可":
             if not (min_flow <= flow_acc <= max_flow):
-                ng_items.append(f"流量精度実測値（{flow_acc}）")
+                ng_items.append(f"流量精度（{flow_acc} {flow_unit}）")
             if not (min_press <= occ_press <= max_press):
-                ng_items.append(f"閉塞検出圧実測値（{occ_press}）")
+                ng_items.append(f"閉塞検出（{occ_press} {press_unit}）")
+            if device_category == "輸液ポンプ":
+                if bubble_ad_water < 100:
+                    ng_items.append(f"気泡センサーAD値(水入り)（{bubble_ad_water}）")
+                if bubble_ad_dry > 10:
+                    ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
 
     elif device_category == "保育器":
-        for label, val in inc_o_checks.items():
-            if is_unselected(val):
-                incomplete_items.append(label)
-            elif val == "NG":
-                ng_items.append(label)
+        _validate_radio_check_dict(inc_o_checks, ng_items, incomplete_items)
 
     return ng_items, incomplete_items
 
@@ -817,8 +976,11 @@ def is_unselected(val):
 def build_inspection_detail_text(check_type, device_category, result, inc_o_checks,
                                  chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                                  flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
-                                 flow_unit, press_unit):
+                                 flow_unit, press_unit,
+                                 infusion_pump_checks=None,
+                                 bubble_ad_water=0.0, bubble_ad_dry=0.0):
     parts_list = []
+    infusion_pump_checks = infusion_pump_checks or {}
     if check_type == "院内点検(miratech)":
         if device_category in ["輸液ポンプ", "シリンジポンプ"]:
             parts_list.extend([
@@ -826,13 +988,25 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
                 f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
                 f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
             ])
+            if device_category == "輸液ポンプ":
+                for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
+                    parts_list.append(f"{label}:{infusion_pump_checks.get(label, '---')}")
             flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
             press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
             parts_list.extend([
-                f"流量精度実測値:{flow_acc} {flow_unit} ({flow_judge})",
-                f"閉塞検出圧実測値:{occ_press} {press_unit} ({press_judge})",
+                f"流量精度:{flow_acc} {flow_unit} ({flow_judge})",
+                f"閉塞検出:{occ_press} {press_unit} ({press_judge})",
+            ])
+            if device_category == "輸液ポンプ":
+                water_judge = "OK" if bubble_ad_water >= 100 else "NG"
+                dry_judge = "OK" if bubble_ad_dry <= 10 else "NG"
+                parts_list.extend([
+                    f"気泡センサーAD値(水入り):{bubble_ad_water} ({water_judge})",
+                    f"気泡センサーAD値(水無し):{bubble_ad_dry} ({dry_judge})",
+                ])
+            parts_list.extend([
                 f"基準流量:{min_flow}～{max_flow}",
-                f"基準閉塞:{min_press}～{max_press} {press_unit}"
+                f"基準閉塞:{min_press}～{max_press} {press_unit}",
             ])
         elif device_category == "保育器":
             for k, v in inc_o_checks.items():
@@ -858,6 +1032,7 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         "check_date": check_date,
         "final_me_no": final_me_no,
         "model_name": model_for_spreadsheet(device_model),
+        "device_category": device_category,
         "inspector": inspector,
         "result": result,
         "detail_text": detail_text,
@@ -1979,6 +2154,9 @@ with tabs[0]:
     }
     flow_acc = 0.0
     occ_press = 0.0
+    bubble_ad_water = 100.0
+    bubble_ad_dry = 10.0
+    infusion_pump_checks = default_infusion_pump_checks()
 
     input_keyword = st.text_input(
         "管理番号・旧番号 または シリアルNo を入力して検索",
@@ -2055,7 +2233,58 @@ with tabs[0]:
             inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
 
             if check_type == "院内点検(miratech)":
-                if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+                if device_category == "輸液ポンプ":
+                    st.write("**1. 外観・作動点検**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                    with col2:
+                        chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e7 = st.radio("表示部LED", ["OK", "NG", "---"], horizontal=True, index=None)
+
+                    st.write("**2. 警報・作動点検**")
+                    alarm_col1, alarm_col2 = st.columns(2)
+                    for idx, label in enumerate(INFUSION_PUMP_ALARM_ITEMS):
+                        target_col = alarm_col1 if idx % 2 == 0 else alarm_col2
+                        with target_col:
+                            infusion_pump_checks[label] = st.radio(
+                                label, ["OK", "NG", "---"], horizontal=True, index=None,
+                                key=f"inp_alarm_{label}",
+                            )
+
+                    st.write("**3. 機能・設定点検**")
+                    func_col1, func_col2 = st.columns(2)
+                    for idx, label in enumerate(INFUSION_PUMP_FUNCTION_ITEMS):
+                        target_col = func_col1 if idx % 2 == 0 else func_col2
+                        with target_col:
+                            infusion_pump_checks[label] = st.radio(
+                                label, ["OK", "NG", "---"], horizontal=True, index=None,
+                                key=f"inp_func_{label}",
+                            )
+
+                    st.write("**4. 数値・精度チェック**")
+                    col_num1, col_num2 = st.columns(2)
+                    with col_num1:
+                        st.caption("流量精度 ※流量120ml/hr・10min・予定量20ml・許容範囲18～22ml")
+                        st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
+                        flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=20.0, step=0.1)
+                    with col_num2:
+                        st.caption("閉塞検出 ※流量120ml/h・「M」30～90kPa")
+                        st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
+                        occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=60.0, step=1.0)
+
+                    st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
+                    bubble_col1, bubble_col2 = st.columns(2)
+                    with bubble_col1:
+                        bubble_ad_water = st.number_input("水入り", min_value=0.0, value=100.0, step=1.0)
+                    with bubble_col2:
+                        bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=10.0, step=1.0)
+
+                elif device_category == "シリンジポンプ":
                     st.write("**1. 外観・作動点検**")
                     col1, col2 = st.columns(2)
                     with col1:
@@ -2072,10 +2301,10 @@ with tabs[0]:
                     col_num1, col_num2 = st.columns(2)
                     with col_num1:
                         st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
-                        flow_acc = st.number_input(f"流量精度実測値 ({flow_unit})", value=float(max_flow+min_flow)/2, step=0.1)
+                        flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=float(max_flow + min_flow) / 2, step=0.1)
                     with col_num2:
                         st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
-                        occ_press = st.number_input(f"閉塞検出圧実測値 ({press_unit})", value=float(max_press+min_press)/2, step=1.0)
+                        occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
 
                 elif device_category == "保育器":
                     st.write("**2. 各種警報機能**")
@@ -2118,12 +2347,18 @@ with tabs[0]:
                     device_category, check_type, result, inc_o_checks,
                     chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                     flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                    infusion_pump_checks=infusion_pump_checks,
+                    bubble_ad_water=bubble_ad_water,
+                    bubble_ad_dry=bubble_ad_dry,
                 )
                 detail_text = build_inspection_detail_text(
                     check_type, device_category, result, inc_o_checks,
                     chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                     flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                     flow_unit, press_unit,
+                    infusion_pump_checks=infusion_pump_checks,
+                    bubble_ad_water=bubble_ad_water,
+                    bubble_ad_dry=bubble_ad_dry,
                 )
                 save_payload = {
                     "final_me_no": final_me_no,
@@ -2196,6 +2431,7 @@ with tabs[0]:
                 saved_report["result"],
                 saved_report["detail_text"],
                 saved_report["memo"],
+                device_category=saved_report.get("device_category", device_category),
             )
 
 # ====== タブ2：日常点検 ======
@@ -2615,6 +2851,7 @@ with tabs[3]:
                                 report_data.get("判定", "-"),
                                 report_data.get("詳細データ", ""),
                                 report_data.get("備考", ""),
+                                device_category=clean_data_str(report_data.get("カテゴリ", device_category)),
                             )
                     else:
                         st.info("この機器の点検・修理履歴はありません。")
