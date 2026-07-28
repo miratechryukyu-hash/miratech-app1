@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-28b"
+APP_VERSION = "2026-07-28f"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -1072,6 +1072,115 @@ def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
         <p style="text-align: right; font-size: 11px; color: gray; margin-top: 15px; margin-bottom: 0;">技術管理・保守責任: miratech 琉球 医療機器管理システム</p>
     </div>
     """
+
+def render_repair_fault_management(conn):
+    """修理・故障対応管理（未対応故障報告の処理・報告書）"""
+    st.subheader("修理故障・対応管理")
+    st.caption("現場からの故障報告に対する修理対応・安全点検の記録")
+
+    if st.session_state.get("repair_saved_report"):
+        report = st.session_state["repair_saved_report"]
+        st.success(f"{report['target_me']} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
+        st.markdown("---")
+        st.subheader("提出用 報告書の印刷レイアウト")
+        st.markdown(report["html"], unsafe_allow_html=True)
+        st.info("Cmd/Ctrl + P で印刷またはPDF保存できます。")
+        if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
+            st.session_state.pop("repair_saved_report", None)
+            st.cache_data.clear()
+            st.rerun()
+        return
+
+    try:
+        df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
+
+        col_refresh, col_view = st.columns([1, 2])
+        with col_refresh:
+            if st.button("故障報告データを更新", key="repair_refresh_fault"):
+                st.cache_data.clear()
+                st.rerun()
+        with col_view:
+            st.caption("故障報告シートの一覧は下段で確認できます。")
+
+        if df_failed.empty:
+            st.info("現在、故障報告データはありません。")
+        else:
+            if "対応状況" not in df_failed.columns:
+                df_failed["対応状況"] = "未対応"
+
+            pending_mask = df_failed["対応状況"].apply(is_fault_pending)
+            df_pending = df_failed[pending_mask]
+
+            st.markdown("#### 故障報告一覧")
+            display_dataframe(df_failed.iloc[::-1], hide_index=True, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("#### 故障対応・修理完了の入力")
+
+            if df_pending.empty:
+                st.success("現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
+            else:
+                st.warning(f"現在、**{len(df_pending)} 件** の未対応の故障報告があります。")
+
+                pending_labels = {}
+                for row_idx, row in df_pending.iterrows():
+                    pending_labels[_fault_report_label(row)] = row_idx
+
+                selected_job = st.selectbox(
+                    "対応する故障報告を選択してください",
+                    list(pending_labels.keys()),
+                    key="repair_job_select",
+                )
+                selected_idx = pending_labels[selected_job]
+                target_me = clean_data_str(df_failed.loc[selected_idx].get("管理番号", ""))
+
+                with st.form("repair_form"):
+                    st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
+                    repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
+                    repair_detail = st.text_area(
+                        "修理・処置内容",
+                        placeholder="例: 包包交換、内部清掃、設定リセット実施",
+                    )
+                    st.write("修理後の安全点検チェック（エビデンス確保）")
+                    chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
+                    chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
+                    chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
+                    repair_result = st.radio(
+                        "総合評価", ["使用可", "メーカー修理依頼", "廃棄手続き"], horizontal=True,
+                    )
+                    repair_memo = st.text_area("備考（特記事項があれば）")
+
+                    if st.form_submit_button("修理・点検完了を確定する", type="primary"):
+                        inspector = st.session_state.get("current_user_name", "ME")
+                        try:
+                            saved_me, job_data, _detail = save_repair_completion(
+                                conn,
+                                selected_idx,
+                                repair_date,
+                                repair_detail,
+                                chk_r1,
+                                chk_r2,
+                                chk_r3,
+                                repair_result,
+                                repair_memo,
+                                inspector,
+                            )
+                            st.session_state["repair_saved_report"] = {
+                                "target_me": saved_me,
+                                "html": _build_repair_report_html(
+                                    saved_me, job_data, repair_date, repair_detail,
+                                    chk_r1, chk_r2, chk_r3, repair_result, inspector,
+                                ),
+                            }
+                            st.cache_data.clear()
+                            st.rerun()
+                        except SheetReadError as e:
+                            st.error(f"スプレッドシート読み込みエラー: {e}")
+                        except Exception as e:
+                            st.error(f"保存に失敗しました: {e}")
+
+    except Exception as e:
+        st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
 def _validate_radio_check_dict(checks_dict, ng_items, incomplete_items):
     for label, val in checks_dict.items():
@@ -2271,7 +2380,7 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検入力", "日常点検", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "ユーザー・ログ管理"]
+tab_names = ["点検入力", "日常点検", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
 tabs = st.tabs(tab_names)
 
 # ====== タブ1：入力画面 ======
@@ -2604,8 +2713,7 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("機器台帳 ＆ データ管理")
     
-    # サブタブに「故障対応・修理入力」を追加して3つに拡張
-    sub_m1, sub_m2, sub_m3 = st.tabs(["資産統計 ＆ 一覧表示", "登録データの修正・変更", "故障対応・修理入力"])
+    sub_m1, sub_m2 = st.tabs(["資産統計 ＆ 一覧表示", "登録データの修正・変更"])
 
     with sub_m1:
         try:
@@ -2737,99 +2845,6 @@ with tabs[2]:
                     st.warning("指定された管理番号・旧番号は登録されていません。")
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
-
-    # 未対応の故障報告の一覧から修理・点検・報告書生成を一括で行う
-    with sub_m3:
-        st.markdown("#### 故障対応・修理完了の入力")
-        st.write("現場から上がった故障報告に対して、修理対応と安全点検の結果を入力します。")
-
-        if st.session_state.get("repair_saved_report"):
-            report = st.session_state["repair_saved_report"]
-            st.success(f"{report['target_me']} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
-            st.markdown("---")
-            st.subheader("提出用 報告書の印刷レイアウト")
-            st.markdown(report["html"], unsafe_allow_html=True)
-            st.info("Cmd/Ctrl + P で印刷またはPDF保存できます。")
-            if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
-                st.session_state.pop("repair_saved_report", None)
-                st.cache_data.clear()
-                st.rerun()
-        else:
-            try:
-                df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
-                if df_failed.empty:
-                    st.info("現在、故障報告データはありません。")
-                else:
-                    if "対応状況" not in df_failed.columns:
-                        df_failed["対応状況"] = "未対応"
-
-                    pending_mask = df_failed["対応状況"].apply(is_fault_pending)
-                    df_pending = df_failed[pending_mask]
-
-                    if df_pending.empty:
-                        st.success("現在、対応待ちの故障報告はありません。すべての修理・点検が完了しています！")
-                    else:
-                        st.warning(f"現在、**{len(df_pending)} 件** の未対応の故障報告があります。")
-
-                        pending_labels = {}
-                        for row_idx, row in df_pending.iterrows():
-                            pending_labels[_fault_report_label(row)] = row_idx
-
-                        selected_job = st.selectbox(
-                            "対応する故障報告を選択してください",
-                            list(pending_labels.keys()),
-                            key="repair_job_select",
-                        )
-                        selected_idx = pending_labels[selected_job]
-                        target_me = clean_data_str(df_failed.loc[selected_idx].get("管理番号", ""))
-
-                        with st.form("repair_form"):
-                            st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
-                            repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
-                            repair_detail = st.text_area(
-                                "修理・処置内容",
-                                placeholder="例: 包包交換、内部清掃、設定リセット実施",
-                            )
-                            st.write("修理後の安全点検チェック（エビデンス確保）")
-                            chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
-                            chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
-                            chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
-                            repair_result = st.radio(
-                                "総合評価", ["使用可", "メーカー修理依頼", "廃棄手続き"], horizontal=True,
-                            )
-                            repair_memo = st.text_area("備考（特記事項があれば）")
-
-                            if st.form_submit_button("修理・点検完了を確定する", type="primary"):
-                                inspector = st.session_state.get("current_user_name", "ME")
-                                try:
-                                    saved_me, job_data, _detail = save_repair_completion(
-                                        conn,
-                                        selected_idx,
-                                        repair_date,
-                                        repair_detail,
-                                        chk_r1,
-                                        chk_r2,
-                                        chk_r3,
-                                        repair_result,
-                                        repair_memo,
-                                        inspector,
-                                    )
-                                    st.session_state["repair_saved_report"] = {
-                                        "target_me": saved_me,
-                                        "html": _build_repair_report_html(
-                                            saved_me, job_data, repair_date, repair_detail,
-                                            chk_r1, chk_r2, chk_r3, repair_result, inspector,
-                                        ),
-                                    }
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                except SheetReadError as e:
-                                    st.error(f"スプレッドシート読み込みエラー: {e}")
-                                except Exception as e:
-                                    st.error(f"保存に失敗しました: {e}")
-
-            except Exception as e:
-                st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
 # ====== タブ4：機器カルテ・実績 ======
 with tabs[3]:
@@ -3153,43 +3168,6 @@ with tabs[5]:
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
 
-# ====== タブ7：ユーザー・ログ管理 ======
-try:
-    df_users = safe_read_worksheet(conn, "ユーザー", ["ユーザーID", "パスワード", "名前", "ステータス", "権限"])
-
-    with tabs[6]:
-        st.subheader("ユーザー承認・アクセスログ管理")
-        
-        st.markdown("#### ユーザーIDの承認待ち一覧")
-        pending_users = df_users[df_users["ステータス"] == "未承認"]
-        if pending_users.empty:
-            st.write("現在、承認待ちのユーザーはいません。")
-        else:
-            for index, row in pending_users.iterrows():
-                col_u1, col_u2 = st.columns([3, 1])
-                with col_u1:
-                    st.write(f"申請者: **{row['名前']}** (ID: {row['ユーザーID']})")
-                with col_u2:
-                    if st.button("承認する", key=f"approve_{row['ユーザーID']}"):
-                        df_users.at[index, "ステータス"] = "OK"
-                        conn.update(worksheet="ユーザー", data=df_users)
-                        write_log(st.session_state.get("current_user_name", "管理者"), f"{row['名前']} のアカウントを承認")
-                        st.success(f"{row['名前']} さんを承認しました。")
-                        st.rerun()
-
-        st.markdown("---")
-        st.markdown("#### アクセス履歴（最新順）")
-        if st.button("ログを更新"):
-            st.cache_data.clear()
-        
-        try:
-            df_logs = safe_read_worksheet(conn, "アクセスログ")
-            if not df_logs.empty:
-                display_dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
-            else:
-                st.write("ログはまだありません。")
-        except:
-            st.write("ログシートがまだ作成されていません。")
-            
-except Exception as e:
-    st.error(f"データ取得エラー: {e}")
+# ====== タブ7：修理故障・対応管理 ======
+with tabs[6]:
+    render_repair_fault_management(conn)
