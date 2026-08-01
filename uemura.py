@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-28f"
+APP_VERSION = "2026-08-01a"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -110,6 +110,11 @@ def format_jst(dt=None, fmt="%Y-%m-%d %H:%M:%S"):
     return (dt or now_jst()).strftime(fmt)
 
 LEGACY_ME_COLUMNS = ("旧番号", "旧管理番号")
+
+INSPECTION_HISTORY_COLUMNS = [
+    "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
+    "実施者", "判定", "詳細データ", "備考",
+]
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -519,6 +524,45 @@ def protect_zeros(val_str):
         return f"'{val_str}"
     return val_str
 
+def normalize_inspection_history_df(df):
+    """点検履歴シートを標準列構成に揃える（不足列は空で補完）"""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=INSPECTION_HISTORY_COLUMNS)
+    out = df.copy()
+    for col in INSPECTION_HISTORY_COLUMNS:
+        if col not in out.columns:
+            out[col] = ""
+    return out
+
+def append_inspection_history_row(existing_history, new_hist_row):
+    """点検履歴へ1行追加（管理番号・シリアルNo が欠落しないよう列を統一）"""
+    existing = normalize_inspection_history_df(existing_history)
+    row = {col: new_hist_row.get(col, "") for col in INSPECTION_HISTORY_COLUMNS}
+    if row.get("管理番号"):
+        row["管理番号"] = protect_zeros(clean_data_str(row["管理番号"]))
+    if row.get("シリアルNo"):
+        row["シリアルNo"] = protect_zeros(clean_data_str(row["シリアルNo"]))
+    new_df = pd.DataFrame([row])
+    extra_cols = [c for c in existing.columns if c not in INSPECTION_HISTORY_COLUMNS]
+    combined_cols = list(dict.fromkeys(list(INSPECTION_HISTORY_COLUMNS) + extra_cols))
+    for col in combined_cols:
+        if col not in new_df.columns:
+            new_df[col] = ""
+        if col not in existing.columns:
+            existing[col] = ""
+    return pd.concat([existing[combined_cols], new_df[combined_cols]], ignore_index=True)
+
+def _device_match_tokens(target_me, master_row=None):
+    """機器照合に使う管理番号・旧番号の集合"""
+    tokens = set()
+    me = clean_data_str(target_me)
+    if me:
+        tokens.add(me)
+    if master_row is not None:
+        for legacy in _legacy_numbers_from_row(master_row):
+            tokens.add(legacy)
+    return tokens
+
 def build_device_qr_url(me_no):
     clean_url = APP_URL.rstrip("/")
     return f"{clean_url}/?me_no={clean_data_str(me_no)}"
@@ -721,8 +765,68 @@ def parse_detail_text_to_table(detail_text):
             item_judges.append(v.strip())
     return item_names, item_results, item_judges
 
+def classify_inspection_type(detail_text="", memo="", result=""):
+    """点検履歴行を定期点検 / 修理・故障対応に分類"""
+    detail = str(detail_text or "")
+    memo_s = str(memo or "")
+    result_s = str(result or "")
+    if "【故障修理後点検】" in detail or "故障対応" in result_s or "元故障症状" in memo_s:
+        return "修理・故障対応"
+    return "定期点検"
+
+def inspection_report_title(report_kind="定期点検"):
+    if report_kind == "修理・故障対応":
+        return "医療機器 修理・点検完了報告書"
+    return "医療機器定期点検報告書"
+
+def filter_history_for_device(df_history, target_me, master_row=None):
+    """点検履歴を機器で絞り込み（現管理番号・旧番号・シリアルNo に対応）"""
+    if df_history is None or df_history.empty:
+        return pd.DataFrame()
+    tokens = _device_match_tokens(target_me, master_row)
+    if not tokens:
+        return pd.DataFrame()
+
+    working = normalize_inspection_history_df(df_history)
+    normalized_me = clean_series(working["管理番号"])
+    mask = normalized_me.isin(tokens)
+
+    master_sn = clean_data_str(master_row.get("シリアルNo", "")) if master_row is not None else ""
+    if master_sn:
+        hist_sn = clean_series(working["シリアルNo"])
+        mask = mask | (hist_sn == master_sn)
+
+    result = working[mask]
+    if result.empty:
+        return pd.DataFrame()
+    return result.iloc[::-1]
+
+def filter_fault_reports_for_device(df_fault, target_me, master_row=None):
+    """故障報告を機器で絞り込み（現管理番号・旧番号に対応）"""
+    if df_fault is None or df_fault.empty or "管理番号" not in df_fault.columns:
+        return pd.DataFrame()
+    tokens = _device_match_tokens(target_me, master_row)
+    if not tokens:
+        return pd.DataFrame()
+    mask = clean_series(df_fault["管理番号"]).isin(tokens)
+    result = df_fault[mask]
+    if result.empty:
+        return pd.DataFrame()
+    return result.iloc[::-1]
+
+def _history_record_label(row, list_index=0):
+    kind = classify_inspection_type(
+        row.get("詳細データ", ""), row.get("備考", ""), row.get("判定", ""),
+    )
+    return (
+        f"{clean_data_str(row.get('点検日', ''))} | {kind} | "
+        f"{clean_data_str(row.get('管理番号', ''))} | "
+        f"{clean_data_str(row.get('機種', ''))} | "
+        f"{clean_data_str(row.get('判定', ''))} [#{list_index + 1}]"
+    )
+
 def render_inspection_report(check_date, me_no, model_name, inspector, result, detail_text="", memo="",
-                             device_category=""):
+                             device_category="", report_kind="定期点検", unique_key_suffix=""):
     st.markdown("""
     <style>
     @media print {
@@ -734,8 +838,10 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
 
     pdf_bytes = build_inspection_report_pdf_bytes(
         check_date, me_no, model_name, inspector, result, detail_text, memo, device_category,
+        report_kind=report_kind,
     )
     pdf_name = f"点検報告_{clean_data_str(me_no)}_{check_date}.pdf"
+    pdf_key = f"inspection_pdf_{clean_data_str(me_no)}_{check_date}_{unique_key_suffix or report_kind}"
     col_pdf, col_hint = st.columns([1, 2])
     with col_pdf:
         st.download_button(
@@ -744,19 +850,24 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
             file_name=pdf_name,
             mime="application/pdf",
             type="primary",
-            key=f"inspection_pdf_{me_no}_{check_date}",
+            key=pdf_key,
         )
     with col_hint:
         st.caption("A4縦向きPDF。ブラウザの「印刷」→「PDFに保存」（Cmd/Ctrl + P）でも保存できます。")
 
-    st.write(f"## 医療機器定期点検報告書 （{check_date} 実施分）")
-    info_df = pd.DataFrame({
-        "管理番号": [me_no],
-        "機種(型式)": [model_name],
-        "点検実施者": [inspector],
-        "総合評価": [result],
-    })
-    st.table(info_df)
+    title = inspection_report_title(report_kind)
+    st.write(f"## {title} （{check_date} 実施分）")
+    info_rows = {
+        "管理番号": me_no,
+        "機種(型式)": model_name,
+        "点検実施者": inspector,
+        "総合評価": result,
+    }
+    if device_category:
+        info_rows["機器種類"] = device_category
+    info_rows["点検区分"] = report_kind
+    info_df = pd.DataFrame({"項目": list(info_rows.keys()), "内容": list(info_rows.values())})
+    st.table(info_df.set_index("項目"))
 
     item_names, item_results, item_judges = parse_detail_text_to_table(detail_text)
     if item_names:
@@ -771,7 +882,8 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
         st.info(f"備考・処置内容:\n{memo}")
 
 def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
-                                      detail_text="", memo="", device_category=""):
+                                      detail_text="", memo="", device_category="",
+                                      report_kind="定期点検"):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -785,7 +897,7 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
         topMargin=14 * mm, bottomMargin=14 * mm,
     )
     story = [
-        _daily_monthly_pdf_paragraph("医療機器定期点検報告書", font_name, 14, align=1),
+        _daily_monthly_pdf_paragraph(inspection_report_title(report_kind), font_name, 14, align=1),
         _daily_monthly_pdf_paragraph(f"作業日: {check_date}", font_name, 10, align=1),
         Spacer(1, 4 * mm),
     ]
@@ -794,6 +906,10 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
         ["管理番号", clean_data_str(me_no), "機種(型式)", clean_data_str(model_name)],
         ["点検実施者", clean_data_str(inspector), "総合評価", clean_data_str(result)],
     ]
+    if device_category:
+        header_rows.append(["機器種類", clean_data_str(device_category), "点検区分", report_kind])
+    else:
+        header_rows.append(["点検区分", report_kind, "", ""])
     if device_category:
         header_rows.append(["機器種類", clean_data_str(device_category), "", ""])
 
@@ -858,6 +974,103 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
     doc.build(story)
     return buf.getvalue()
 
+def render_inspection_history_viewer(conn, df_master, df_history):
+    """点検表履歴の一覧表示・報告書印刷（定期点検 / 修理・故障対応）"""
+    st.markdown("#### 点検表履歴・印刷")
+    st.caption("定期点検および修理・故障対応点検の報告書を、過去の履歴から表示・PDF保存できます。")
+
+    if st.button("履歴データを最新にする", key="hist_view_refresh"):
+        st.cache_data.clear()
+        st.rerun()
+
+    col_search, col_filter = st.columns([2, 1])
+    with col_search:
+        keyword = st.text_input(
+            "管理番号・旧番号 または シリアルNo（空欄ですべて表示）",
+            placeholder="例: INP0001",
+            key="hist_view_search",
+        ).strip()
+    with col_filter:
+        type_filter = st.selectbox(
+            "点検区分で絞り込み",
+            ["すべて", "定期点検", "修理・故障対応"],
+            key="hist_view_type",
+        )
+
+    working = df_history.copy() if df_history is not None and not df_history.empty else pd.DataFrame()
+
+    if keyword:
+        if df_master.empty:
+            st.warning("機器マスターが読み込めません。")
+            return
+        master_row, match_type = find_device_row(df_master, keyword)
+        if master_row is None:
+            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+            return
+        target_me = clean_data_str(master_row.get("管理番号", ""))
+        if match_type == "旧番号":
+            st.info(f"旧番号「{clean_data_str(keyword)}」→ 管理番号 {target_me} の履歴を表示します。")
+        working = filter_history_for_device(working, target_me, master_row)
+
+    if working.empty:
+        st.info("表示できる点検履歴がありません。")
+        return
+
+    working = working.copy()
+    working["_点検区分"] = working.apply(
+        lambda r: classify_inspection_type(
+            r.get("詳細データ", ""), r.get("備考", ""), r.get("判定", ""),
+        ),
+        axis=1,
+    )
+    if type_filter != "すべて":
+        working = working[working["_点検区分"] == type_filter]
+
+    if working.empty:
+        st.info(f"「{type_filter}」に該当する履歴はありません。")
+        return
+
+    st.write(f"**{len(working)} 件** の点検表が見つかりました。")
+    display_cols = [c for c in ["点検日", "管理番号", "カテゴリ", "機種", "_点検区分", "実施者", "判定"] if c in working.columns]
+    list_df = working[display_cols].rename(columns={"_点検区分": "点検区分"})
+    st.dataframe(_sanitize_dataframe(list_df), use_container_width=True, hide_index=True)
+
+    label_map = {}
+    for list_index, (row_idx, row) in enumerate(working.iterrows()):
+        label_map[_history_record_label(row, list_index)] = row_idx
+
+    selected_label = st.selectbox(
+        "印刷・表示する点検表を選択",
+        list(label_map.keys()),
+        key="hist_view_record_select",
+    )
+    report_row = working.loc[label_map[selected_label]]
+    report_me = clean_data_str(report_row.get("管理番号", ""))
+    report_model = normalize_stored_model(
+        report_row.get("カテゴリ", ""),
+        report_row.get("機種", ""),
+    ) or clean_data_str(report_row.get("機種", ""))
+    report_kind = classify_inspection_type(
+        report_row.get("詳細データ", ""),
+        report_row.get("備考", ""),
+        report_row.get("判定", ""),
+    )
+
+    st.markdown("---")
+    st.subheader("点検報告書プレビュー")
+    render_inspection_report(
+        report_row.get("点検日", ""),
+        report_me,
+        report_model,
+        report_row.get("実施者", "-"),
+        report_row.get("判定", "-"),
+        report_row.get("詳細データ", ""),
+        report_row.get("備考", ""),
+        device_category=clean_data_str(report_row.get("カテゴリ", "")),
+        report_kind=report_kind,
+        unique_key_suffix=str(label_map[selected_label]),
+    )
+
 def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
                               scan_year_val, check_date, check_type, inspector, result,
                               memo, detail_text):
@@ -879,19 +1092,13 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     df_master.loc[mask, "最終実施者"] = inspector
     conn.update(worksheet="機器マスター", data=df_master)
 
-    history_columns = [
-        "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
-        "実施者", "判定", "詳細データ", "備考",
-    ]
-    existing_history = safe_read_worksheet(conn, "点検履歴", history_columns)
-    if existing_history.empty:
-        existing_history = pd.DataFrame(columns=history_columns)
+    existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS)
 
     new_hist_row = {
         "点検日": str(check_date),
-        "管理番号": protect_zeros(final_me_no),
+        "管理番号": final_me_no,
         "カテゴリ": device_category,
-        "シリアルNo": protect_zeros(final_sn),
+        "シリアルNo": final_sn,
         "製造年月日": scan_year_val,
         "機種": model_for_spreadsheet(device_model),
         "実施者": inspector,
@@ -899,22 +1106,11 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
         "詳細データ": detail_text,
         "備考": memo,
     }
-    for col in existing_history.columns:
-        if col not in new_hist_row:
-            new_hist_row[col] = ""
-
-    new_hist_df = pd.DataFrame([new_hist_row])
-    updated_history = pd.concat(
-        [existing_history, new_hist_df[existing_history.columns]], ignore_index=True,
-    )
-    conn.update(worksheet="点検履歴", data=updated_history)
+    updated_history = append_inspection_history_row(existing_history, new_hist_row)
+    conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
 FAULT_REPORT_COLUMNS = [
     "報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況",
-]
-INSPECTION_HISTORY_COLUMNS = [
-    "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
-    "実施者", "判定", "詳細データ", "備考",
 ]
 
 def is_fault_pending(status_val):
@@ -961,20 +1157,21 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
     )
     device_category = "その他"
     scan_year_val = ""
+    serial_no = ""
     m_row = df_m_lookup[clean_series(df_m_lookup["管理番号"]) == target_me]
     if not m_row.empty:
-        device_category = clean_data_str(m_row.iloc[0].get("カテゴリ", "その他"))
-        scan_year_val = clean_data_str(m_row.iloc[0].get("製造年月日", ""))
+        master_rec = m_row.iloc[0]
+        device_category = clean_data_str(master_rec.get("カテゴリ", "その他"))
+        scan_year_val = clean_data_str(master_rec.get("製造年月日", ""))
+        serial_no = clean_data_str(master_rec.get("シリアルNo", ""))
 
     existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
-    if existing_history.empty:
-        existing_history = pd.DataFrame(columns=INSPECTION_HISTORY_COLUMNS)
 
     new_hist_row = {
         "点検日": str(repair_date),
-        "管理番号": protect_zeros(target_me),
+        "管理番号": target_me,
         "カテゴリ": device_category,
-        "シリアルNo": protect_zeros(clean_data_str(job_data.get("シリアルNo", ""))),
+        "シリアルNo": serial_no,
         "製造年月日": scan_year_val,
         "機種": clean_data_str(job_data.get("機種", "")),
         "実施者": inspector,
@@ -982,13 +1179,7 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
         "詳細データ": detail_text,
         "備考": f"元故障症状: {clean_data_str(job_data.get('症状', ''))} / 備考: {repair_memo}",
     }
-    for col in existing_history.columns:
-        if col not in new_hist_row:
-            new_hist_row[col] = ""
-    new_hist_df = pd.DataFrame([new_hist_row])
-    updated_history = pd.concat(
-        [existing_history, new_hist_df[existing_history.columns]], ignore_index=True,
-    )
+    updated_history = append_inspection_history_row(existing_history, new_hist_row)
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
     if not df_m_lookup.empty:
@@ -2855,9 +3046,14 @@ with tabs[3]:
         
     try:
         df_master = safe_read_worksheet(conn, "機器マスター")
-        df_history = safe_read_worksheet(conn, "点検履歴")
+        df_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS)
+        df_fault_reports = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
 
-        sub_tab1, sub_tab2 = st.tabs(["機器カルテ（ワンタッチ照合）", "日次点検実績（グラフ）"])
+        sub_tab1, sub_tab2, sub_tab3 = st.tabs([
+            "機器カルテ（ワンタッチ照合）",
+            "日次点検実績（グラフ）",
+            "点検表履歴・印刷",
+        ])
 
         with sub_tab1:
             karte_keyword = st.text_input(
@@ -2897,41 +3093,59 @@ with tabs[3]:
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
 
-                    hist_df = pd.DataFrame()
-                    if not df_history.empty and "管理番号" in df_history.columns:
-                        clean_hist_search_me = clean_series(df_history["管理番号"])
-                        hist_df = df_history[clean_hist_search_me == target_me].iloc[::-1]
+                    hist_df = filter_history_for_device(df_history, target_me, master_row)
+                    fault_df = filter_fault_reports_for_device(df_fault_reports, target_me, master_row)
+                    has_hist = not hist_df.empty
+                    has_fault = not fault_df.empty
 
-                    if not hist_df.empty:
-                        st.write("#### 過去の点検・修理履歴")
-                        st.dataframe(_sanitize_dataframe(hist_df), use_container_width=True, hide_index=True)
-
-                        st.markdown("---")
-                        st.write("#### 点検結果履歴（報告書表示）")
-                        st.write("履歴から特定の日の点検報告書を、点検入力タブと同じ形式で表示・印刷できます。")
-
-                        st.markdown("""
-                        <style>
-                        @media print {
-                            header, [data-testid="stSidebar"], footer { display: none !important; }
-                        }
-                        </style>
-                        """, unsafe_allow_html=True)
-
-                        selected_date = st.selectbox(
-                            "表示したい点検日を選択してください",
-                            hist_df["点検日"].tolist(),
-                            key=f"history_report_date_{target_me}",
+                    if has_fault:
+                        st.write("#### 故障報告履歴")
+                        st.dataframe(
+                            _sanitize_dataframe(fault_df),
+                            use_container_width=True,
+                            hide_index=True,
                         )
 
-                        if selected_date:
-                            report_data = hist_df[hist_df["点検日"] == selected_date].iloc[0]
+                    if has_hist:
+                        if has_fault:
+                            st.markdown("---")
+                        st.write("#### 過去の点検・修理履歴")
+                        hist_display = hist_df.copy()
+                        hist_display["点検区分"] = hist_display.apply(
+                            lambda r: classify_inspection_type(
+                                r.get("詳細データ", ""), r.get("備考", ""), r.get("判定", ""),
+                            ),
+                            axis=1,
+                        )
+                        st.dataframe(_sanitize_dataframe(hist_display), use_container_width=True, hide_index=True)
+
+                        st.markdown("---")
+                        st.write("#### 点検結果履歴（報告書表示・印刷）")
+                        st.caption("定期点検・修理対応の報告書をPDF保存または Cmd/Ctrl + P で印刷できます。")
+
+                        record_labels = {}
+                        for list_index, (row_idx, row) in enumerate(hist_df.iterrows()):
+                            record_labels[_history_record_label(row, list_index)] = row_idx
+
+                        selected_label = st.selectbox(
+                            "表示したい点検表を選択",
+                            list(record_labels.keys()),
+                            key=f"history_report_select_{target_me}",
+                        )
+
+                        if selected_label:
+                            report_data = hist_df.loc[record_labels[selected_label]]
                             report_model = normalize_stored_model(
                                 report_data.get("カテゴリ", ""),
                                 report_data.get("機種", model_name),
                             ) or model_name
+                            report_kind = classify_inspection_type(
+                                report_data.get("詳細データ", ""),
+                                report_data.get("備考", ""),
+                                report_data.get("判定", ""),
+                            )
                             render_inspection_report(
-                                report_data.get("点検日", selected_date),
+                                report_data.get("点検日", ""),
                                 target_me,
                                 report_model,
                                 report_data.get("実施者", "-"),
@@ -2939,8 +3153,10 @@ with tabs[3]:
                                 report_data.get("詳細データ", ""),
                                 report_data.get("備考", ""),
                                 device_category=clean_data_str(report_data.get("カテゴリ", device_category)),
+                                report_kind=report_kind,
+                                unique_key_suffix=f"karte_{record_labels[selected_label]}",
                             )
-                    else:
+                    elif not has_fault:
                         st.info("この機器の点検・修理履歴はありません。")
                 elif karte_keyword:
                     st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
@@ -2977,6 +3193,9 @@ with tabs[3]:
                     st.info(f"選択された日付（{target_date}）の点検データはありません。")
             else:
                 st.info("集計できる点検履歴データがまだありません。")
+
+        with sub_tab3:
+            render_inspection_history_viewer(conn, df_master, df_history)
 
     except Exception as e:
         st.error(f"システムエラー: {e}")
