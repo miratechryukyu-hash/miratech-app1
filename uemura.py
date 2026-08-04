@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-04c"
+APP_VERSION = "2026-08-04d"
 
 # 輸液ポンプ専用点検項目（入力フォーム・印刷レイアウト共通）
 INFUSION_PUMP_APPEARANCE_ITEMS = [
@@ -660,6 +660,21 @@ def apply_sticker_master_lookup(me_no, master_info):
         st.session_state["sticker_delivery"] = master_info.get("delivery_date", "")
     else:
         st.session_state["sticker_me_display"] = lookup_key
+
+def sync_device_display_fields(prefix, me_no, category, serial, model):
+    """機器検索結果が変わったら、表示用 text_input の session_state を更新"""
+    lookup_key = clean_data_str(me_no)
+    track_key = f"_{prefix}_lookup_me"
+    if not lookup_key:
+        st.session_state.pop(track_key, None)
+        return
+    if st.session_state.get(track_key) == lookup_key:
+        return
+    st.session_state[track_key] = lookup_key
+    st.session_state[f"{prefix}_disp_me"] = lookup_key
+    st.session_state[f"{prefix}_disp_cat"] = clean_data_str(category)
+    st.session_state[f"{prefix}_disp_sn"] = clean_data_str(serial)
+    st.session_state[f"{prefix}_disp_model"] = clean_data_str(model)
 
 def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url=None):
     if not qr_url:
@@ -2200,6 +2215,8 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
     elif not locked_keyword:
         st.success("登録済みの機器が見つかりました。")
 
+    sync_device_display_fields(form_key_prefix, final_me_no, device_category, final_sn, device_model)
+
     if device_category not in DAILY_INSPECTION_CATEGORIES:
         st.error(
             f"「{device_category}」は日常点検の対象外です。"
@@ -3206,13 +3223,15 @@ with tabs[0]:
             master_row.get("製造年月日", "") or master_row.get("製造年", "")
         )
 
+        sync_device_display_fields("check", final_me_no, device_category, final_sn, device_model)
+
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            st.text_input("管理番号", value=final_me_no, disabled=True)
-            st.text_input("機器の種類", value=device_category, disabled=True)
+            st.text_input("管理番号", value=final_me_no, disabled=True, key="check_disp_me")
+            st.text_input("機器の種類", value=device_category, disabled=True, key="check_disp_cat")
         with col_m2:
-            st.text_input("シリアルNo", value=final_sn, disabled=True)
-            st.text_input("型式", value=device_model, disabled=True)
+            st.text_input("シリアルNo", value=final_sn, disabled=True, key="check_disp_sn")
+            st.text_input("型式", value=device_model, disabled=True, key="check_disp_model")
 
         # 型式別の基準値を自動セット
         min_flow, max_flow = 18.0, 22.0
@@ -3639,6 +3658,14 @@ with tabs[3]:
                     ) or "不明な機器"
                     device_category = clean_data_str(master_row.get("カテゴリ", ""))
                     device_model = normalize_stored_model(device_category, master_row.get("機種", ""))
+
+                    sync_device_display_fields(
+                        "karte",
+                        target_me,
+                        device_category,
+                        master_row.get("シリアルNo", ""),
+                        device_model,
+                    )
 
                     col_k1, col_k2 = st.columns(2)
                     with col_k1:
