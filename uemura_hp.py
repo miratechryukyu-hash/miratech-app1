@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-01a"
+APP_VERSION = "2026-08-04a"
 
 # 輸液ポンプ専用点検項目（シリンジポンプ・既存外観項目との重複なし）
 INFUSION_PUMP_ALARM_ITEMS = [
@@ -745,25 +745,66 @@ def render_sticker_workflow(model_name, me_no, serial_no, delivery_date, button_
         )
 
 def parse_detail_text_to_table(detail_text):
+    """詳細データ文字列を点検項目テーブル（項目名・結果・判定）に変換"""
     item_names, item_results, item_judges = [], [], []
     if not detail_text or str(detail_text).strip().lower() in ("", "nan"):
         return item_names, item_results, item_judges
+
+    skip_keys = {"点検区分", "基準流量", "基準閉塞"}
     for p in str(detail_text).split("|"):
         p = p.strip()
-        if not p or "基準流量" in p or "基準閉塞" in p:
-            continue
-        if ":" not in p:
+        if not p or ":" not in p:
             continue
         k, v = p.split(":", 1)
-        item_names.append(k.strip())
-        if "(" in v and ")" in v:
+        k = k.strip()
+        v = v.strip()
+        if k in skip_keys:
+            continue
+        item_names.append(k)
+        if "(" in v and v.endswith(")"):
             val, jdg = v.rsplit("(", 1)
             item_results.append(val.strip())
             item_judges.append(jdg.replace(")", "").strip())
         else:
+            item_results.append(v)
+            item_judges.append(v)
+
+    if not item_names and "【故障修理後点検】" in str(detail_text):
+        body = str(detail_text).replace("【故障修理後点検】", "").strip()
+        for segment in re.split(r"\s*/\s*", body):
+            segment = segment.strip()
+            if not segment or ":" not in segment:
+                continue
+            k, v = segment.split(":", 1)
+            item_names.append(k.strip())
             item_results.append(v.strip())
-            item_judges.append(v.strip())
+            item_judges.append("-")
+
     return item_names, item_results, item_judges
+
+def get_history_detail_text(row):
+    """点検履歴行から詳細データ文字列を取得（列名の揺れに対応）"""
+    if row is None:
+        return ""
+    for col in ("詳細データ", "詳細", "点検詳細"):
+        val = clean_data_str(row.get(col, ""))
+        if val:
+            return val
+    return ""
+
+def resolve_inspection_table_rows(detail_text="", item_rows=None):
+    """報告書用の点検項目行を解決（構造化データ優先、なければ詳細データを解析）"""
+    if item_rows:
+        names, results, judges = [], [], []
+        for row in item_rows:
+            if not row or len(row) < 3:
+                continue
+            names.append(str(row[0]))
+            results.append(str(row[1]))
+            judges.append(str(row[2]))
+        if names:
+            return names, results, judges
+    return parse_detail_text_to_table(detail_text)
 
 def classify_inspection_type(detail_text="", memo="", result=""):
     """点検履歴行を定期点検 / 修理・故障対応に分類"""
@@ -826,7 +867,8 @@ def _history_record_label(row, list_index=0):
     )
 
 def render_inspection_report(check_date, me_no, model_name, inspector, result, detail_text="", memo="",
-                             device_category="", report_kind="定期点検", unique_key_suffix=""):
+                             device_category="", report_kind="定期点検", unique_key_suffix="",
+                             item_rows=None, check_type_label=""):
     st.markdown("""
     <style>
     @media print {
@@ -838,7 +880,7 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
 
     pdf_bytes = build_inspection_report_pdf_bytes(
         check_date, me_no, model_name, inspector, result, detail_text, memo, device_category,
-        report_kind=report_kind,
+        report_kind=report_kind, item_rows=item_rows, check_type_label=check_type_label,
     )
     pdf_name = f"点検報告_{clean_data_str(me_no)}_{check_date}.pdf"
     pdf_key = f"inspection_pdf_{clean_data_str(me_no)}_{check_date}_{unique_key_suffix or report_kind}"
@@ -865,11 +907,13 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     }
     if device_category:
         info_rows["機器種類"] = device_category
+    if check_type_label:
+        info_rows["作業区分"] = check_type_label
     info_rows["点検区分"] = report_kind
     info_df = pd.DataFrame({"項目": list(info_rows.keys()), "内容": list(info_rows.values())})
     st.table(info_df.set_index("項目"))
 
-    item_names, item_results, item_judges = parse_detail_text_to_table(detail_text)
+    item_names, item_results, item_judges = resolve_inspection_table_rows(detail_text, item_rows)
     if item_names:
         excel_df = pd.DataFrame({
             "点検・測定項目": item_names,
@@ -877,13 +921,16 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
             "判定": item_judges,
         })
         st.table(excel_df)
+    elif detail_text and str(detail_text).strip().lower() not in ("", "nan"):
+        st.markdown("**点検・測定結果**")
+        st.text(str(detail_text))
 
     if memo and str(memo).strip().lower() not in ("", "nan"):
         st.info(f"備考・処置内容:\n{memo}")
 
 def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
                                       detail_text="", memo="", device_category="",
-                                      report_kind="定期点検"):
+                                      report_kind="定期点検", item_rows=None, check_type_label=""):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -910,8 +957,8 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
         header_rows.append(["機器種類", clean_data_str(device_category), "点検区分", report_kind])
     else:
         header_rows.append(["点検区分", report_kind, "", ""])
-    if device_category:
-        header_rows.append(["機器種類", clean_data_str(device_category), "", ""])
+    if check_type_label:
+        header_rows.append(["作業区分", check_type_label, "", ""])
 
     header_table_data = []
     for row in header_rows:
@@ -927,7 +974,7 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
     ]))
     story.extend([header_table, Spacer(1, 5 * mm)])
 
-    item_names, item_results, item_judges = parse_detail_text_to_table(detail_text)
+    item_names, item_results, item_judges = resolve_inspection_table_rows(detail_text, item_rows)
     if item_names:
         story.append(_daily_monthly_pdf_paragraph("点検・測定結果", font_name, 11))
         story.append(Spacer(1, 2 * mm))
@@ -1064,12 +1111,27 @@ def render_inspection_history_viewer(conn, df_master, df_history):
         report_model,
         report_row.get("実施者", "-"),
         report_row.get("判定", "-"),
-        report_row.get("詳細データ", ""),
+        get_history_detail_text(report_row),
         report_row.get("備考", ""),
         device_category=clean_data_str(report_row.get("カテゴリ", "")),
         report_kind=report_kind,
         unique_key_suffix=str(label_map[selected_label]),
     )
+
+def ensure_inspection_history_worksheet():
+    """点検履歴シートとヘッダー列を確保（詳細データ列の欠落を防止）"""
+    client, spreadsheet_id = _get_sheet_client()
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet("点検履歴")
+        header = [h for h in ws.row_values(1) if h]
+        missing = [c for c in INSPECTION_HISTORY_COLUMNS if c not in header]
+        if missing:
+            ws.update([header + missing], "A1")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="点検履歴", rows=2000, cols=len(INSPECTION_HISTORY_COLUMNS))
+        ws.update([INSPECTION_HISTORY_COLUMNS], "A1")
+    st.cache_data.clear()
 
 def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
                               scan_year_val, check_date, check_type, inspector, result,
@@ -1107,6 +1169,7 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
         "備考": memo,
     }
     updated_history = append_inspection_history_row(existing_history, new_hist_row)
+    ensure_inspection_history_worksheet()
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
 FAULT_REPORT_COLUMNS = [
@@ -1180,6 +1243,7 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
         "備考": f"元故障症状: {clean_data_str(job_data.get('症状', ''))} / 備考: {repair_memo}",
     }
     updated_history = append_inspection_history_row(existing_history, new_hist_row)
+    ensure_inspection_history_worksheet()
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
     if not df_m_lookup.empty:
@@ -1428,53 +1492,115 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
 def is_unselected(val):
     return val in ("--", "---", None, "")
 
+def build_inspection_item_rows(check_type, device_category, result, inc_o_checks,
+                               chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                               flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                               flow_unit, press_unit,
+                               infusion_pump_checks=None,
+                               bubble_ad_water=0.0, bubble_ad_dry=0.0):
+    """点検報告書用の項目行 [(項目名, 結果, 判定), ...] を生成"""
+    rows = []
+    infusion_pump_checks = infusion_pump_checks or {}
+
+    if check_type == "院内点検(miratech)":
+        if device_category in ["輸液ポンプ", "シリンジポンプ"]:
+            pump_checks = {
+                "本体の汚れ・破損なし": chk_e1,
+                "ポールクランプ用ネジ穴": chk_e2,
+                "チューブクランプ動作": chk_e3,
+                "フィンガー部動作": chk_e4,
+                "AC・DC切り替え": chk_e5,
+                "セルフチェック機能": chk_e6,
+                "表示部LED": chk_e7,
+            }
+            for label, val in pump_checks.items():
+                val_s = clean_data_str(val)
+                rows.append((label, val_s, val_s))
+            if device_category == "輸液ポンプ":
+                for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
+                    val_s = clean_data_str(infusion_pump_checks.get(label, "---"))
+                    rows.append((label, val_s, val_s))
+            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
+            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+            rows.append(("流量精度", f"{flow_acc} {flow_unit}", flow_judge))
+            rows.append(("閉塞検出", f"{occ_press} {press_unit}", press_judge))
+            if device_category == "輸液ポンプ":
+                water_judge = "OK" if bubble_ad_water >= 100 else "NG"
+                dry_judge = "OK" if bubble_ad_dry <= 10 else "NG"
+                rows.append(("気泡センサーAD値(水入り)", str(bubble_ad_water), water_judge))
+                rows.append(("気泡センサーAD値(水無し)", str(bubble_ad_dry), dry_judge))
+        elif device_category == "保育器":
+            for label, val in inc_o_checks.items():
+                val_s = clean_data_str(val)
+                rows.append((label, val_s, val_s))
+
+    return rows
+
 def build_inspection_detail_text(check_type, device_category, result, inc_o_checks,
                                  chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                                  flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                  flow_unit, press_unit,
                                  infusion_pump_checks=None,
                                  bubble_ad_water=0.0, bubble_ad_dry=0.0):
+    rows = build_inspection_item_rows(
+        check_type, device_category, result, inc_o_checks,
+        chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+        flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+        flow_unit, press_unit,
+        infusion_pump_checks=infusion_pump_checks,
+        bubble_ad_water=bubble_ad_water,
+        bubble_ad_dry=bubble_ad_dry,
+    )
     parts_list = []
-    infusion_pump_checks = infusion_pump_checks or {}
-    if check_type == "院内点検(miratech)":
-        if device_category in ["輸液ポンプ", "シリンジポンプ"]:
-            parts_list.extend([
-                f"本体の汚れ・破損なし:{chk_e1}", f"ポールクランプ用ネジ穴:{chk_e2}",
-                f"チューブクランプ動作:{chk_e3}", f"フィンガー部動作:{chk_e4}",
-                f"AC・DC切り替え:{chk_e5}", f"セルフチェック機能:{chk_e6}", f"表示部LED:{chk_e7}"
-            ])
-            if device_category == "輸液ポンプ":
-                for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
-                    parts_list.append(f"{label}:{infusion_pump_checks.get(label, '---')}")
-            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
-            parts_list.extend([
-                f"流量精度:{flow_acc} {flow_unit} ({flow_judge})",
-                f"閉塞検出:{occ_press} {press_unit} ({press_judge})",
-            ])
-            if device_category == "輸液ポンプ":
-                water_judge = "OK" if bubble_ad_water >= 100 else "NG"
-                dry_judge = "OK" if bubble_ad_dry <= 10 else "NG"
-                parts_list.extend([
-                    f"気泡センサーAD値(水入り):{bubble_ad_water} ({water_judge})",
-                    f"気泡センサーAD値(水無し):{bubble_ad_dry} ({dry_judge})",
-                ])
-            parts_list.extend([
-                f"基準流量:{min_flow}～{max_flow}",
-                f"基準閉塞:{min_press}～{max_press} {press_unit}",
-            ])
-        elif device_category == "保育器":
-            for k, v in inc_o_checks.items():
-                parts_list.append(f"{k}:{v}")
+    for name, result_val, judge in rows:
+        if judge in ("OK", "NG") and result_val != judge:
+            parts_list.append(f"{name}:{result_val} ({judge})")
+        else:
+            parts_list.append(f"{name}:{result_val}")
+
+    if check_type == "院内点検(miratech)" and device_category in ["輸液ポンプ", "シリンジポンプ"]:
+        parts_list.extend([
+            f"基準流量:{min_flow}～{max_flow}",
+            f"基準閉塞:{min_press}～{max_press} {press_unit}",
+        ])
 
     detail_text = " | ".join(parts_list)
     if check_type != "院内点検(miratech)":
         detail_text = f"点検区分:{check_type}" + (f" | {detail_text}" if detail_text else "")
     return detail_text
 
+def build_inspection_save_bundle(check_type, device_category, result, inc_o_checks,
+                                 chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                                 flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                                 flow_unit, press_unit,
+                                 infusion_pump_checks=None,
+                                 bubble_ad_water=0.0, bubble_ad_dry=0.0):
+    """保存・印刷用に詳細データ文字列と項目行をまとめて生成"""
+    item_rows = build_inspection_item_rows(
+        check_type, device_category, result, inc_o_checks,
+        chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+        flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+        flow_unit, press_unit,
+        infusion_pump_checks=infusion_pump_checks,
+        bubble_ad_water=bubble_ad_water,
+        bubble_ad_dry=bubble_ad_dry,
+    )
+    if check_type != "院内点検(miratech)" and not item_rows:
+        item_rows = [("点検区分", check_type, check_type)]
+    detail_text = build_inspection_detail_text(
+        check_type, device_category, result, inc_o_checks,
+        chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+        flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+        flow_unit, press_unit,
+        infusion_pump_checks=infusion_pump_checks,
+        bubble_ad_water=bubble_ad_water,
+        bubble_ad_dry=bubble_ad_dry,
+    )
+    return detail_text, item_rows
+
 def execute_inspection_save(conn, final_me_no, final_sn, device_category, device_model,
                             scan_year_val, check_date, check_type, inspector, result,
-                            memo, detail_text):
+                            memo, detail_text, item_rows=None):
     save_inspection_to_sheets(
         conn, final_me_no, final_sn, device_category, device_model,
         scan_year_val, check_date, check_type, inspector, result,
@@ -1492,6 +1618,9 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         "result": result,
         "detail_text": detail_text,
         "memo": memo,
+        "check_type": check_type,
+        "item_rows": item_rows or [],
+        "report_kind": "定期点検",
     }
 
 # ==========================================
@@ -2622,7 +2751,33 @@ with tabs[0]:
     if input_keyword != st.session_state.get("check_last_search_keyword", ""):
         st.session_state.pop("check_registered_msg", None)
         st.session_state.pop("pending_check_save", None)
+        st.session_state.pop("inspection_saved_report", None)
         st.session_state["check_last_search_keyword"] = input_keyword
+
+    if st.session_state.get("inspection_saved_report"):
+        saved_inspection = st.session_state["inspection_saved_report"]
+        st.markdown("---")
+        st.subheader("点検報告書（印刷・PDF保存）")
+        st.caption("Cmd/Ctrl + P で印刷、または「PDFをダウンロード」から保存できます。")
+        render_inspection_report(
+            saved_inspection["check_date"],
+            saved_inspection["final_me_no"],
+            saved_inspection["model_name"],
+            saved_inspection["inspector"],
+            saved_inspection["result"],
+            saved_inspection.get("detail_text", ""),
+            saved_inspection.get("memo", ""),
+            device_category=saved_inspection.get("device_category", ""),
+            report_kind=saved_inspection.get("report_kind", "定期点検"),
+            unique_key_suffix="inspection_saved_session",
+            item_rows=saved_inspection.get("item_rows"),
+            check_type_label=saved_inspection.get("check_type", ""),
+        )
+        if st.button("次の点検入力へ", type="primary", key="inspection_report_done"):
+            st.session_state.pop("inspection_saved_report", None)
+            st.session_state.pop("check_registered_msg", None)
+            st.rerun()
+        st.markdown("---")
 
     master_row = None
     match_type = None
@@ -2807,7 +2962,7 @@ with tabs[0]:
                     bubble_ad_water=bubble_ad_water,
                     bubble_ad_dry=bubble_ad_dry,
                 )
-                detail_text = build_inspection_detail_text(
+                detail_text, item_rows = build_inspection_save_bundle(
                     check_type, device_category, result, inc_o_checks,
                     chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                     flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
@@ -2828,6 +2983,7 @@ with tabs[0]:
                     "result": result,
                     "memo": memo,
                     "detail_text": detail_text,
+                    "item_rows": item_rows,
                     "incomplete_items": incomplete_items,
                     "ng_items": ng_items,
                 }
@@ -2849,8 +3005,13 @@ with tabs[0]:
                     st.session_state.pop("pending_check_save", None)
                     try:
                         with st.spinner("スプレッドシートに保存しています..."):
-                            saved_report = execute_inspection_save(conn, **{k: v for k, v in save_payload.items() if k not in ("incomplete_items", "ng_items")})
+                            saved_report = execute_inspection_save(
+                                conn,
+                                **{k: v for k, v in save_payload.items() if k not in ("incomplete_items", "ng_items")},
+                            )
+                        st.session_state["inspection_saved_report"] = saved_report
                         st.success(st.session_state["check_registered_msg"])
+                        st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
 
@@ -2866,10 +3027,12 @@ with tabs[0]:
                         with st.spinner("スプレッドシートに保存しています..."):
                             saved_report = execute_inspection_save(
                                 conn,
-                                **{k: v for k, v in pending.items() if k not in ("incomplete_items", "ng_items")}
+                                **{k: v for k, v in pending.items() if k not in ("incomplete_items", "ng_items")},
                             )
+                        st.session_state["inspection_saved_report"] = saved_report
                         st.session_state.pop("pending_check_save", None)
                         st.success(st.session_state["check_registered_msg"])
+                        st.rerun()
                     except Exception as e:
                         st.error(f"登録エラー: {e}")
             with col_no:
@@ -2877,18 +3040,6 @@ with tabs[0]:
                     st.session_state.pop("pending_check_save", None)
                     st.info("保存をキャンセルしました。未設定の項目を入力してください。")
                     st.rerun()
-
-        if saved_report:
-            render_inspection_report(
-                saved_report["check_date"],
-                saved_report["final_me_no"],
-                saved_report["model_name"],
-                saved_report["inspector"],
-                saved_report["result"],
-                saved_report["detail_text"],
-                saved_report["memo"],
-                device_category=saved_report.get("device_category", device_category),
-            )
 
 # ====== タブ2：日常点検 ======
 with tabs[1]:
@@ -3135,12 +3286,13 @@ with tabs[3]:
 
                         if selected_label:
                             report_data = hist_df.loc[record_labels[selected_label]]
+                            report_detail = get_history_detail_text(report_data)
                             report_model = normalize_stored_model(
                                 report_data.get("カテゴリ", ""),
                                 report_data.get("機種", model_name),
                             ) or model_name
                             report_kind = classify_inspection_type(
-                                report_data.get("詳細データ", ""),
+                                report_detail,
                                 report_data.get("備考", ""),
                                 report_data.get("判定", ""),
                             )
@@ -3150,7 +3302,7 @@ with tabs[3]:
                                 report_model,
                                 report_data.get("実施者", "-"),
                                 report_data.get("判定", "-"),
-                                report_data.get("詳細データ", ""),
+                                report_detail,
                                 report_data.get("備考", ""),
                                 device_category=clean_data_str(report_data.get("カテゴリ", device_category)),
                                 report_kind=report_kind,
