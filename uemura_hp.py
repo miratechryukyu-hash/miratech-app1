@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-04d"
+APP_VERSION = "2026-08-06b"
 
 # 輸液ポンプ専用点検項目（入力フォーム・印刷レイアウト共通）
 INFUSION_PUMP_APPEARANCE_ITEMS = [
@@ -109,6 +109,352 @@ INFUSION_PUMP_FUNCTION_ITEMS = [
 
 def default_infusion_pump_checks():
     return {label: "---" for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS}
+
+# アトム保育器 インキュi 定期点検表（R3.1.28）
+INCU_I_CHECK_OPTIONS = ["〇", "△", "×", "---"]
+
+INCU_I_APPEARANCE_ITEMS = [
+    "本体外装部に劣化・破損はないか",
+    "電源コードに劣化・破損はないか",
+    "ディスプレイ用ケーブル及び表示部に破損はないか",
+    "センサーモジュールに変形・破損はないか",
+    "フード・処置窓・処置窓開閉ノブ・手入れ用処置窓ロックレバー・インナーパネルに破損はないか",
+    "パッキンに劣化・破損はないか",
+    "マットレス・X線カセットトレー・臥床台・中床・ファンカバー・ヒーター・ファンに破損はないか",
+    "フィルターの交換時期は適切か",
+]
+INCU_I_FUNCTION_ITEMS = [
+    "電源のON/OFFが可能か",
+    "ファンモーターから異音がないか",
+    "傾斜装置はスムーズに動作するか",
+]
+INCU_I_OPERATION_CHECK_ITEMS = [
+    "加湿槽・カートリッジタンクに破損・変形はないか",
+    "酸素センサーにて21%校正ができるか",
+    "SpO2表示と脈拍数が表示されるか",
+]
+INCU_I_ALARM_ITEMS = [
+    "ファンカバー外れ警報",
+    "ファン外れ警報",
+    "水なし警報",
+    "水槽外れ警報",
+    "酸素配管接続不良警報",
+    "体温プローブ警報",
+    "設定温度警報(マニュアルコントロール)",
+    "設定温度警報(サーボコントロール)",
+    "過温警報",
+    "システム警報",
+    "停電警報(停電警報灯の点灯)",
+]
+INCU_I_LEGACY_CHECKS = {
+    "チェックスイッチ": "---", "設定温度警報(マニュアル)": "---", "設定温度警報(皮膚温)": "---",
+    "プローブ警報": "---", "停電警報": "---", "キャノピ傾斜": "---",
+    "蘇生装置": "---", "酸素ブレンダ作動": "---", "供給ガス警報": "---",
+    "吸引・流量計": "---", "外装・キャノピ・ネジ類": "---", "電源・ジャック・ガード": "---",
+}
+
+def default_incu_i_checks():
+    checks = {}
+    for label in (
+        INCU_I_APPEARANCE_ITEMS + INCU_I_FUNCTION_ITEMS
+        + INCU_I_OPERATION_CHECK_ITEMS + INCU_I_ALARM_ITEMS
+    ):
+        checks[label] = "---"
+    return checks
+
+def default_incu_i_measurements():
+    return {
+        "体重モニタ(中央)": 5000.0,
+        "体重モニタ(四隅)": 5000.0,
+        "湿度コントロール(表示)": 90.0,
+        "湿度コントロール(実測)": 90.0,
+        "マニュアルコントロール(表示)": 34.0,
+        "マニュアルコントロール(実測)": 34.0,
+        "サーボコントロール(表示)": 34.0,
+        "サーボコントロール(実測)": 34.0,
+        "酸素濃度制御(表示)": 40.0,
+        "酸素濃度制御(実測)": 40.0,
+        "酸素接続口1(実測)": 65.0,
+        "接地漏れ電流(正常)": 0.0,
+        "接地漏れ電流(単一故障)": 0.0,
+        "外装漏れ電流(正常)": 0.0,
+        "外装漏れ電流(単一故障)": 0.0,
+        "患者漏れ電流I(正常)": 0.0,
+        "患者漏れ電流I(単一故障)": 0.0,
+    }
+
+def is_incu_i_incubator(device_category, device_model):
+    if clean_data_str(device_category) != "保育器":
+        return False
+    model = clean_data_str(device_model).lower().replace(" ", "")
+    return any(token in model for token in ("incui", "incu-i", "incu_i", "インキュi", "インキュｉ"))
+
+def _incu_i_symbol_judge(val):
+    sym = clean_data_str(val)
+    if sym == "×":
+        return "×"
+    if sym == "△":
+        return "△"
+    if sym == "〇":
+        return "〇"
+    return sym or "-"
+
+def _incu_i_range_judge(val, lo, hi):
+    return "〇" if lo <= val <= hi else "×"
+
+def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
+    """インキュi 定期点検表の入力欄（フォーム内で呼び出す）"""
+    opts = INCU_I_CHECK_OPTIONS
+    st.caption("判定: 〇=合格 / △=修理検討 / ×=不合格")
+
+    st.write("**1. 外観点検**")
+    c1, c2 = st.columns(2)
+    for idx, label in enumerate(INCU_I_APPEARANCE_ITEMS):
+        with (c1 if idx % 2 == 0 else c2):
+            incu_i_checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"incu_i_app_{idx}",
+            )
+
+    st.write("**2. 機能点検**")
+    c1, c2 = st.columns(2)
+    for idx, label in enumerate(INCU_I_FUNCTION_ITEMS):
+        with (c1 if idx % 2 == 0 else c2):
+            incu_i_checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"incu_i_func_{idx}",
+            )
+
+    st.write("**体重モニタテスト**")
+    st.caption("体重計の校正(5kg) → サービス画面より")
+    w1, w2 = st.columns(2)
+    with w1:
+        st.caption("中央 表示値: 5000±5g")
+        incu_i_measurements["体重モニタ(中央)"] = st.number_input(
+            "中央 表示値 (g)", value=float(incu_i_measurements["体重モニタ(中央)"]), step=1.0,
+            key="incu_i_w_center",
+        )
+    with w2:
+        st.caption("四隅 表示値: 5000±10g")
+        incu_i_measurements["体重モニタ(四隅)"] = st.number_input(
+            "四隅 表示値 (g)", value=float(incu_i_measurements["体重モニタ(四隅)"]), step=1.0,
+            key="incu_i_w_corner",
+        )
+
+    st.write("**3. 動作点検（保育器モード）**")
+    incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[0]] = st.radio(
+        INCU_I_OPERATION_CHECK_ITEMS[0], opts, horizontal=True, index=None, key="incu_i_op_tank",
+    )
+
+    st.write("**湿度コントロールテスト**")
+    st.caption("設定90% / 表示90±3% / 実測90±10%")
+    h1, h2 = st.columns(2)
+    with h1:
+        incu_i_measurements["湿度コントロール(表示)"] = st.number_input(
+            "湿度 表示値 (%)", value=float(incu_i_measurements["湿度コントロール(表示)"]), step=0.1,
+            key="incu_i_hum_disp",
+        )
+    with h2:
+        incu_i_measurements["湿度コントロール(実測)"] = st.number_input(
+            "湿度 実測値 (%)", value=float(incu_i_measurements["湿度コントロール(実測)"]), step=0.1,
+            key="incu_i_hum_meas",
+        )
+
+    st.write("**マニュアルコントロールテスト**")
+    st.caption("設定34℃ / 表示・実測 34±1℃")
+    m1, m2 = st.columns(2)
+    with m1:
+        incu_i_measurements["マニュアルコントロール(表示)"] = st.number_input(
+            "マニュアル 表示値 (℃)", value=float(incu_i_measurements["マニュアルコントロール(表示)"]), step=0.1,
+            key="incu_i_man_disp",
+        )
+    with m2:
+        incu_i_measurements["マニュアルコントロール(実測)"] = st.number_input(
+            "マニュアル 実測値 (℃)", value=float(incu_i_measurements["マニュアルコントロール(実測)"]), step=0.1,
+            key="incu_i_man_meas",
+        )
+
+    st.write("**サーボコントロールテスト**")
+    st.caption("設定34℃ / 表示・実測 34±0.5℃")
+    s1, s2 = st.columns(2)
+    with s1:
+        incu_i_measurements["サーボコントロール(表示)"] = st.number_input(
+            "サーボ 表示値 (℃)", value=float(incu_i_measurements["サーボコントロール(表示)"]), step=0.1,
+            key="incu_i_srv_disp",
+        )
+    with s2:
+        incu_i_measurements["サーボコントロール(実測)"] = st.number_input(
+            "サーボ 実測値 (℃)", value=float(incu_i_measurements["サーボコントロール(実測)"]), step=0.1,
+            key="incu_i_srv_meas",
+        )
+
+    incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[1]] = st.radio(
+        INCU_I_OPERATION_CHECK_ITEMS[1], opts, horizontal=True, index=None, key="incu_i_o2_cal",
+    )
+
+    st.write("**酸素濃度制御テスト**")
+    st.caption("設定40% / 表示・実測 40±3%")
+    o1, o2 = st.columns(2)
+    with o1:
+        incu_i_measurements["酸素濃度制御(表示)"] = st.number_input(
+            "酸素濃度 表示値 (%)", value=float(incu_i_measurements["酸素濃度制御(表示)"]), step=0.1,
+            key="incu_i_o2_disp",
+        )
+    with o2:
+        incu_i_measurements["酸素濃度制御(実測)"] = st.number_input(
+            "酸素濃度 実測値 (%)", value=float(incu_i_measurements["酸素濃度制御(実測)"]), step=0.1,
+            key="incu_i_o2_meas",
+        )
+
+    st.write("**酸素接続口1テスト**")
+    st.caption("設定流量10L/min / 実測65%以上")
+    incu_i_measurements["酸素接続口1(実測)"] = st.number_input(
+        "酸素接続口1 実測値 (%)", value=float(incu_i_measurements["酸素接続口1(実測)"]), step=0.1,
+        key="incu_i_o2_port",
+    )
+
+    incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[2]] = st.radio(
+        INCU_I_OPERATION_CHECK_ITEMS[2], opts, horizontal=True, index=None, key="incu_i_spo2",
+    )
+
+    st.write("**4. 警報**")
+    c1, c2 = st.columns(2)
+    for idx, label in enumerate(INCU_I_ALARM_ITEMS):
+        with (c1 if idx % 2 == 0 else c2):
+            incu_i_checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"incu_i_alarm_{idx}",
+            )
+
+    st.write("**5. 電気的安全性**")
+    st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
+    e1, e2 = st.columns(2)
+    with e1:
+        incu_i_measurements["接地漏れ電流(正常)"] = st.number_input(
+            "接地漏れ電流 正常 (μA)", value=float(incu_i_measurements["接地漏れ電流(正常)"]), step=1.0,
+            key="incu_i_earth_n",
+        )
+    with e2:
+        incu_i_measurements["接地漏れ電流(単一故障)"] = st.number_input(
+            "接地漏れ電流 単一故障 (μA)", value=float(incu_i_measurements["接地漏れ電流(単一故障)"]), step=1.0,
+            key="incu_i_earth_f",
+        )
+    st.caption("外装漏れ電流: 正常100μA以下 / 単一故障500μA以下")
+    e3, e4 = st.columns(2)
+    with e3:
+        incu_i_measurements["外装漏れ電流(正常)"] = st.number_input(
+            "外装漏れ電流 正常 (μA)", value=float(incu_i_measurements["外装漏れ電流(正常)"]), step=1.0,
+            key="incu_i_enc_n",
+        )
+    with e4:
+        incu_i_measurements["外装漏れ電流(単一故障)"] = st.number_input(
+            "外装漏れ電流 単一故障 (μA)", value=float(incu_i_measurements["外装漏れ電流(単一故障)"]), step=1.0,
+            key="incu_i_enc_f",
+        )
+    st.caption("患者漏れ電流I: 正常100μA以下 / 単一故障500μA以下")
+    e5, e6 = st.columns(2)
+    with e5:
+        incu_i_measurements["患者漏れ電流I(正常)"] = st.number_input(
+            "患者漏れ電流I 正常 (μA)", value=float(incu_i_measurements["患者漏れ電流I(正常)"]), step=1.0,
+            key="incu_i_pat_n",
+        )
+    with e6:
+        incu_i_measurements["患者漏れ電流I(単一故障)"] = st.number_input(
+            "患者漏れ電流I 単一故障 (μA)", value=float(incu_i_measurements["患者漏れ電流I(単一故障)"]), step=1.0,
+            key="incu_i_pat_f",
+        )
+
+def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
+    m = incu_i_measurements
+    c = incu_i_checks
+    return {
+        "form": "incu_i",
+        "title": "アトム保育器 インキュi 定期点検表",
+        "sections": [
+            {
+                "title": "1. 外観点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in INCU_I_APPEARANCE_ITEMS],
+            },
+            {
+                "title": "2. 機能点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in INCU_I_FUNCTION_ITEMS],
+            },
+            {
+                "title": "体重モニタテスト",
+                "kind": "measure",
+                "items": [
+                    _measured_item("中央 表示値", "5000±5g", "5000±5g", f"{m['体重モニタ(中央)']}g",
+                                   _incu_i_range_judge(m["体重モニタ(中央)"], 4995, 5005)),
+                    _measured_item("四隅 表示値", "5000±10g", "5000±10g", f"{m['体重モニタ(四隅)']}g",
+                                   _incu_i_range_judge(m["体重モニタ(四隅)"], 4990, 5010)),
+                ],
+            },
+            {
+                "title": "3. 動作点検（保育器モード）",
+                "kind": "mixed",
+                "items": [
+                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[0], c.get(INCU_I_OPERATION_CHECK_ITEMS[0], "---")),
+                    _measured_item("湿度コントロール(表示)", "設定90% / 表示90±3%", "90±3%",
+                                   f"{m['湿度コントロール(表示)']}%",
+                                   _incu_i_range_judge(m["湿度コントロール(表示)"], 87, 93)),
+                    _measured_item("湿度コントロール(実測)", "実測90±10%", "90±10%",
+                                   f"{m['湿度コントロール(実測)']}%",
+                                   _incu_i_range_judge(m["湿度コントロール(実測)"], 80, 100)),
+                    _measured_item("マニュアルコントロール(表示)", "設定34℃ / 34±1℃", "34±1℃",
+                                   f"{m['マニュアルコントロール(表示)']}℃",
+                                   _incu_i_range_judge(m["マニュアルコントロール(表示)"], 33, 35)),
+                    _measured_item("マニュアルコントロール(実測)", "設定34℃ / 34±1℃", "34±1℃",
+                                   f"{m['マニュアルコントロール(実測)']}℃",
+                                   _incu_i_range_judge(m["マニュアルコントロール(実測)"], 33, 35)),
+                    _measured_item("サーボコントロール(表示)", "設定34℃ / 34±0.5℃", "34±0.5℃",
+                                   f"{m['サーボコントロール(表示)']}℃",
+                                   _incu_i_range_judge(m["サーボコントロール(表示)"], 33.5, 34.5)),
+                    _measured_item("サーボコントロール(実測)", "設定34℃ / 34±0.5℃", "34±0.5℃",
+                                   f"{m['サーボコントロール(実測)']}℃",
+                                   _incu_i_range_judge(m["サーボコントロール(実測)"], 33.5, 34.5)),
+                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[1], c.get(INCU_I_OPERATION_CHECK_ITEMS[1], "---")),
+                    _measured_item("酸素濃度制御(表示)", "設定40% / 40±3%", "40±3%",
+                                   f"{m['酸素濃度制御(表示)']}%",
+                                   _incu_i_range_judge(m["酸素濃度制御(表示)"], 37, 43)),
+                    _measured_item("酸素濃度制御(実測)", "設定40% / 40±3%", "40±3%",
+                                   f"{m['酸素濃度制御(実測)']}%",
+                                   _incu_i_range_judge(m["酸素濃度制御(実測)"], 37, 43)),
+                    _measured_item("酸素接続口1", "10L/min / 65%以上", "65%以上",
+                                   f"{m['酸素接続口1(実測)']}%",
+                                   "〇" if m["酸素接続口1(実測)"] >= 65 else "×"),
+                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[2], c.get(INCU_I_OPERATION_CHECK_ITEMS[2], "---")),
+                ],
+            },
+            {
+                "title": "4. 警報",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in INCU_I_ALARM_ITEMS],
+            },
+            {
+                "title": "5. 電気的安全性",
+                "kind": "measure",
+                "items": [
+                    _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
+                                   f"{m['接地漏れ電流(正常)']}μA",
+                                   "〇" if m["接地漏れ電流(正常)"] <= 200 else "×"),
+                    _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   f"{m['接地漏れ電流(単一故障)']}μA",
+                                   "〇" if m["接地漏れ電流(単一故障)"] <= 500 else "×"),
+                    _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
+                                   f"{m['外装漏れ電流(正常)']}μA",
+                                   "〇" if m["外装漏れ電流(正常)"] <= 100 else "×"),
+                    _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   f"{m['外装漏れ電流(単一故障)']}μA",
+                                   "〇" if m["外装漏れ電流(単一故障)"] <= 500 else "×"),
+                    _measured_item("患者漏れ電流I(正常)", "正常100μA以下", "≤100μA",
+                                   f"{m['患者漏れ電流I(正常)']}μA",
+                                   "〇" if m["患者漏れ電流I(正常)"] <= 100 else "×"),
+                    _measured_item("患者漏れ電流I(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   f"{m['患者漏れ電流I(単一故障)']}μA",
+                                   "〇" if m["患者漏れ電流I(単一故障)"] <= 500 else "×"),
+                ],
+            },
+        ],
+    }
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -942,7 +1288,10 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                      flow_unit, press_unit,
                                      infusion_pump_checks=None,
-                                     bubble_ad_water=0.0, bubble_ad_dry=0.0):
+                                     bubble_ad_water=0.0, bubble_ad_dry=0.0,
+                                     device_model="",
+                                     incu_i_checks=None,
+                                     incu_i_measurements=None):
     if check_type != "院内点検(miratech)":
         return None
     if device_category == "輸液ポンプ":
@@ -957,6 +1306,11 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
             flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
             flow_unit, press_unit,
+        )
+    if device_category == "保育器" and is_incu_i_incubator(device_category, device_model):
+        return build_incu_i_report_sections(
+            incu_i_checks or default_incu_i_checks(),
+            incu_i_measurements or default_incu_i_measurements(),
         )
     if device_category == "保育器":
         return {
@@ -1157,7 +1511,7 @@ def _render_inspection_sections_screen(report_sections):
     """入力フォームと同じセクション構成で点検結果を表示"""
     for section in report_sections.get("sections", []):
         st.markdown(f"**{section.get('title', '点検項目')}**")
-        if section.get("kind") == "measure":
+        if section.get("kind") in ("measure", "mixed"):
             rows = []
             for item in section.get("items", []):
                 if item.get("sub_items"):
@@ -1174,10 +1528,17 @@ def _render_inspection_sections_screen(report_sections):
                             "実測値": sub.get("result", ""),
                             "判定": sub.get("judge", ""),
                         })
-                else:
+                elif "standard" in item:
                     rows.append({
                         "点検・測定項目": item.get("name", ""),
                         "基準・備考": _section_item_reference(item),
+                        "実測値": item.get("result", ""),
+                        "判定": item.get("judge", ""),
+                    })
+                else:
+                    rows.append({
+                        "点検・測定項目": item.get("name", ""),
+                        "基準・備考": item.get("note", ""),
                         "実測値": item.get("result", ""),
                         "判定": item.get("judge", ""),
                     })
@@ -1200,7 +1561,7 @@ def _append_inspection_sections_pdf(story, report_sections, font_name):
     for section in report_sections.get("sections", []):
         story.append(_daily_monthly_pdf_paragraph(section.get("title", "点検項目"), font_name, 10))
         story.append(Spacer(1, 1.5 * mm))
-        if section.get("kind") == "measure":
+        if section.get("kind") in ("measure", "mixed"):
             table_data = [[
                 _daily_monthly_pdf_paragraph("点検・測定項目", font_name, 8),
                 _daily_monthly_pdf_paragraph("基準・備考", font_name, 8),
@@ -1225,10 +1586,18 @@ def _append_inspection_sections_pdf(story, report_sections, font_name):
                             _daily_monthly_pdf_paragraph(sub.get("judge", ""), font_name, 8),
                         ])
                         judge_rows.append(sub.get("judge", ""))
-                else:
+                elif "standard" in item:
                     table_data.append([
                         _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
                         _daily_monthly_pdf_paragraph(_section_item_reference(item), font_name, 7),
+                        _daily_monthly_pdf_paragraph(item.get("result", ""), font_name, 8),
+                        _daily_monthly_pdf_paragraph(item.get("judge", ""), font_name, 8),
+                    ])
+                    judge_rows.append(item.get("judge", ""))
+                else:
+                    table_data.append([
+                        _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
+                        _daily_monthly_pdf_paragraph(item.get("note", ""), font_name, 7),
                         _daily_monthly_pdf_paragraph(item.get("result", ""), font_name, 8),
                         _daily_monthly_pdf_paragraph(item.get("judge", ""), font_name, 8),
                     ])
@@ -1258,10 +1627,12 @@ def _append_inspection_sections_pdf(story, report_sections, font_name):
         ]
         judge_col = 3 if section.get("kind") == "measure" else 2
         for row_idx, judge in enumerate(judge_rows, start=1):
-            if judge == "NG":
+            if judge in ("NG", "×"):
                 style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#ffcdd2")))
-            elif judge == "OK":
+            elif judge in ("OK", "〇"):
                 style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#c8e6c9")))
+            elif judge == "△":
+                style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#fff9c4")))
         detail_table.setStyle(TableStyle(style_cmds))
         story.extend([detail_table, Spacer(1, 3 * mm)])
 
@@ -1297,7 +1668,8 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     with col_hint:
         st.caption("A4縦向きPDF。ブラウザの「印刷」→「PDFに保存」（Cmd/Ctrl + P）でも保存できます。")
 
-    title = inspection_report_title(report_kind)
+    title = report_sections.get("title") if report_sections else None
+    title = title or inspection_report_title(report_kind)
     st.write(f"## {title} （{check_date} 実施分）")
     info_rows = {
         "管理番号": me_no,
@@ -1348,7 +1720,11 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
         topMargin=14 * mm, bottomMargin=14 * mm,
     )
     story = [
-        _daily_monthly_pdf_paragraph(inspection_report_title(report_kind), font_name, 14, align=1),
+        _daily_monthly_pdf_paragraph(
+            (report_sections.get("title") if report_sections else None)
+            or inspection_report_title(report_kind),
+            font_name, 14, align=1,
+        ),
         _daily_monthly_pdf_paragraph(f"作業日: {check_date}", font_name, 10, align=1),
         Spacer(1, 4 * mm),
     ]
@@ -1862,6 +2238,44 @@ def render_repair_fault_management(conn):
     except Exception as e:
         st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
+def _validate_incu_i_check_dict(checks_dict, ng_items, incomplete_items):
+    for label, val in checks_dict.items():
+        if is_unselected(val):
+            incomplete_items.append(label)
+        elif val in ("×", "△"):
+            ng_items.append(label)
+
+def _validate_incu_i_measurements(measurements, ng_items):
+    m = measurements
+    ranges = [
+        ("体重モニタ(中央)", m["体重モニタ(中央)"], 4995, 5005, "g"),
+        ("体重モニタ(四隅)", m["体重モニタ(四隅)"], 4990, 5010, "g"),
+        ("湿度コントロール(表示)", m["湿度コントロール(表示)"], 87, 93, "%"),
+        ("湿度コントロール(実測)", m["湿度コントロール(実測)"], 80, 100, "%"),
+        ("マニュアルコントロール(表示)", m["マニュアルコントロール(表示)"], 33, 35, "℃"),
+        ("マニュアルコントロール(実測)", m["マニュアルコントロール(実測)"], 33, 35, "℃"),
+        ("サーボコントロール(表示)", m["サーボコントロール(表示)"], 33.5, 34.5, "℃"),
+        ("サーボコントロール(実測)", m["サーボコントロール(実測)"], 33.5, 34.5, "℃"),
+        ("酸素濃度制御(表示)", m["酸素濃度制御(表示)"], 37, 43, "%"),
+        ("酸素濃度制御(実測)", m["酸素濃度制御(実測)"], 37, 43, "%"),
+    ]
+    for name, val, lo, hi, unit in ranges:
+        if not (lo <= val <= hi):
+            ng_items.append(f"{name}（{val}{unit}）")
+    if m["酸素接続口1(実測)"] < 65:
+        ng_items.append(f"酸素接続口1（{m['酸素接続口1(実測)']}%）")
+    limits = [
+        ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 200),
+        ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 500),
+        ("外装漏れ電流(正常)", m["外装漏れ電流(正常)"], 100),
+        ("外装漏れ電流(単一故障)", m["外装漏れ電流(単一故障)"], 500),
+        ("患者漏れ電流I(正常)", m["患者漏れ電流I(正常)"], 100),
+        ("患者漏れ電流I(単一故障)", m["患者漏れ電流I(単一故障)"], 500),
+    ]
+    for name, val, limit in limits:
+        if val > limit:
+            ng_items.append(f"{name}（{val}μA）")
+
 def _validate_radio_check_dict(checks_dict, ng_items, incomplete_items):
     for label, val in checks_dict.items():
         if is_unselected(val):
@@ -1874,7 +2288,10 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                               flow_unit="ml", press_unit="kPa",
                               infusion_pump_checks=None,
-                              bubble_ad_water=0.0, bubble_ad_dry=0.0):
+                              bubble_ad_water=0.0, bubble_ad_dry=0.0,
+                              device_model="",
+                              incu_i_checks=None,
+                              incu_i_measurements=None):
     """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
     ng_items = []
     incomplete_items = []
@@ -1903,7 +2320,16 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                     ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
 
     elif device_category == "保育器":
-        _validate_radio_check_dict(inc_o_checks, ng_items, incomplete_items)
+        if is_incu_i_incubator(device_category, device_model):
+            _validate_incu_i_check_dict(
+                incu_i_checks or default_incu_i_checks(), ng_items, incomplete_items,
+            )
+            if result == "使用可":
+                _validate_incu_i_measurements(
+                    incu_i_measurements or default_incu_i_measurements(), ng_items,
+                )
+        else:
+            _validate_radio_check_dict(inc_o_checks, ng_items, incomplete_items)
 
     return ng_items, incomplete_items
 
@@ -1984,7 +2410,10 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                  flow_unit, press_unit,
                                  infusion_pump_checks=None,
-                                 bubble_ad_water=0.0, bubble_ad_dry=0.0):
+                                 bubble_ad_water=0.0, bubble_ad_dry=0.0,
+                                 device_model="",
+                                 incu_i_checks=None,
+                                 incu_i_measurements=None):
     """保存・印刷用に詳細データ・項目行・セクション構成をまとめて生成"""
     report_sections = build_inspection_report_sections(
         check_type, device_category, inc_o_checks,
@@ -1994,6 +2423,9 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         infusion_pump_checks=infusion_pump_checks,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
+        device_model=device_model,
+        incu_i_checks=incu_i_checks,
+        incu_i_measurements=incu_i_measurements,
     )
     item_rows = flatten_report_sections(report_sections) if report_sections else build_inspection_item_rows(
         check_type, device_category, result, inc_o_checks,
@@ -3152,12 +3584,9 @@ with tabs[0]:
     chk_e1 = chk_e2 = chk_e3 = chk_e4 = chk_e5 = chk_e6 = chk_e7 = "---"
 
     # 保育器用項目の初期化
-    inc_o_checks = {
-        "チェックスイッチ": "---", "設定温度警報(マニュアル)": "---", "設定温度警報(皮膚温)": "---",
-        "プローブ警報": "---", "停電警報": "---", "キャノピ傾斜": "---",
-        "蘇生装置": "---", "酸素ブレンダ作動": "---", "供給ガス警報": "---",
-        "吸引・流量計": "---", "外装・キャノピ・ネジ類": "---", "電源・ジャック・ガード": "---"
-    }
+    inc_o_checks = dict(INCU_I_LEGACY_CHECKS)
+    incu_i_checks = default_incu_i_checks()
+    incu_i_measurements = default_incu_i_measurements()
     flow_acc = 0.0
     occ_press = 0.0
     bubble_ad_water = 100.0
@@ -3342,27 +3771,30 @@ with tabs[0]:
                         occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
 
                 elif device_category == "保育器":
-                    st.write("**2. 各種警報機能**")
-                    o3, o4 = st.columns(2)
-                    with o3:
-                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "---"], horizontal=True, index=None)
-                    with o4:
-                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                    if is_incu_i_incubator(device_category, device_model):
+                        render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements)
+                    else:
+                        st.write("**2. 各種警報機能**")
+                        o3, o4 = st.columns(2)
+                        with o3:
+                            inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "---"], horizontal=True, index=None)
+                        with o4:
+                            inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "---"], horizontal=True, index=None)
 
-                    st.write("**3. 蘇生装置・酸素・外装**")
-                    o5, o6 = st.columns(2)
-                    with o5:
-                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "---"], horizontal=True, index=None)
-                    with o6:
-                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "---"], horizontal=True, index=None)
-                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "---"], horizontal=True, index=None)
+                        st.write("**3. 蘇生装置・酸素・外装**")
+                        o5, o6 = st.columns(2)
+                        with o5:
+                            inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "---"], horizontal=True, index=None)
+                        with o6:
+                            inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "---"], horizontal=True, index=None)
             else:
                 st.info("外部対応のため数値測定はスキップされます。")
 
@@ -3386,6 +3818,9 @@ with tabs[0]:
                     infusion_pump_checks=infusion_pump_checks,
                     bubble_ad_water=bubble_ad_water,
                     bubble_ad_dry=bubble_ad_dry,
+                    device_model=device_model,
+                    incu_i_checks=incu_i_checks,
+                    incu_i_measurements=incu_i_measurements,
                 )
                 detail_text, item_rows, report_sections = build_inspection_save_bundle(
                     check_type, device_category, result, inc_o_checks,
@@ -3395,6 +3830,9 @@ with tabs[0]:
                     infusion_pump_checks=infusion_pump_checks,
                     bubble_ad_water=bubble_ad_water,
                     bubble_ad_dry=bubble_ad_dry,
+                    device_model=device_model,
+                    incu_i_checks=incu_i_checks,
+                    incu_i_measurements=incu_i_measurements,
                 )
                 save_payload = {
                     "final_me_no": final_me_no,
@@ -3415,11 +3853,17 @@ with tabs[0]:
                 }
 
                 if incomplete_items:
-                    st.error("未選択ですよ。OK / NG / --- のいずれかを選択してください。")
+                    if is_incu_i_incubator(device_category, device_model):
+                        st.error("未選択ですよ。〇 / △ / × / --- のいずれかを選択してください。")
+                    else:
+                        st.error("未選択ですよ。OK / NG / --- のいずれかを選択してください。")
                     st.warning("未設定の項目: " + "、".join(incomplete_items))
                     st.session_state["pending_check_save"] = save_payload
                 elif ng_items and check_type == "院内点検(miratech)" and result == "使用可":
-                    st.error("NG項目があります。")
+                    if is_incu_i_incubator(device_category, device_model):
+                        st.error("不合格(×)・修理検討(△)または基準外の測定値があります。")
+                    else:
+                        st.error("NG項目があります。")
                     st.warning("NGの項目: " + "、".join(ng_items))
                     st.session_state.pop("pending_check_save", None)
                     st.error("総合評価が「使用可」のため保存できません。数値・項目を修正するか、総合評価を【メーカー修理】等に変更してください。")
