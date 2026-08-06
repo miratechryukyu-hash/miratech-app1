@@ -80,7 +80,41 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-06b"
+APP_VERSION = "2026-08-07a"
+
+# 全点検表共通の判定記号
+INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
+INSPECTION_CHECK_LEGEND = "判定: 〇=良好 / △=修理検討 / ×=不合格 / ---=機能なし"
+INCU_I_CHECK_OPTIONS = INSPECTION_CHECK_OPTIONS
+
+def normalize_check_symbol(val):
+    v = clean_data_str(val)
+    if v == "OK":
+        return "〇"
+    if v == "NG":
+        return "×"
+    return v
+
+def is_check_incomplete(val):
+    return val in (None, "", "--")
+
+def is_check_ng(val):
+    return normalize_check_symbol(val) in ("×", "△")
+
+def measure_judge(in_range):
+    return "〇" if in_range else "×"
+
+def check_cell_style_class(cell):
+    sym = normalize_check_symbol(cell)
+    if sym == "×":
+        return "ng"
+    if sym == "〇":
+        return "ok"
+    if sym == "△":
+        return "warn"
+    if sym == "---":
+        return "na"
+    return ""
 
 # 輸液ポンプ専用点検項目（入力フォーム・印刷レイアウト共通）
 INFUSION_PUMP_APPEARANCE_ITEMS = [
@@ -111,8 +145,6 @@ def default_infusion_pump_checks():
     return {label: "---" for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS}
 
 # アトム保育器 インキュi 定期点検表（R3.1.28）
-INCU_I_CHECK_OPTIONS = ["〇", "△", "×", "---"]
-
 INCU_I_APPEARANCE_ITEMS = [
     "本体外装部に劣化・破損はないか",
     "電源コードに劣化・破損はないか",
@@ -204,8 +236,8 @@ def _incu_i_range_judge(val, lo, hi):
 
 def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     """インキュi 定期点検表の入力欄（フォーム内で呼び出す）"""
-    opts = INCU_I_CHECK_OPTIONS
-    st.caption("判定: 〇=合格 / △=修理検討 / ×=不合格")
+    opts = INSPECTION_CHECK_OPTIONS
+    st.caption(INSPECTION_CHECK_LEGEND)
 
     st.write("**1. 外観点検**")
     c1, c2 = st.columns(2)
@@ -1161,7 +1193,7 @@ def parse_detail_text_to_table(detail_text):
 INSPECTION_DETAIL_JSON_VERSION = 2
 
 def _check_item(name, val):
-    val_s = clean_data_str(val) or "---"
+    val_s = normalize_check_symbol(val) or "---"
     return {"name": name, "result": val_s, "judge": val_s}
 
 def _measured_item(name, note, standard, result, judge):
@@ -1180,10 +1212,10 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
     """輸液ポンプ点検フォームと同一構成の印刷用セクションデータ"""
     infusion_pump_checks = infusion_pump_checks or {}
     appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
-    flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-    press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
-    water_judge = "OK" if bubble_ad_water >= 100 else "NG"
-    dry_judge = "OK" if bubble_ad_dry <= 10 else "NG"
+    flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
+    press_judge = measure_judge(min_press <= occ_press <= max_press)
+    water_judge = measure_judge(bubble_ad_water >= 100)
+    dry_judge = measure_judge(bubble_ad_dry <= 10)
 
     return {
         "form": "infusion_pump",
@@ -1247,8 +1279,8 @@ def build_syringe_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, c
                                        flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                        flow_unit, press_unit):
     appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
-    flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-    press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+    flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
+    press_judge = measure_judge(min_press <= occ_press <= max_press)
     return {
         "form": "syringe_pump",
         "sections": [
@@ -1625,13 +1657,14 @@ def _append_inspection_sections_pdf(story, report_sections, font_name):
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]
-        judge_col = 3 if section.get("kind") == "measure" else 2
+        judge_col = 3 if section.get("kind") in ("measure", "mixed") else 2
         for row_idx, judge in enumerate(judge_rows, start=1):
-            if judge in ("NG", "×"):
+            sym = normalize_check_symbol(judge)
+            if sym == "×":
                 style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#ffcdd2")))
-            elif judge in ("OK", "〇"):
+            elif sym == "〇":
                 style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#c8e6c9")))
-            elif judge == "△":
+            elif sym == "△":
                 style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#fff9c4")))
         detail_table.setStyle(TableStyle(style_cmds))
         story.extend([detail_table, Spacer(1, 3 * mm)])
@@ -1783,10 +1816,13 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ]
             for row_idx, judge in enumerate(item_judges, start=1):
-                if judge == "NG":
+                sym = normalize_check_symbol(judge)
+                if sym == "×":
                     style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#ffcdd2")))
-                elif judge == "OK":
+                elif sym == "〇":
                     style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#c8e6c9")))
+                elif sym == "△":
+                    style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#fff9c4")))
             detail_table.setStyle(TableStyle(style_cmds))
             story.extend([detail_table, Spacer(1, 4 * mm)])
 
@@ -2005,9 +2041,9 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
     readable_detail = f"【故障修理後点検】 処置: {repair_detail} / 安全確認: {chk_str}"
     repair_item_rows = [
         ("修理・処置内容", clean_data_str(repair_detail), "-"),
-        ("外観点検", "〇" if chk_r1 else "×", "OK" if chk_r1 else "NG"),
-        ("作動点検", "〇" if chk_r2 else "×", "OK" if chk_r2 else "NG"),
-        ("警報点検", "〇" if chk_r3 else "×", "OK" if chk_r3 else "NG"),
+        ("外観点検", "〇" if chk_r1 else "×", "〇" if chk_r1 else "×"),
+        ("作動点検", "〇" if chk_r2 else "×", "〇" if chk_r2 else "×"),
+        ("警報点検", "〇" if chk_r3 else "×", "〇" if chk_r3 else "×"),
     ]
     detail_text = serialize_inspection_detail(
         readable_detail,
@@ -2238,11 +2274,11 @@ def render_repair_fault_management(conn):
     except Exception as e:
         st.error(f"故障データの処理中にエラーが発生しました: {e}")
 
-def _validate_incu_i_check_dict(checks_dict, ng_items, incomplete_items):
+def _validate_check_dict(checks_dict, ng_items, incomplete_items):
     for label, val in checks_dict.items():
-        if is_unselected(val):
+        if is_check_incomplete(val):
             incomplete_items.append(label)
-        elif val in ("×", "△"):
+        elif is_check_ng(val):
             ng_items.append(label)
 
 def _validate_incu_i_measurements(measurements, ng_items):
@@ -2276,13 +2312,6 @@ def _validate_incu_i_measurements(measurements, ng_items):
         if val > limit:
             ng_items.append(f"{name}（{val}μA）")
 
-def _validate_radio_check_dict(checks_dict, ng_items, incomplete_items):
-    for label, val in checks_dict.items():
-        if is_unselected(val):
-            incomplete_items.append(label)
-        elif val == "NG":
-            ng_items.append(label)
-
 def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                               flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
@@ -2303,10 +2332,10 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
     if device_category in ["輸液ポンプ", "シリンジポンプ"]:
         appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
         pump_checks = dict(zip(INFUSION_PUMP_APPEARANCE_ITEMS, appearance_vals))
-        _validate_radio_check_dict(pump_checks, ng_items, incomplete_items)
+        _validate_check_dict(pump_checks, ng_items, incomplete_items)
 
         if device_category == "輸液ポンプ":
-            _validate_radio_check_dict(infusion_pump_checks, ng_items, incomplete_items)
+            _validate_check_dict(infusion_pump_checks, ng_items, incomplete_items)
 
         if result == "使用可":
             if not (min_flow <= flow_acc <= max_flow):
@@ -2321,7 +2350,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
 
     elif device_category == "保育器":
         if is_incu_i_incubator(device_category, device_model):
-            _validate_incu_i_check_dict(
+            _validate_check_dict(
                 incu_i_checks or default_incu_i_checks(), ng_items, incomplete_items,
             )
             if result == "使用可":
@@ -2329,12 +2358,13 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                     incu_i_measurements or default_incu_i_measurements(), ng_items,
                 )
         else:
-            _validate_radio_check_dict(inc_o_checks, ng_items, incomplete_items)
+            _validate_check_dict(inc_o_checks, ng_items, incomplete_items)
 
     return ng_items, incomplete_items
 
 def is_unselected(val):
-    return val in ("--", "---", None, "")
+    """後方互換。未選択のみ判定（---=機能なしは選択済み扱い）"""
+    return is_check_incomplete(val)
 
 def build_inspection_item_rows(check_type, device_category, result, inc_o_checks,
                                chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
@@ -2350,24 +2380,24 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
         if device_category in ["輸液ポンプ", "シリンジポンプ"]:
             appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
             for label, val in zip(INFUSION_PUMP_APPEARANCE_ITEMS, appearance_vals):
-                val_s = clean_data_str(val)
+                val_s = normalize_check_symbol(val) or "---"
                 rows.append((label, val_s, val_s))
             if device_category == "輸液ポンプ":
                 for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
-                    val_s = clean_data_str(infusion_pump_checks.get(label, "---"))
+                    val_s = normalize_check_symbol(infusion_pump_checks.get(label, "---")) or "---"
                     rows.append((label, val_s, val_s))
-            flow_judge = "OK" if (min_flow <= flow_acc <= max_flow) else "NG"
-            press_judge = "OK" if (min_press <= occ_press <= max_press) else "NG"
+            flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
+            press_judge = measure_judge(min_press <= occ_press <= max_press)
             rows.append(("流量精度", f"{flow_acc} {flow_unit}", flow_judge))
             rows.append(("閉塞検出", f"{occ_press} {press_unit}", press_judge))
             if device_category == "輸液ポンプ":
-                water_judge = "OK" if bubble_ad_water >= 100 else "NG"
-                dry_judge = "OK" if bubble_ad_dry <= 10 else "NG"
+                water_judge = measure_judge(bubble_ad_water >= 100)
+                dry_judge = measure_judge(bubble_ad_dry <= 10)
                 rows.append(("気泡センサーAD値(水入り)", str(bubble_ad_water), water_judge))
                 rows.append(("気泡センサーAD値(水無し)", str(bubble_ad_dry), dry_judge))
         elif device_category == "保育器":
             for label, val in inc_o_checks.items():
-                val_s = clean_data_str(val)
+                val_s = normalize_check_symbol(val) or "---"
                 rows.append((label, val_s, val_s))
 
     return rows
@@ -2389,7 +2419,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
     )
     parts_list = []
     for name, result_val, judge in rows:
-        if judge in ("OK", "NG") and result_val != judge:
+        if judge in ("〇", "×", "△", "OK", "NG") and normalize_check_symbol(result_val) != normalize_check_symbol(judge):
             parts_list.append(f"{name}:{result_val} ({judge})")
         else:
             parts_list.append(f"{name}:{result_val}")
@@ -2519,9 +2549,9 @@ def validate_daily_checks(checks):
     ng_items = []
     incomplete_items = []
     for label, val in checks.items():
-        if is_unselected(val):
+        if is_check_incomplete(val):
             incomplete_items.append(label)
-        elif val == "NG":
+        elif is_check_ng(val):
             ng_items.append(label)
     return ng_items, incomplete_items
 
@@ -2668,7 +2698,8 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
     daily_checks = {label: "---" for label in check_labels}
 
     st.markdown("---")
-    st.write("**日常点検項目（OK / NG を選択）**")
+    st.write("**日常点検項目**")
+    st.caption(INSPECTION_CHECK_LEGEND)
 
     if "last_daily_check_date" not in st.session_state:
         st.session_state["last_daily_check_date"] = date.today()
@@ -2682,7 +2713,7 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
         for idx, label in enumerate(check_labels):
             with cols[idx % 2]:
                 daily_checks[label] = st.radio(
-                    label, ["OK", "NG", "---"], horizontal=True, index=None, key=f"{form_key_prefix}_chk_{idx}",
+                    label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=f"{form_key_prefix}_chk_{idx}",
                 )
 
         memo = st.text_area("備考", placeholder="特記事項があれば記入してください")
@@ -2711,12 +2742,12 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
             }
 
             if incomplete_items:
-                st.error("未選択の項目があります。すべて OK / NG を選択してください。")
+                st.error(f"未選択の項目があります。{INSPECTION_CHECK_LEGEND.replace('判定: ', '')} のいずれかを選択してください。")
                 st.warning("未設定: " + "、".join(incomplete_items))
                 st.session_state[pending_key] = save_payload
             else:
                 if ng_items:
-                    st.warning("NG項目: " + "、".join(ng_items))
+                    st.warning("問題項目: " + "、".join(ng_items))
                 st.session_state.pop(pending_key, None)
                 try:
                     with st.spinner("保存しています..."):
@@ -2853,7 +2884,8 @@ def build_monthly_daily_table_rows(device_category, month_df, year, month):
             if day in by_day:
                 detail = parse_daily_detail_to_dict(by_day[day].get("詳細データ", ""))
                 val = detail.get(label, "")
-                row.append(val if val in ("OK", "NG") else "")
+                sym = normalize_check_symbol(val)
+                row.append(sym if sym in ("〇", "△", "×", "---") else "")
             else:
                 row.append("")
         rows.append(row)
@@ -2950,17 +2982,24 @@ def _build_monthly_pdf_story(facility_name, device_info, year, month, table_rows
         for col_idx, cell in enumerate(row):
             if col_idx == 0:
                 continue
-            if cell == "NG":
+            style_cls = check_cell_style_class(cell)
+            if style_cls == "ng":
                 style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#ffcdd2")))
-            elif cell == "OK":
+            elif style_cls == "ok":
                 style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#c8e6c9")))
+            elif style_cls == "warn":
+                style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#fff9c4")))
+            elif style_cls == "na":
+                style_cmds.append(("BACKGROUND", (col_idx, row_idx), (col_idx, row_idx), colors.HexColor("#eeeeee")))
     table.setStyle(TableStyle(style_cmds))
 
     story.extend([
         table,
         Spacer(1, 3 * mm),
         _daily_monthly_pdf_paragraph(
-            "※ 空欄は未実施。印刷日: "
+            "※ 空欄は未実施。"
+            f" {INSPECTION_CHECK_LEGEND.replace('判定: ', '')}。"
+            f" 印刷日: "
             f"{format_jst(fmt='%Y-%m-%d %H:%M')}　|　PDF出力: miratech 日常点検管理",
             font_name, 7,
         ),
@@ -3026,10 +3065,15 @@ def build_monthly_daily_inspection_html(facility_name, device_info, year, month,
         for col_idx, cell in enumerate(row):
             cls = "label-col" if col_idx == 0 else "day-col"
             val = html.escape(str(cell))
-            if col_idx > 0 and cell == "NG":
+            style_cls = check_cell_style_class(cell)
+            if col_idx > 0 and style_cls == "ng":
                 cls += " ng"
-            elif col_idx > 0 and cell == "OK":
+            elif col_idx > 0 and style_cls == "ok":
                 cls += " ok"
+            elif col_idx > 0 and style_cls == "warn":
+                cls += " warn"
+            elif col_idx > 0 and style_cls == "na":
+                cls += " na"
             cells.append(f'<td class="{cls}">{val}</td>')
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
 
@@ -3078,6 +3122,8 @@ def build_monthly_daily_inspection_html(facility_name, device_info, year, month,
             }}
             .daily-monthly-report .day-col.ok {{ background: #e8f5e9; font-weight: bold; }}
             .daily-monthly-report .day-col.ng {{ background: #ffcdd2; font-weight: bold; color: #b71c1c; }}
+            .daily-monthly-report .day-col.warn {{ background: #fff9c4; font-weight: bold; }}
+            .daily-monthly-report .day-col.na {{ background: #eeeeee; color: #666; }}
             .daily-monthly-report .footnote {{
                 margin-top: 8px;
                 font-size: 10px;
@@ -3697,18 +3743,19 @@ with tabs[0]:
             inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
 
             if check_type == "院内点検(miratech)":
+                st.caption(INSPECTION_CHECK_LEGEND)
                 if device_category == "輸液ポンプ":
                     st.write("**1. 外観・作動点検**")
                     col1, col2 = st.columns(2)
                     with col1:
-                        chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
                     with col2:
-                        chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e7 = st.radio("表示部LED", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
                     st.write("**2. 警報・作動点検**")
                     alarm_col1, alarm_col2 = st.columns(2)
@@ -3716,7 +3763,7 @@ with tabs[0]:
                         target_col = alarm_col1 if idx % 2 == 0 else alarm_col2
                         with target_col:
                             infusion_pump_checks[label] = st.radio(
-                                label, ["OK", "NG", "---"], horizontal=True, index=None,
+                                label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
                                 key=f"inp_alarm_{label}",
                             )
 
@@ -3726,7 +3773,7 @@ with tabs[0]:
                         target_col = func_col1 if idx % 2 == 0 else func_col2
                         with target_col:
                             infusion_pump_checks[label] = st.radio(
-                                label, ["OK", "NG", "---"], horizontal=True, index=None,
+                                label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
                                 key=f"inp_func_{label}",
                             )
 
@@ -3752,14 +3799,14 @@ with tabs[0]:
                     st.write("**1. 外観・作動点検**")
                     col1, col2 = st.columns(2)
                     with col1:
-                        chk_e1 = st.radio("本体の汚れ・破損なし", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e2 = st.radio("ポールクランプ用ネジ穴", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e3 = st.radio("チューブクランプ動作", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e4 = st.radio("フィンガー部動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
                     with col2:
-                        chk_e5 = st.radio("AC・DC切り替え", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e6 = st.radio("セルフチェック機能", ["OK", "NG", "---"], horizontal=True, index=None)
-                        chk_e7 = st.radio("表示部LED", ["OK", "NG", "---"], horizontal=True, index=None)
+                        chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
                     st.write("**2. 数値・精度チェック**")
                     col_num1, col_num2 = st.columns(2)
@@ -3777,24 +3824,24 @@ with tabs[0]:
                         st.write("**2. 各種警報機能**")
                         o3, o4 = st.columns(2)
                         with o3:
-                            inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
                         with o4:
-                            inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["停電警報"] = st.radio("停電警報作動", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
                         st.write("**3. 蘇生装置・酸素・外装**")
                         o5, o6 = st.columns(2)
                         with o5:
-                            inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
                         with o6:
-                            inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", ["OK", "NG", "---"], horizontal=True, index=None)
-                            inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", ["OK", "NG", "---"], horizontal=True, index=None)
+                            inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                            inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
             else:
                 st.info("外部対応のため数値測定はスキップされます。")
 
@@ -3853,25 +3900,19 @@ with tabs[0]:
                 }
 
                 if incomplete_items:
-                    if is_incu_i_incubator(device_category, device_model):
-                        st.error("未選択ですよ。〇 / △ / × / --- のいずれかを選択してください。")
-                    else:
-                        st.error("未選択ですよ。OK / NG / --- のいずれかを選択してください。")
+                    st.error(f"未選択の項目があります。{INSPECTION_CHECK_LEGEND.replace('判定: ', '')} のいずれかを選択してください。")
                     st.warning("未設定の項目: " + "、".join(incomplete_items))
                     st.session_state["pending_check_save"] = save_payload
                 elif ng_items and check_type == "院内点検(miratech)" and result == "使用可":
-                    if is_incu_i_incubator(device_category, device_model):
-                        st.error("不合格(×)・修理検討(△)または基準外の測定値があります。")
-                    else:
-                        st.error("NG項目があります。")
-                    st.warning("NGの項目: " + "、".join(ng_items))
+                    st.error("不合格(×)・修理検討(△)または基準外の測定値があります。")
+                    st.warning("該当項目: " + "、".join(ng_items))
                     st.session_state.pop("pending_check_save", None)
                     st.error("総合評価が「使用可」のため保存できません。数値・項目を修正するか、総合評価を【メーカー修理】等に変更してください。")
                 else:
                     if ng_items:
-                        st.warning("NG項目があります: " + "、".join(ng_items))
+                        st.warning("問題項目: " + "、".join(ng_items))
                         if check_type == "院内点検(miratech)" and result != "使用可":
-                            st.info("総合評価が「使用可」以外のため、NG項目があっても保存します。")
+                            st.info("総合評価が「使用可」以外のため、問題項目があっても保存します。")
                     st.session_state.pop("pending_check_save", None)
                     try:
                         with st.spinner("スプレッドシートに保存しています..."):
