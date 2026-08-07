@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-07b"
+APP_VERSION = "2026-08-07c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -277,7 +277,8 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     )
 
     st.write("**湿度コントロールテスト**")
-    st.caption("設定90% / 表示90±3% / 実測90±10%")
+    st.caption("設定90% / 表示90±3% / 実測90±10%　:red[**※必ず精製水使用する**]")
+    
     h1, h2 = st.columns(2)
     with h1:
         incu_i_measurements["湿度コントロール(表示)"] = st.number_input(
@@ -305,7 +306,7 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
         )
 
     st.write("**サーボコントロールテスト**")
-    st.caption("設定34℃ / 表示・実測 34±0.5℃")
+    st.caption("設定34℃ / 表示・実測 34±0.5℃ :red[**※温度センサーを本体に接続する**]")
     s1, s2 = st.columns(2)
     with s1:
         incu_i_measurements["サーボコントロール(表示)"] = st.number_input(
@@ -774,6 +775,183 @@ def build_vsm_report_sections(vsm_checks, vsm_measurements, vsm_meta):
                                    f"{m['患者漏れ電流I(単一故障)']}μA",
                                    measure_judge(m["患者漏れ電流I(単一故障)"] <= 500)),
                 ],
+            },
+        ],
+    }
+
+# 心電計 定期点検表
+ECG_APPEARANCE_ITEMS = [
+    "外観の汚れの確認",
+    "外観の破損の確認",
+]
+ECG_POWER_CORD_ITEMS = [
+    "電源コードの汚れ・破損の確認",
+    "電源コードの断線の確認",
+]
+ECG_FUNCTION_ITEMS = [
+    "電源投入時の確認",
+    "システム設定のバックアップ",
+    "日付、時刻の設定、確認",
+    "ディスプレイ表示、LED表示の確認",
+    "キー動作の確認",
+    "心電図入力テスト",
+    "心電図入力CALテスト",
+    "誘導コード、電極リード線の確認",
+    "記録品質:蛇行・片寄りがないこと",
+    "記録器テスト",
+    "紙切れ検出センサの動作と音の確認",
+    "ネットワーク接続の確認",
+    "バーコードリーダまたは二次元コードリーダの確認",
+    "磁気カードリーダの確認",
+    "設置およびネットワーク接続状態の再確認",
+]
+
+def _ecg_all_check_labels():
+    return ECG_APPEARANCE_ITEMS + ECG_POWER_CORD_ITEMS + ECG_FUNCTION_ITEMS
+
+def default_ecg_checks():
+    return {label: "---" for label in _ecg_all_check_labels()}
+
+def default_ecg_measurements():
+    return {
+        "接地漏れ電流(正常)": 0.0,
+        "接地漏れ電流(単一故障)": 0.0,
+        "接触電流(正常)": 0.0,
+        "接触電流(単一故障)": 0.0,
+        "患者漏れ電流DC(正常)": 0.0,
+        "患者漏れ電流AC(正常)": 0.0,
+        "患者漏れ電流DC(単一故障)": 0.0,
+        "患者漏れ電流AC(単一故障)": 0.0,
+    }
+
+def _validate_ecg_measurements(measurements, ng_items):
+    m = measurements
+    limits = [
+        ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 5, "mA"),
+        ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 10, "mA"),
+        ("接触電流(正常)", m["接触電流(正常)"], 100, "μA"),
+        ("接触電流(単一故障)", m["接触電流(単一故障)"], 500, "μA"),
+        ("患者漏れ電流DC(正常)", m["患者漏れ電流DC(正常)"], 10, "μA"),
+        ("患者漏れ電流AC(正常)", m["患者漏れ電流AC(正常)"], 10, "μA"),
+        ("患者漏れ電流DC(単一故障)", m["患者漏れ電流DC(単一故障)"], 50, "μA"),
+        ("患者漏れ電流AC(単一故障)", m["患者漏れ電流AC(単一故障)"], 50, "μA"),
+    ]
+    for name, val, limit, unit in limits:
+        if val > limit:
+            ng_items.append(f"{name}（{val}{unit}）")
+
+def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
+    """心電計 定期点検表の入力欄"""
+    st.caption(INSPECTION_CHECK_LEGEND)
+
+    st.write("**1. 外観の汚れ・破損の確認**")
+    _render_inspection_check_grid(ECG_APPEARANCE_ITEMS, ecg_checks, "ecg_app")
+
+    st.write("**2. 電源コードの確認**")
+    _render_inspection_check_grid(ECG_POWER_CORD_ITEMS, ecg_checks, "ecg_pwr")
+
+    st.write("**3. 安全性のチェック**")
+    st.caption("接地漏れ電流: 正常5mA以下 / 単一故障10mA以下")
+    s1, s2 = st.columns(2)
+    with s1:
+        ecg_measurements["接地漏れ電流(正常)"] = st.number_input(
+            "接地漏れ電流 正常 (mA)",
+            value=float(ecg_measurements["接地漏れ電流(正常)"]), step=0.1, key="ecg_earth_n",
+        )
+    with s2:
+        ecg_measurements["接地漏れ電流(単一故障)"] = st.number_input(
+            "接地漏れ電流 単一故障 (mA)",
+            value=float(ecg_measurements["接地漏れ電流(単一故障)"]), step=0.1, key="ecg_earth_f",
+        )
+    st.caption("接触電流(外装-大地): 正常100μA以下 / 単一故障500μA以下")
+    s3, s4 = st.columns(2)
+    with s3:
+        ecg_measurements["接触電流(正常)"] = st.number_input(
+            "接触電流 正常 (μA)",
+            value=float(ecg_measurements["接触電流(正常)"]), step=1.0, key="ecg_contact_n",
+        )
+    with s4:
+        ecg_measurements["接触電流(単一故障)"] = st.number_input(
+            "接触電流 単一故障 (μA)",
+            value=float(ecg_measurements["接触電流(単一故障)"]), step=1.0, key="ecg_contact_f",
+        )
+    st.caption("患者漏れ電流(患者接続部-大地): 正常DC/AC各10μA以下 / 単一故障DC/AC各50μA以下")
+    s5, s6, s7, s8 = st.columns(4)
+    with s5:
+        ecg_measurements["患者漏れ電流DC(正常)"] = st.number_input(
+            "患者漏れ DC 正常 (μA)",
+            value=float(ecg_measurements["患者漏れ電流DC(正常)"]), step=1.0, key="ecg_pat_dc_n",
+        )
+    with s6:
+        ecg_measurements["患者漏れ電流AC(正常)"] = st.number_input(
+            "患者漏れ AC 正常 (μA)",
+            value=float(ecg_measurements["患者漏れ電流AC(正常)"]), step=1.0, key="ecg_pat_ac_n",
+        )
+    with s7:
+        ecg_measurements["患者漏れ電流DC(単一故障)"] = st.number_input(
+            "患者漏れ DC 単一故障 (μA)",
+            value=float(ecg_measurements["患者漏れ電流DC(単一故障)"]), step=1.0, key="ecg_pat_dc_f",
+        )
+    with s8:
+        ecg_measurements["患者漏れ電流AC(単一故障)"] = st.number_input(
+            "患者漏れ AC 単一故障 (μA)",
+            value=float(ecg_measurements["患者漏れ電流AC(単一故障)"]), step=1.0, key="ecg_pat_ac_f",
+        )
+
+    st.write("**4. 機能点検**")
+    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
+
+def build_ecg_report_sections(ecg_checks, ecg_measurements):
+    c = ecg_checks
+    m = ecg_measurements
+    return {
+        "form": "ecg_monitor",
+        "title": "心電計 定期点検表",
+        "sections": [
+            {
+                "title": "1. 外観の汚れ・破損の確認",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in ECG_APPEARANCE_ITEMS],
+            },
+            {
+                "title": "2. 電源コードの確認",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in ECG_POWER_CORD_ITEMS],
+            },
+            {
+                "title": "3. 安全性のチェック",
+                "kind": "measure",
+                "items": [
+                    _measured_item("接地漏れ電流(正常)", "正常5mA以下", "≤5mA",
+                                   f"{m['接地漏れ電流(正常)']}mA",
+                                   measure_judge(m["接地漏れ電流(正常)"] <= 5)),
+                    _measured_item("接地漏れ電流(単一故障)", "単一故障10mA以下", "≤10mA",
+                                   f"{m['接地漏れ電流(単一故障)']}mA",
+                                   measure_judge(m["接地漏れ電流(単一故障)"] <= 10)),
+                    _measured_item("接触電流(正常)", "外装-大地 正常100μA以下", "≤100μA",
+                                   f"{m['接触電流(正常)']}μA",
+                                   measure_judge(m["接触電流(正常)"] <= 100)),
+                    _measured_item("接触電流(単一故障)", "外装-大地 単一故障500μA以下", "≤500μA",
+                                   f"{m['接触電流(単一故障)']}μA",
+                                   measure_judge(m["接触電流(単一故障)"] <= 500)),
+                    _measured_item("患者漏れ電流DC(正常)", "患者接続部-大地 DC正常10μA以下", "≤10μA",
+                                   f"{m['患者漏れ電流DC(正常)']}μA",
+                                   measure_judge(m["患者漏れ電流DC(正常)"] <= 10)),
+                    _measured_item("患者漏れ電流AC(正常)", "患者接続部-大地 AC正常10μA以下", "≤10μA",
+                                   f"{m['患者漏れ電流AC(正常)']}μA",
+                                   measure_judge(m["患者漏れ電流AC(正常)"] <= 10)),
+                    _measured_item("患者漏れ電流DC(単一故障)", "DC単一故障50μA以下", "≤50μA",
+                                   f"{m['患者漏れ電流DC(単一故障)']}μA",
+                                   measure_judge(m["患者漏れ電流DC(単一故障)"] <= 50)),
+                    _measured_item("患者漏れ電流AC(単一故障)", "AC単一故障50μA以下", "≤50μA",
+                                   f"{m['患者漏れ電流AC(単一故障)']}μA",
+                                   measure_judge(m["患者漏れ電流AC(単一故障)"] <= 50)),
+                ],
+            },
+            {
+                "title": "4. 機能点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
             },
         ],
     }
@@ -1616,7 +1794,9 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      incu_i_measurements=None,
                                      vsm_checks=None,
                                      vsm_measurements=None,
-                                     vsm_meta=None):
+                                     vsm_meta=None,
+                                     ecg_checks=None,
+                                     ecg_measurements=None):
     if check_type != "院内点検(miratech)":
         return None
     if device_category == "輸液ポンプ":
@@ -1651,6 +1831,11 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             vsm_checks or default_vsm_checks(),
             vsm_measurements or default_vsm_measurements(),
             vsm_meta or default_vsm_meta(),
+        )
+    if device_category == "心電計":
+        return build_ecg_report_sections(
+            ecg_checks or default_ecg_checks(),
+            ecg_measurements or default_ecg_measurements(),
         )
     return None
 
@@ -2622,7 +2807,9 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               incu_i_measurements=None,
                               vsm_checks=None,
                               vsm_measurements=None,
-                              vsm_meta=None):
+                              vsm_meta=None,
+                              ecg_checks=None,
+                              ecg_measurements=None):
     """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
     ng_items = []
     incomplete_items = []
@@ -2669,6 +2856,15 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
         if result == "使用可":
             _validate_leakage_currents(
                 vsm_measurements or default_vsm_measurements(), ng_items,
+            )
+
+    elif device_category == "心電計":
+        _validate_check_dict(
+            ecg_checks or default_ecg_checks(), ng_items, incomplete_items,
+        )
+        if result == "使用可":
+            _validate_ecg_measurements(
+                ecg_measurements or default_ecg_measurements(), ng_items,
             )
 
     return ng_items, incomplete_items
@@ -2773,6 +2969,8 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         vsm_checks=vsm_checks,
         vsm_measurements=vsm_measurements,
         vsm_meta=vsm_meta,
+        ecg_checks=ecg_checks,
+        ecg_measurements=ecg_measurements,
     )
     item_rows = flatten_report_sections(report_sections) if report_sections else build_inspection_item_rows(
         check_type, device_category, result, inc_o_checks,
@@ -3794,7 +3992,7 @@ facility_name = st.session_state["logged_in_facility"]
 url_me_no = st.query_params.get("me_no", "")
 BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装置", "ネブライザー", "透視装置","無影灯","血圧計","超音波診断装置","超音波プローブ",
                    "ドプラ","検診台","血液ガス分析装置","吸引器類","加湿器類","分娩台","ベビーコット","哺乳瓶消毒器","煮沸消毒器","パルスオキシメーター",
-                   "聴力検査器","光線治療器","酸素モニタ","電気メス","麻酔器","生体情報モニタ","手術台","子宮鏡","滅菌装置", "その他"]
+                   "聴力検査器","光線治療器","酸素モニタ","電気メス","麻酔器","生体情報モニタ","心電計","手術台","子宮鏡","滅菌装置", "その他"]
 
 # AI設定（ログイン後すぐに gRPC を読み込まないよう REST API は利用時のみ呼び出す）
 try:
@@ -3953,6 +4151,8 @@ with tabs[0]:
     vsm_checks = default_vsm_checks()
     vsm_measurements = default_vsm_measurements()
     vsm_meta = default_vsm_meta()
+    ecg_checks = default_ecg_checks()
+    ecg_measurements = default_ecg_measurements()
     flow_acc = 0.0
     occ_press = 0.0
     bubble_ad_water = 100.0
@@ -4165,6 +4365,9 @@ with tabs[0]:
 
                 elif device_category == "生体情報モニタ":
                     render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta)
+
+                elif device_category == "心電計":
+                    render_ecg_inspection_fields(ecg_checks, ecg_measurements)
             else:
                 st.info("外部対応のため数値測定はスキップされます。")
 
@@ -4194,6 +4397,8 @@ with tabs[0]:
                     vsm_checks=vsm_checks,
                     vsm_measurements=vsm_measurements,
                     vsm_meta=vsm_meta,
+                    ecg_checks=ecg_checks,
+                    ecg_measurements=ecg_measurements,
                 )
                 detail_text, item_rows, report_sections = build_inspection_save_bundle(
                     check_type, device_category, result, inc_o_checks,
@@ -4209,6 +4414,8 @@ with tabs[0]:
                     vsm_checks=vsm_checks,
                     vsm_measurements=vsm_measurements,
                     vsm_meta=vsm_meta,
+                    ecg_checks=ecg_checks,
+                    ecg_measurements=ecg_measurements,
                 )
                 save_payload = {
                     "final_me_no": final_me_no,
