@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-07d"
+APP_VERSION = "2026-08-07e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -816,8 +816,8 @@ def default_ecg_measurements():
     return {
         "接地漏れ電流(正常)": 0.0,
         "接地漏れ電流(単一故障)": 0.0,
-        "接触電流(正常)": 0.0,
-        "接触電流(単一故障)": 0.0,
+        "外装漏れ電流(正常)": 0.0,
+        "外装漏れ電流(単一故障)": 0.0,
         "患者漏れ電流DC(正常)": 0.0,
         "患者漏れ電流AC(正常)": 0.0,
         "患者漏れ電流DC(単一故障)": 0.0,
@@ -827,18 +827,18 @@ def default_ecg_measurements():
 def _validate_ecg_measurements(measurements, ng_items):
     m = measurements
     limits = [
-        ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 5, "mA"),
-        ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 10, "mA"),
-        ("接触電流(正常)", m["接触電流(正常)"], 100, "μA"),
-        ("接触電流(単一故障)", m["接触電流(単一故障)"], 500, "μA"),
-        ("患者漏れ電流DC(正常)", m["患者漏れ電流DC(正常)"], 10, "μA"),
-        ("患者漏れ電流AC(正常)", m["患者漏れ電流AC(正常)"], 10, "μA"),
-        ("患者漏れ電流DC(単一故障)", m["患者漏れ電流DC(単一故障)"], 50, "μA"),
-        ("患者漏れ電流AC(単一故障)", m["患者漏れ電流AC(単一故障)"], 50, "μA"),
+        ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 200),
+        ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 500),
+        ("外装漏れ電流(正常)", m["外装漏れ電流(正常)"], 100),
+        ("外装漏れ電流(単一故障)", m["外装漏れ電流(単一故障)"], 500),
+        ("患者漏れ電流DC(正常)", m["患者漏れ電流DC(正常)"], 10),
+        ("患者漏れ電流AC(正常)", m["患者漏れ電流AC(正常)"], 10),
+        ("患者漏れ電流DC(単一故障)", m["患者漏れ電流DC(単一故障)"], 50),
+        ("患者漏れ電流AC(単一故障)", m["患者漏れ電流AC(単一故障)"], 50),
     ]
-    for name, val, limit, unit in limits:
+    for name, val, limit in limits:
         if val > limit:
-            ng_items.append(f"{name}（{val}{unit}）")
+            ng_items.append(f"{name}（{val}μA）")
 
 def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     """心電計 定期点検表の入力欄"""
@@ -854,29 +854,29 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
 
     st.write("**4. 安全性のチェック（漏れ電流）**")
-    st.caption("接地漏れ電流: 正常5mA以下 / 単一故障10mA以下")
+    st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
     s1, s2 = st.columns(2)
     with s1:
         ecg_measurements["接地漏れ電流(正常)"] = st.number_input(
-            "接地漏れ電流 正常 (mA)",
-            value=float(ecg_measurements["接地漏れ電流(正常)"]), step=0.1, key="ecg_earth_n",
+            "接地漏れ電流 正常 (μA)",
+            value=float(ecg_measurements["接地漏れ電流(正常)"]), step=1.0, key="ecg_earth_n",
         )
     with s2:
         ecg_measurements["接地漏れ電流(単一故障)"] = st.number_input(
-            "接地漏れ電流 単一故障 (mA)",
-            value=float(ecg_measurements["接地漏れ電流(単一故障)"]), step=0.1, key="ecg_earth_f",
+            "接地漏れ電流 単一故障 (μA)",
+            value=float(ecg_measurements["接地漏れ電流(単一故障)"]), step=1.0, key="ecg_earth_f",
         )
-    st.caption("接触電流(外装-大地): 正常100μA以下 / 単一故障500μA以下")
+    st.caption("外装漏れ電流(外装-大地): 正常100μA以下 / 単一故障500μA以下")
     s3, s4 = st.columns(2)
     with s3:
-        ecg_measurements["接触電流(正常)"] = st.number_input(
-            "接触電流 正常 (μA)",
-            value=float(ecg_measurements["接触電流(正常)"]), step=1.0, key="ecg_contact_n",
+        ecg_measurements["外装漏れ電流(正常)"] = st.number_input(
+            "外装漏れ電流 正常 (μA)",
+            value=float(ecg_measurements["外装漏れ電流(正常)"]), step=1.0, key="ecg_enc_n",
         )
     with s4:
-        ecg_measurements["接触電流(単一故障)"] = st.number_input(
-            "接触電流 単一故障 (μA)",
-            value=float(ecg_measurements["接触電流(単一故障)"]), step=1.0, key="ecg_contact_f",
+        ecg_measurements["外装漏れ電流(単一故障)"] = st.number_input(
+            "外装漏れ電流 単一故障 (μA)",
+            value=float(ecg_measurements["外装漏れ電流(単一故障)"]), step=1.0, key="ecg_enc_f",
         )
     st.caption("患者漏れ電流(患者接続部-大地): 正常DC/AC各10μA以下 / 単一故障DC/AC各50μA以下")
     s5, s6, s7, s8 = st.columns(4)
@@ -927,18 +927,18 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                 "title": "4. 安全性のチェック（漏れ電流）",
                 "kind": "measure",
                 "items": [
-                    _measured_item("接地漏れ電流(正常)", "正常5mA以下", "≤5mA",
-                                   f"{m['接地漏れ電流(正常)']}mA",
-                                   measure_judge(m["接地漏れ電流(正常)"] <= 5)),
-                    _measured_item("接地漏れ電流(単一故障)", "単一故障10mA以下", "≤10mA",
-                                   f"{m['接地漏れ電流(単一故障)']}mA",
-                                   measure_judge(m["接地漏れ電流(単一故障)"] <= 10)),
-                    _measured_item("接触電流(正常)", "外装-大地 正常100μA以下", "≤100μA",
-                                   f"{m['接触電流(正常)']}μA",
-                                   measure_judge(m["接触電流(正常)"] <= 100)),
-                    _measured_item("接触電流(単一故障)", "外装-大地 単一故障500μA以下", "≤500μA",
-                                   f"{m['接触電流(単一故障)']}μA",
-                                   measure_judge(m["接触電流(単一故障)"] <= 500)),
+                    _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
+                                   f"{m['接地漏れ電流(正常)']}μA",
+                                   measure_judge(m["接地漏れ電流(正常)"] <= 200)),
+                    _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   f"{m['接地漏れ電流(単一故障)']}μA",
+                                   measure_judge(m["接地漏れ電流(単一故障)"] <= 500)),
+                    _measured_item("外装漏れ電流(正常)", "外装-大地 正常100μA以下", "≤100μA",
+                                   f"{m['外装漏れ電流(正常)']}μA",
+                                   measure_judge(m["外装漏れ電流(正常)"] <= 100)),
+                    _measured_item("外装漏れ電流(単一故障)", "外装-大地 単一故障500μA以下", "≤500μA",
+                                   f"{m['外装漏れ電流(単一故障)']}μA",
+                                   measure_judge(m["外装漏れ電流(単一故障)"] <= 500)),
                     _measured_item("患者漏れ電流DC(正常)", "患者接続部-大地 DC正常10μA以下", "≤10μA",
                                    f"{m['患者漏れ電流DC(正常)']}μA",
                                    measure_judge(m["患者漏れ電流DC(正常)"] <= 10)),
