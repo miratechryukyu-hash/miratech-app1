@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-07e"
+APP_VERSION = "2026-08-07f"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -103,6 +103,21 @@ def is_check_ng(val):
 
 def measure_judge(in_range):
     return "〇" if in_range else "×"
+
+def leakage_ua_int(val):
+    try:
+        return int(round(float(val or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+def format_leakage_ua(val):
+    return f"{leakage_ua_int(val)}μA"
+
+def _leakage_number_input(label, current, key):
+    raw = st.number_input(
+        label, min_value=0, value=leakage_ua_int(current), step=1, format="%d", key=key,
+    )
+    return leakage_ua_int(raw)
 
 def check_cell_style_class(cell):
     sym = normalize_check_symbol(cell)
@@ -207,12 +222,12 @@ def default_incu_i_measurements():
         "酸素濃度制御(表示)": 40.0,
         "酸素濃度制御(実測)": 40.0,
         "酸素接続口1(実測)": 65.0,
-        "接地漏れ電流(正常)": 0.0,
-        "接地漏れ電流(単一故障)": 0.0,
-        "外装漏れ電流(正常)": 0.0,
-        "外装漏れ電流(単一故障)": 0.0,
-        "患者漏れ電流I(正常)": 0.0,
-        "患者漏れ電流I(単一故障)": 0.0,
+        "接地漏れ電流(正常)": 0,
+        "接地漏れ電流(単一故障)": 0,
+        "外装漏れ電流(正常)": 0,
+        "外装漏れ電流(単一故障)": 0,
+        "患者漏れ電流I(正常)": 0,
+        "患者漏れ電流I(単一故障)": 0,
     }
 
 def is_incu_i_incubator(device_category, device_model):
@@ -360,38 +375,32 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
     e1, e2 = st.columns(2)
     with e1:
-        incu_i_measurements["接地漏れ電流(正常)"] = st.number_input(
-            "接地漏れ電流 正常 (μA)", value=float(incu_i_measurements["接地漏れ電流(正常)"]), step=1.0,
-            key="incu_i_earth_n",
+        incu_i_measurements["接地漏れ電流(正常)"] = _leakage_number_input(
+            "接地漏れ電流 正常 (μA)", incu_i_measurements["接地漏れ電流(正常)"], "incu_i_earth_n",
         )
     with e2:
-        incu_i_measurements["接地漏れ電流(単一故障)"] = st.number_input(
-            "接地漏れ電流 単一故障 (μA)", value=float(incu_i_measurements["接地漏れ電流(単一故障)"]), step=1.0,
-            key="incu_i_earth_f",
+        incu_i_measurements["接地漏れ電流(単一故障)"] = _leakage_number_input(
+            "接地漏れ電流 単一故障 (μA)", incu_i_measurements["接地漏れ電流(単一故障)"], "incu_i_earth_f",
         )
     st.caption("外装漏れ電流: 正常100μA以下 / 単一故障500μA以下")
     e3, e4 = st.columns(2)
     with e3:
-        incu_i_measurements["外装漏れ電流(正常)"] = st.number_input(
-            "外装漏れ電流 正常 (μA)", value=float(incu_i_measurements["外装漏れ電流(正常)"]), step=1.0,
-            key="incu_i_enc_n",
+        incu_i_measurements["外装漏れ電流(正常)"] = _leakage_number_input(
+            "外装漏れ電流 正常 (μA)", incu_i_measurements["外装漏れ電流(正常)"], "incu_i_enc_n",
         )
     with e4:
-        incu_i_measurements["外装漏れ電流(単一故障)"] = st.number_input(
-            "外装漏れ電流 単一故障 (μA)", value=float(incu_i_measurements["外装漏れ電流(単一故障)"]), step=1.0,
-            key="incu_i_enc_f",
+        incu_i_measurements["外装漏れ電流(単一故障)"] = _leakage_number_input(
+            "外装漏れ電流 単一故障 (μA)", incu_i_measurements["外装漏れ電流(単一故障)"], "incu_i_enc_f",
         )
     st.caption("患者漏れ電流I: 正常100μA以下 / 単一故障500μA以下")
     e5, e6 = st.columns(2)
     with e5:
-        incu_i_measurements["患者漏れ電流I(正常)"] = st.number_input(
-            "患者漏れ電流I 正常 (μA)", value=float(incu_i_measurements["患者漏れ電流I(正常)"]), step=1.0,
-            key="incu_i_pat_n",
+        incu_i_measurements["患者漏れ電流I(正常)"] = _leakage_number_input(
+            "患者漏れ電流I 正常 (μA)", incu_i_measurements["患者漏れ電流I(正常)"], "incu_i_pat_n",
         )
     with e6:
-        incu_i_measurements["患者漏れ電流I(単一故障)"] = st.number_input(
-            "患者漏れ電流I 単一故障 (μA)", value=float(incu_i_measurements["患者漏れ電流I(単一故障)"]), step=1.0,
-            key="incu_i_pat_f",
+        incu_i_measurements["患者漏れ電流I(単一故障)"] = _leakage_number_input(
+            "患者漏れ電流I 単一故障 (μA)", incu_i_measurements["患者漏れ電流I(単一故障)"], "incu_i_pat_f",
         )
 
 def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
@@ -467,23 +476,23 @@ def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
                 "kind": "measure",
                 "items": [
                     _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
-                                   f"{m['接地漏れ電流(正常)']}μA",
-                                   "〇" if m["接地漏れ電流(正常)"] <= 200 else "×"),
+                                   format_leakage_ua(m["接地漏れ電流(正常)"]),
+                                   "〇" if leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200 else "×"),
                     _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['接地漏れ電流(単一故障)']}μA",
-                                   "〇" if m["接地漏れ電流(単一故障)"] <= 500 else "×"),
+                                   format_leakage_ua(m["接地漏れ電流(単一故障)"]),
+                                   "〇" if leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500 else "×"),
                     _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
-                                   f"{m['外装漏れ電流(正常)']}μA",
-                                   "〇" if m["外装漏れ電流(正常)"] <= 100 else "×"),
+                                   format_leakage_ua(m["外装漏れ電流(正常)"]),
+                                   "〇" if leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100 else "×"),
                     _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['外装漏れ電流(単一故障)']}μA",
-                                   "〇" if m["外装漏れ電流(単一故障)"] <= 500 else "×"),
+                                   format_leakage_ua(m["外装漏れ電流(単一故障)"]),
+                                   "〇" if leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500 else "×"),
                     _measured_item("患者漏れ電流I(正常)", "正常100μA以下", "≤100μA",
-                                   f"{m['患者漏れ電流I(正常)']}μA",
-                                   "〇" if m["患者漏れ電流I(正常)"] <= 100 else "×"),
+                                   format_leakage_ua(m["患者漏れ電流I(正常)"]),
+                                   "〇" if leakage_ua_int(m["患者漏れ電流I(正常)"]) <= 100 else "×"),
                     _measured_item("患者漏れ電流I(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['患者漏れ電流I(単一故障)']}μA",
-                                   "〇" if m["患者漏れ電流I(単一故障)"] <= 500 else "×"),
+                                   format_leakage_ua(m["患者漏れ電流I(単一故障)"]),
+                                   "〇" if leakage_ua_int(m["患者漏れ電流I(単一故障)"]) <= 500 else "×"),
                 ],
             },
         ],
@@ -561,12 +570,12 @@ def default_vsm_checks():
 def default_vsm_measurements():
     return {
         "バッテリサイクル数": 0,
-        "接地漏れ電流(正常)": 0.0,
-        "接地漏れ電流(単一故障)": 0.0,
-        "外装漏れ電流(正常)": 0.0,
-        "外装漏れ電流(単一故障)": 0.0,
-        "患者漏れ電流I(正常)": 0.0,
-        "患者漏れ電流I(単一故障)": 0.0,
+        "接地漏れ電流(正常)": 0,
+        "接地漏れ電流(単一故障)": 0,
+        "外装漏れ電流(正常)": 0,
+        "外装漏れ電流(単一故障)": 0,
+        "患者漏れ電流I(正常)": 0,
+        "患者漏れ電流I(単一故障)": 0,
     }
 
 def default_vsm_meta():
@@ -593,8 +602,8 @@ def _validate_leakage_currents(measurements, ng_items):
         ("患者漏れ電流I(単一故障)", m["患者漏れ電流I(単一故障)"], 500),
     ]
     for name, val, limit in limits:
-        if val > limit:
-            ng_items.append(f"{name}（{val}μA）")
+        if leakage_ua_int(val) > limit:
+            ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
 
 def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
     """ベッドサイドモニタ 定期点検表の入力欄"""
@@ -653,38 +662,32 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
     st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
     e1, e2 = st.columns(2)
     with e1:
-        vsm_measurements["接地漏れ電流(正常)"] = st.number_input(
-            "接地漏れ電流 正常 (μA)",
-            value=float(vsm_measurements["接地漏れ電流(正常)"]), step=1.0, key="vsm_earth_n",
+        vsm_measurements["接地漏れ電流(正常)"] = _leakage_number_input(
+            "接地漏れ電流 正常 (μA)", vsm_measurements["接地漏れ電流(正常)"], "vsm_earth_n",
         )
     with e2:
-        vsm_measurements["接地漏れ電流(単一故障)"] = st.number_input(
-            "接地漏れ電流 単一故障 (μA)",
-            value=float(vsm_measurements["接地漏れ電流(単一故障)"]), step=1.0, key="vsm_earth_f",
+        vsm_measurements["接地漏れ電流(単一故障)"] = _leakage_number_input(
+            "接地漏れ電流 単一故障 (μA)", vsm_measurements["接地漏れ電流(単一故障)"], "vsm_earth_f",
         )
     st.caption("外装漏れ電流: 正常100μA以下 / 単一故障500μA以下")
     e3, e4 = st.columns(2)
     with e3:
-        vsm_measurements["外装漏れ電流(正常)"] = st.number_input(
-            "外装漏れ電流 正常 (μA)",
-            value=float(vsm_measurements["外装漏れ電流(正常)"]), step=1.0, key="vsm_enc_n",
+        vsm_measurements["外装漏れ電流(正常)"] = _leakage_number_input(
+            "外装漏れ電流 正常 (μA)", vsm_measurements["外装漏れ電流(正常)"], "vsm_enc_n",
         )
     with e4:
-        vsm_measurements["外装漏れ電流(単一故障)"] = st.number_input(
-            "外装漏れ電流 単一故障 (μA)",
-            value=float(vsm_measurements["外装漏れ電流(単一故障)"]), step=1.0, key="vsm_enc_f",
+        vsm_measurements["外装漏れ電流(単一故障)"] = _leakage_number_input(
+            "外装漏れ電流 単一故障 (μA)", vsm_measurements["外装漏れ電流(単一故障)"], "vsm_enc_f",
         )
     st.caption("患者漏れ電流I: 正常100μA以下 / 単一故障500μA以下")
     e5, e6 = st.columns(2)
     with e5:
-        vsm_measurements["患者漏れ電流I(正常)"] = st.number_input(
-            "患者漏れ電流I 正常 (μA)",
-            value=float(vsm_measurements["患者漏れ電流I(正常)"]), step=1.0, key="vsm_pat_n",
+        vsm_measurements["患者漏れ電流I(正常)"] = _leakage_number_input(
+            "患者漏れ電流I 正常 (μA)", vsm_measurements["患者漏れ電流I(正常)"], "vsm_pat_n",
         )
     with e6:
-        vsm_measurements["患者漏れ電流I(単一故障)"] = st.number_input(
-            "患者漏れ電流I 単一故障 (μA)",
-            value=float(vsm_measurements["患者漏れ電流I(単一故障)"]), step=1.0, key="vsm_pat_f",
+        vsm_measurements["患者漏れ電流I(単一故障)"] = _leakage_number_input(
+            "患者漏れ電流I 単一故障 (μA)", vsm_measurements["患者漏れ電流I(単一故障)"], "vsm_pat_f",
         )
 
 def build_vsm_report_sections(vsm_checks, vsm_measurements, vsm_meta):
@@ -757,23 +760,23 @@ def build_vsm_report_sections(vsm_checks, vsm_measurements, vsm_meta):
                 "kind": "measure",
                 "items": [
                     _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
-                                   f"{m['接地漏れ電流(正常)']}μA",
-                                   measure_judge(m["接地漏れ電流(正常)"] <= 200)),
+                                   format_leakage_ua(m["接地漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200)),
                     _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['接地漏れ電流(単一故障)']}μA",
-                                   measure_judge(m["接地漏れ電流(単一故障)"] <= 500)),
+                                   format_leakage_ua(m["接地漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500)),
                     _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
-                                   f"{m['外装漏れ電流(正常)']}μA",
-                                   measure_judge(m["外装漏れ電流(正常)"] <= 100)),
+                                   format_leakage_ua(m["外装漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100)),
                     _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['外装漏れ電流(単一故障)']}μA",
-                                   measure_judge(m["外装漏れ電流(単一故障)"] <= 500)),
+                                   format_leakage_ua(m["外装漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500)),
                     _measured_item("患者漏れ電流I(正常)", "正常100μA以下", "≤100μA",
-                                   f"{m['患者漏れ電流I(正常)']}μA",
-                                   measure_judge(m["患者漏れ電流I(正常)"] <= 100)),
+                                   format_leakage_ua(m["患者漏れ電流I(正常)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流I(正常)"]) <= 100)),
                     _measured_item("患者漏れ電流I(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   f"{m['患者漏れ電流I(単一故障)']}μA",
-                                   measure_judge(m["患者漏れ電流I(単一故障)"] <= 500)),
+                                   format_leakage_ua(m["患者漏れ電流I(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流I(単一故障)"]) <= 500)),
                 ],
             },
         ],
@@ -814,14 +817,14 @@ def default_ecg_checks():
 
 def default_ecg_measurements():
     return {
-        "接地漏れ電流(正常)": 0.0,
-        "接地漏れ電流(単一故障)": 0.0,
-        "外装漏れ電流(正常)": 0.0,
-        "外装漏れ電流(単一故障)": 0.0,
-        "患者漏れ電流DC(正常)": 0.0,
-        "患者漏れ電流AC(正常)": 0.0,
-        "患者漏れ電流DC(単一故障)": 0.0,
-        "患者漏れ電流AC(単一故障)": 0.0,
+        "接地漏れ電流(正常)": 0,
+        "接地漏れ電流(単一故障)": 0,
+        "外装漏れ電流(正常)": 0,
+        "外装漏れ電流(単一故障)": 0,
+        "患者漏れ電流DC(正常)": 0,
+        "患者漏れ電流AC(正常)": 0,
+        "患者漏れ電流DC(単一故障)": 0,
+        "患者漏れ電流AC(単一故障)": 0,
     }
 
 def _validate_ecg_measurements(measurements, ng_items):
@@ -837,8 +840,8 @@ def _validate_ecg_measurements(measurements, ng_items):
         ("患者漏れ電流AC(単一故障)", m["患者漏れ電流AC(単一故障)"], 50),
     ]
     for name, val, limit in limits:
-        if val > limit:
-            ng_items.append(f"{name}（{val}μA）")
+        if leakage_ua_int(val) > limit:
+            ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
 
 def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     """心電計 定期点検表の入力欄"""
@@ -857,48 +860,40 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
     s1, s2 = st.columns(2)
     with s1:
-        ecg_measurements["接地漏れ電流(正常)"] = st.number_input(
-            "接地漏れ電流 正常 (μA)",
-            value=float(ecg_measurements["接地漏れ電流(正常)"]), step=1.0, key="ecg_earth_n",
+        ecg_measurements["接地漏れ電流(正常)"] = _leakage_number_input(
+            "接地漏れ電流 正常 (μA)", ecg_measurements["接地漏れ電流(正常)"], "ecg_earth_n",
         )
     with s2:
-        ecg_measurements["接地漏れ電流(単一故障)"] = st.number_input(
-            "接地漏れ電流 単一故障 (μA)",
-            value=float(ecg_measurements["接地漏れ電流(単一故障)"]), step=1.0, key="ecg_earth_f",
+        ecg_measurements["接地漏れ電流(単一故障)"] = _leakage_number_input(
+            "接地漏れ電流 単一故障 (μA)", ecg_measurements["接地漏れ電流(単一故障)"], "ecg_earth_f",
         )
     st.caption("外装漏れ電流(外装-大地): 正常100μA以下 / 単一故障500μA以下")
     s3, s4 = st.columns(2)
     with s3:
-        ecg_measurements["外装漏れ電流(正常)"] = st.number_input(
-            "外装漏れ電流 正常 (μA)",
-            value=float(ecg_measurements["外装漏れ電流(正常)"]), step=1.0, key="ecg_enc_n",
+        ecg_measurements["外装漏れ電流(正常)"] = _leakage_number_input(
+            "外装漏れ電流 正常 (μA)", ecg_measurements["外装漏れ電流(正常)"], "ecg_enc_n",
         )
     with s4:
-        ecg_measurements["外装漏れ電流(単一故障)"] = st.number_input(
-            "外装漏れ電流 単一故障 (μA)",
-            value=float(ecg_measurements["外装漏れ電流(単一故障)"]), step=1.0, key="ecg_enc_f",
+        ecg_measurements["外装漏れ電流(単一故障)"] = _leakage_number_input(
+            "外装漏れ電流 単一故障 (μA)", ecg_measurements["外装漏れ電流(単一故障)"], "ecg_enc_f",
         )
     st.caption("患者漏れ電流(患者接続部-大地): 正常DC/AC各10μA以下 / 単一故障DC/AC各50μA以下")
     s5, s6, s7, s8 = st.columns(4)
     with s5:
-        ecg_measurements["患者漏れ電流DC(正常)"] = st.number_input(
-            "患者漏れ DC 正常 (μA)",
-            value=float(ecg_measurements["患者漏れ電流DC(正常)"]), step=1.0, key="ecg_pat_dc_n",
+        ecg_measurements["患者漏れ電流DC(正常)"] = _leakage_number_input(
+            "患者漏れ DC 正常 (μA)", ecg_measurements["患者漏れ電流DC(正常)"], "ecg_pat_dc_n",
         )
     with s6:
-        ecg_measurements["患者漏れ電流AC(正常)"] = st.number_input(
-            "患者漏れ AC 正常 (μA)",
-            value=float(ecg_measurements["患者漏れ電流AC(正常)"]), step=1.0, key="ecg_pat_ac_n",
+        ecg_measurements["患者漏れ電流AC(正常)"] = _leakage_number_input(
+            "患者漏れ AC 正常 (μA)", ecg_measurements["患者漏れ電流AC(正常)"], "ecg_pat_ac_n",
         )
     with s7:
-        ecg_measurements["患者漏れ電流DC(単一故障)"] = st.number_input(
-            "患者漏れ DC 単一故障 (μA)",
-            value=float(ecg_measurements["患者漏れ電流DC(単一故障)"]), step=1.0, key="ecg_pat_dc_f",
+        ecg_measurements["患者漏れ電流DC(単一故障)"] = _leakage_number_input(
+            "患者漏れ DC 単一故障 (μA)", ecg_measurements["患者漏れ電流DC(単一故障)"], "ecg_pat_dc_f",
         )
     with s8:
-        ecg_measurements["患者漏れ電流AC(単一故障)"] = st.number_input(
-            "患者漏れ AC 単一故障 (μA)",
-            value=float(ecg_measurements["患者漏れ電流AC(単一故障)"]), step=1.0, key="ecg_pat_ac_f",
+        ecg_measurements["患者漏れ電流AC(単一故障)"] = _leakage_number_input(
+            "患者漏れ AC 単一故障 (μA)", ecg_measurements["患者漏れ電流AC(単一故障)"], "ecg_pat_ac_f",
         )
 
 def build_ecg_report_sections(ecg_checks, ecg_measurements):
@@ -927,30 +922,30 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                 "title": "4. 安全性のチェック（漏れ電流）",
                 "kind": "measure",
                 "items": [
-                    _measured_item("接地漏れ電流(正常)", "正常5mA以下", "≤5mA",
-                                   f"{m['接地漏れ電流(正常)']}mA",
-                                   measure_judge(m["接地漏れ電流(正常)"] <= 5)),
-                    _measured_item("接地漏れ電流(単一故障)", "単一故障10mA以下", "≤10mA",
-                                   f"{m['接地漏れ電流(単一故障)']}mA",
-                                   measure_judge(m["接地漏れ電流(単一故障)"] <= 10)),
-                    _measured_item("接触電流(正常)", "外装-大地 正常100μA以下", "≤100μA",
-                                   f"{m['接触電流(正常)']}μA",
-                                   measure_judge(m["接触電流(正常)"] <= 100)),
-                    _measured_item("接触電流(単一故障)", "外装-大地 単一故障500μA以下", "≤500μA",
-                                   f"{m['接触電流(単一故障)']}μA",
-                                   measure_judge(m["接触電流(単一故障)"] <= 500)),
+                    _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
+                                   format_leakage_ua(m["接地漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200)),
+                    _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   format_leakage_ua(m["接地漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500)),
+                    _measured_item("外装漏れ電流(正常)", "外装-大地 正常100μA以下", "≤100μA",
+                                   format_leakage_ua(m["外装漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100)),
+                    _measured_item("外装漏れ電流(単一故障)", "外装-大地 単一故障500μA以下", "≤500μA",
+                                   format_leakage_ua(m["外装漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500)),
                     _measured_item("患者漏れ電流DC(正常)", "患者接続部-大地 DC正常10μA以下", "≤10μA",
-                                   f"{m['患者漏れ電流DC(正常)']}μA",
-                                   measure_judge(m["患者漏れ電流DC(正常)"] <= 10)),
+                                   format_leakage_ua(m["患者漏れ電流DC(正常)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流DC(正常)"]) <= 10)),
                     _measured_item("患者漏れ電流AC(正常)", "患者接続部-大地 AC正常10μA以下", "≤10μA",
-                                   f"{m['患者漏れ電流AC(正常)']}μA",
-                                   measure_judge(m["患者漏れ電流AC(正常)"] <= 10)),
+                                   format_leakage_ua(m["患者漏れ電流AC(正常)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流AC(正常)"]) <= 10)),
                     _measured_item("患者漏れ電流DC(単一故障)", "DC単一故障50μA以下", "≤50μA",
-                                   f"{m['患者漏れ電流DC(単一故障)']}μA",
-                                   measure_judge(m["患者漏れ電流DC(単一故障)"] <= 50)),
+                                   format_leakage_ua(m["患者漏れ電流DC(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流DC(単一故障)"]) <= 50)),
                     _measured_item("患者漏れ電流AC(単一故障)", "AC単一故障50μA以下", "≤50μA",
-                                   f"{m['患者漏れ電流AC(単一故障)']}μA",
-                                   measure_judge(m["患者漏れ電流AC(単一故障)"] <= 50)),
+                                   format_leakage_ua(m["患者漏れ電流AC(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["患者漏れ電流AC(単一故障)"]) <= 50)),
                 ],
             },
         ],
@@ -2793,8 +2788,8 @@ def _validate_incu_i_measurements(measurements, ng_items):
         ("患者漏れ電流I(単一故障)", m["患者漏れ電流I(単一故障)"], 500),
     ]
     for name, val, limit in limits:
-        if val > limit:
-            ng_items.append(f"{name}（{val}μA）")
+        if leakage_ua_int(val) > limit:
+            ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
 
 def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
