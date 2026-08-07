@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-07c"
+APP_VERSION = "2026-08-07d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -850,7 +850,10 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     st.write("**2. 電源コードの確認**")
     _render_inspection_check_grid(ECG_POWER_CORD_ITEMS, ecg_checks, "ecg_pwr")
 
-    st.write("**3. 安全性のチェック**")
+    st.write("**3. 機能点検**")
+    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
+
+    st.write("**4. 安全性のチェック（漏れ電流）**")
     st.caption("接地漏れ電流: 正常5mA以下 / 単一故障10mA以下")
     s1, s2 = st.columns(2)
     with s1:
@@ -898,9 +901,6 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
             value=float(ecg_measurements["患者漏れ電流AC(単一故障)"]), step=1.0, key="ecg_pat_ac_f",
         )
 
-    st.write("**4. 機能点検**")
-    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
-
 def build_ecg_report_sections(ecg_checks, ecg_measurements):
     c = ecg_checks
     m = ecg_measurements
@@ -919,7 +919,12 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                 "items": [_check_item(l, c.get(l, "---")) for l in ECG_POWER_CORD_ITEMS],
             },
             {
-                "title": "3. 安全性のチェック",
+                "title": "3. 機能点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
+            },
+            {
+                "title": "4. 安全性のチェック（漏れ電流）",
                 "kind": "measure",
                 "items": [
                     _measured_item("接地漏れ電流(正常)", "正常5mA以下", "≤5mA",
@@ -947,11 +952,6 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                                    f"{m['患者漏れ電流AC(単一故障)']}μA",
                                    measure_judge(m["患者漏れ電流AC(単一故障)"] <= 50)),
                 ],
-            },
-            {
-                "title": "4. 機能点検",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
             },
         ],
     }

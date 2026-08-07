@@ -600,7 +600,7 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
     """ベッドサイドモニタ 定期点検表の入力欄"""
     st.caption(INSPECTION_CHECK_LEGEND)
     st.caption(
-        "対象機種例: CSM-1000(ライフスコープG7/G5), BSM-5700(ライフスコープE7), PVM-4000(PVM-4763等)"
+        "対象機種例: PVM-2701 , PVM-4761"
     )
     m1, m2 = st.columns(2)
     with m1:
@@ -850,7 +850,10 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     st.write("**2. 電源コードの確認**")
     _render_inspection_check_grid(ECG_POWER_CORD_ITEMS, ecg_checks, "ecg_pwr")
 
-    st.write("**3. 安全性のチェック**")
+    st.write("**3. 機能点検**")
+    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
+
+    st.write("**4. 安全性のチェック（漏れ電流）**")
     st.caption("接地漏れ電流: 正常5mA以下 / 単一故障10mA以下")
     s1, s2 = st.columns(2)
     with s1:
@@ -898,9 +901,6 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
             value=float(ecg_measurements["患者漏れ電流AC(単一故障)"]), step=1.0, key="ecg_pat_ac_f",
         )
 
-    st.write("**4. 機能点検**")
-    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
-
 def build_ecg_report_sections(ecg_checks, ecg_measurements):
     c = ecg_checks
     m = ecg_measurements
@@ -919,7 +919,12 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                 "items": [_check_item(l, c.get(l, "---")) for l in ECG_POWER_CORD_ITEMS],
             },
             {
-                "title": "3. 安全性のチェック",
+                "title": "3. 機能点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
+            },
+            {
+                "title": "4. 安全性のチェック（漏れ電流）",
                 "kind": "measure",
                 "items": [
                     _measured_item("接地漏れ電流(正常)", "正常5mA以下", "≤5mA",
@@ -947,11 +952,6 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
                                    f"{m['患者漏れ電流AC(単一故障)']}μA",
                                    measure_judge(m["患者漏れ電流AC(単一故障)"] <= 50)),
                 ],
-            },
-            {
-                "title": "4. 機能点検",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
             },
         ],
     }
@@ -2953,7 +2953,9 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  incu_i_measurements=None,
                                  vsm_checks=None,
                                  vsm_measurements=None,
-                                 vsm_meta=None):
+                                 vsm_meta=None,
+                                 ecg_checks=None,
+                                 ecg_measurements=None):
     """保存・印刷用に詳細データ・項目行・セクション構成をまとめて生成"""
     report_sections = build_inspection_report_sections(
         check_type, device_category, inc_o_checks,
