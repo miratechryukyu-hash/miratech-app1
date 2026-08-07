@@ -600,7 +600,7 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
     """ベッドサイドモニタ 定期点検表の入力欄"""
     st.caption(INSPECTION_CHECK_LEGEND)
     st.caption(
-        "対象機種例: CSM-1000(ライフスコープG7/G5), BSM-5700(ライフスコープE7), PVM-4000(PVM-4763等)"
+        "対象機種例: PVM-2701 , PVM-4761"
     )
     m1, m2 = st.columns(2)
     with m1:
