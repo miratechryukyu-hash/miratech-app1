@@ -224,11 +224,8 @@ def is_incu_i_incubator(device_category, device_model):
 def _incu_i_symbol_judge(val):
     sym = clean_data_str(val)
     if sym == "×":
-        return "×"
     if sym == "△":
-        return "△"
     if sym == "〇":
-        return "〇"
     return sym or "-"
 
 def _incu_i_range_judge(val, lo, hi):
@@ -277,7 +274,7 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     )
 
     st.write("**湿度コントロールテスト**")
-    st.caption("設定90% / 表示90±3% / 実測90±10%　:red[**※必ず精製水使用する**]")
+    st.caption("設定90% / 表示90±3% / 実測90±10%　:red[**必ず精製水使用する**]")
     
     h1, h2 = st.columns(2)
     with h1:
@@ -292,7 +289,7 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
         )
 
     st.write("**マニュアルコントロールテスト**")
-    st.caption("設定34℃ / 表示・実測 34±1℃")
+    st.caption("設定34℃ / 表示・実測 34±1℃　:red[**温度センサーを本体に接続する")
     m1, m2 = st.columns(2)
     with m1:
         incu_i_measurements["マニュアルコントロール(表示)"] = st.number_input(
