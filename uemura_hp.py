@@ -224,8 +224,11 @@ def is_incu_i_incubator(device_category, device_model):
 def _incu_i_symbol_judge(val):
     sym = clean_data_str(val)
     if sym == "×":
+        return "×"
     if sym == "△":
+        return "△"
     if sym == "〇":
+        return "〇"
     return sym or "-"
 
 def _incu_i_range_judge(val, lo, hi):
