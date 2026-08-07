@@ -292,7 +292,7 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
         )
 
     st.write("**マニュアルコントロールテスト**")
-    st.caption("設定34℃ / 表示・実測 34±1℃　:red[**※温度センサーを本体に接続する]")
+    st.caption("設定34℃ / 表示・実測 34±1℃　:red[**※温度センサーを本体に接続する**]")
     m1, m2 = st.columns(2)
     with m1:
         incu_i_measurements["マニュアルコントロール(表示)"] = st.number_input(
