@@ -277,8 +277,7 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     )
 
     st.write("**湿度コントロールテスト**")
-    st.error("**必ず精製水を使用してください（水道水不可）**")
-    st.caption("設定90% / 表示90±3% / 実測90±10%")
+    st.caption("設定90% / 表示90±3% / 実測90±10%　:red[**※必ず精製水使用する**]")
     
     h1, h2 = st.columns(2)
     with h1:
