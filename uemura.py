@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-07f"
+APP_VERSION = "2026-07-04b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2477,6 +2477,92 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     ensure_inspection_history_worksheet()
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
+# ==========================================
+# LINE通知（故障報告・修理依頼）
+# secrets.toml 例:
+# [line]
+# enabled = true
+# channel_access_token = "Messaging API のチャネルアクセストークン"
+# notify_to = "通知先のユーザーIDまたはグループID"
+# ==========================================
+def _line_notify_config():
+    try:
+        cfg = st.secrets.get("line", {})
+    except Exception:
+        cfg = {}
+    token = clean_data_str(
+        cfg.get("channel_access_token", "") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    )
+    to_id = clean_data_str(cfg.get("notify_to", "") or os.environ.get("LINE_NOTIFY_TO", ""))
+    enabled_raw = clean_data_str(cfg.get("enabled", "true")).lower()
+    enabled = enabled_raw not in ("false", "0", "no", "off")
+    return token, to_id, enabled and bool(token and to_id)
+
+def send_line_text_message(message):
+    token, to_id, enabled = _line_notify_config()
+    if not enabled:
+        return False, "LINE通知が未設定です"
+    text = clean_data_str(message)[:5000]
+    if not text:
+        return False, "送信メッセージが空です"
+    try:
+        resp = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            json={"to": to_id, "messages": [{"type": "text", "text": text}]},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return True, ""
+        return False, f"LINE API エラー ({resp.status_code}): {resp.text[:200]}"
+    except requests.RequestException as e:
+        return False, f"LINE送信失敗: {e}"
+
+def build_fault_report_line_message(report_date, occur_date, me_no, model_name, reporter, dept, symptom):
+    return "\n".join([
+        "【医療機器 故障報告】",
+        f"管理番号: {me_no}",
+        f"機種: {model_name or '不明な機器'}",
+        f"部署: {dept}",
+        f"報告者: {reporter}",
+        f"発生日: {occur_date}",
+        f"報告日: {report_date}",
+        f"症状: {symptom}",
+        "",
+        f"管理画面: {APP_URL}",
+    ])
+
+def build_inspection_repair_line_message(me_no, model_name, category, check_date, inspector, check_type, result, memo=""):
+    lines = [
+        "【医療機器 修理依頼（点検結果）】",
+        f"管理番号: {me_no}",
+        f"機種: {model_name or '不明'}",
+        f"カテゴリ: {category}",
+        f"点検日: {check_date}",
+        f"実施者: {inspector}",
+        f"点検区分: {check_type}",
+        f"総合評価: {result}",
+    ]
+    if clean_data_str(memo):
+        lines.append(f"備考: {memo}")
+    lines.extend(["", f"管理画面: {APP_URL}"])
+    return "\n".join(lines)
+
+def notify_fault_report_line(report_date, occur_date, me_no, model_name, reporter, dept, symptom):
+    msg = build_fault_report_line_message(
+        report_date, occur_date, me_no, model_name, reporter, dept, symptom,
+    )
+    return send_line_text_message(msg)
+
+def notify_inspection_repair_line(me_no, model_name, category, check_date, inspector, check_type, result, memo=""):
+    msg = build_inspection_repair_line_message(
+        me_no, model_name, category, check_date, inspector, check_type, result, memo,
+    )
+    return send_line_text_message(msg)
+
 FAULT_REPORT_COLUMNS = [
     "報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況",
 ]
@@ -2999,6 +3085,21 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         scan_year_val, check_date, check_type, inspector, result,
         memo, detail_text, item_rows=item_rows, report_sections=report_sections,
     )
+    if result == "メーカー修理":
+        line_ok, line_err = notify_inspection_repair_line(
+            final_me_no,
+            model_for_spreadsheet(device_model),
+            device_category,
+            check_date,
+            inspector,
+            check_type,
+            result,
+            memo,
+        )
+        if line_ok:
+            write_log("LINE", f"修理依頼通知送信: {final_me_no}")
+        else:
+            write_log("LINE", f"修理依頼通知未送信: {line_err}")
     write_log(inspector, f"{final_me_no} の点検を登録")
     st.session_state["last_check_date"] = check_date
     st.session_state["check_registered_msg"] = f"{final_me_no} の点検データを登録しました。"
@@ -3810,6 +3911,9 @@ def _get_last_activity():
 def touch_activity():
     now = time.time()
     st.session_state["last_activity"] = now
+    if st.session_state.get("_activity_cookie_touched"):
+        return
+    st.session_state["_activity_cookie_touched"] = True
     get_cookie_manager().set(
         LAST_ACTIVE_COOKIE,
         str(int(now)),
@@ -3848,7 +3952,6 @@ def restore_auth_from_cookie(cookies):
         st.session_state["current_user_id"] = data.get("uid", "")
         if last:
             st.session_state["last_activity"] = float(last)
-        touch_activity()
         return True
     except Exception:
         clear_auth_cookie()
@@ -4062,11 +4165,14 @@ if url_me_no:
                 try:
                     existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況"])
 
+                    master_info = lookup_device_for_sticker(df_master_global, url_me_no)
+                    model_name = master_info.get("model_name") or "不明な機器"
+
                     new_report = pd.DataFrame([{
                         "報告日": str(date.today()),
                         "発生日": str(rep_date),
                         "管理番号": url_me_no,
-                        "機種": "不明な機器",
+                        "機種": model_name,
                         "報告者": rep_name,
                         "部署": rep_dept,
                         "症状": symptom_str,
@@ -4075,6 +4181,20 @@ if url_me_no:
 
                     updated_df = pd.concat([existing_data, new_report], ignore_index=True)
                     conn.update(worksheet="故障報告", data=updated_df)
+
+                    line_ok, line_err = notify_fault_report_line(
+                        str(date.today()),
+                        str(rep_date),
+                        url_me_no,
+                        model_name,
+                        rep_name,
+                        rep_dept,
+                        symptom_str,
+                    )
+                    if line_ok:
+                        write_log("LINE", f"故障報告通知送信: {url_me_no}")
+                    else:
+                        write_log("LINE", f"故障報告通知未送信: {line_err}")
 
                     write_log(f"現場({rep_name})", f"{url_me_no} の故障報告を送信")
 
