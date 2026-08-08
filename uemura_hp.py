@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-04b"
+APP_VERSION = "2026-07-04c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2494,9 +2494,47 @@ def _line_notify_config():
         cfg.get("channel_access_token", "") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     )
     to_id = clean_data_str(cfg.get("notify_to", "") or os.environ.get("LINE_NOTIFY_TO", ""))
-    enabled_raw = clean_data_str(cfg.get("enabled", "true")).lower()
-    enabled = enabled_raw not in ("false", "0", "no", "off")
+    enabled_val = cfg.get("enabled", "true")
+    if isinstance(enabled_val, bool):
+        enabled = enabled_val
+    else:
+        enabled = clean_data_str(enabled_val).lower() not in ("false", "0", "no", "off")
     return token, to_id, enabled and bool(token and to_id)
+
+def get_line_notify_status():
+    try:
+        cfg = st.secrets.get("line", {})
+    except Exception:
+        cfg = {}
+    token = clean_data_str(
+        cfg.get("channel_access_token", "") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    )
+    to_id = clean_data_str(cfg.get("notify_to", "") or os.environ.get("LINE_NOTIFY_TO", ""))
+    enabled_val = cfg.get("enabled", "true")
+    if isinstance(enabled_val, bool):
+        enabled = enabled_val
+    else:
+        enabled = clean_data_str(enabled_val).lower() not in ("false", "0", "no", "off")
+    if not enabled:
+        return "disabled", "enabled = false になっています"
+    if not token:
+        return "missing_token", "channel_access_token が未設定です"
+    if not to_id:
+        return "missing_to", "notify_to が未設定です"
+    if not to_id.startswith(("U", "C", "R")):
+        return "invalid_to", "notify_to は U/C/R で始まる ID を設定してください"
+    masked = f"{to_id[:6]}...{to_id[-4:]}" if len(to_id) > 12 else to_id
+    return "ready", f"設定済み（通知先: {masked}）"
+
+def line_api_error_hint(err_text):
+    err = clean_data_str(err_text)
+    if "401" in err:
+        return "channel_access_token が無効です。LINE Developers で再発行し Secrets を更新してください。"
+    if "400" in err and "Failed to send messages" in err:
+        return "公式アカウント「うえむらHP不具合」を notify_to の LINE アカウントで友だち追加してください。"
+    if "400" in err:
+        return "notify_to のユーザーID/グループIDが正しいか確認してください（destination ではなく source.userId）。"
+    return ""
 
 def send_line_text_message(message):
     token, to_id, enabled = _line_notify_config()
@@ -4224,6 +4262,23 @@ if url_me_no:
 # ==========================================
 st.sidebar.success(f"ログイン中: {st.session_state.get('current_user_name', '不明')}")
 st.sidebar.caption(f"App {APP_VERSION}")
+with st.sidebar.expander("LINE通知"):
+    line_status, line_msg = get_line_notify_status()
+    if line_status == "ready":
+        st.success(line_msg)
+    else:
+        st.warning(line_msg)
+    if st.button("テスト通知を送信", key="line_test_notify_btn", use_container_width=True):
+        test_ok, test_err = send_line_text_message("【テスト】miratech 故障通知のテストです。")
+        if test_ok:
+            st.success("LINE通知を送信しました。")
+            write_log(st.session_state.get("current_user_name", "管理者"), "LINEテスト通知送信")
+        else:
+            st.error(test_err)
+            hint = line_api_error_hint(test_err)
+            if hint:
+                st.info(hint)
+            write_log("LINE", f"テスト通知未送信: {test_err}")
 if st.sidebar.button("ログアウト"):
     write_log(st.session_state["current_user_name"], "ログアウトしました")
     logout_user()
