@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-04c"
+APP_VERSION = "2026-07-04d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2531,10 +2531,44 @@ def line_api_error_hint(err_text):
     if "401" in err:
         return "channel_access_token が無効です。LINE Developers で再発行し Secrets を更新してください。"
     if "400" in err and "Failed to send messages" in err:
-        return "公式アカウント「うえむらHP不具合」を notify_to の LINE アカウントで友だち追加してください。"
+        return (
+            "notify_to の LINE アカウントが「うえむらHP不具合」と友だちになっていません。"
+            "「通知先を確認」ボタンで ID の一致を確認してください。"
+        )
     if "400" in err:
         return "notify_to のユーザーID/グループIDが正しいか確認してください（destination ではなく source.userId）。"
     return ""
+
+def verify_line_notify_target():
+    """Messaging API で notify_to が友だちか確認（Webhook 不要）"""
+    try:
+        cfg = st.secrets.get("line", {})
+    except Exception:
+        cfg = {}
+    token = clean_data_str(
+        cfg.get("channel_access_token", "") or os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    )
+    to_id = clean_data_str(cfg.get("notify_to", "") or os.environ.get("LINE_NOTIFY_TO", ""))
+    if not token or not to_id:
+        return False, "token または notify_to が未設定です"
+    try:
+        resp = requests.get(
+            f"https://api.line.me/v2/bot/profile/{to_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            name = resp.json().get("displayName", "")
+            return True, f"友だち確認OK（{name}）"
+        if resp.status_code == 404:
+            return False, (
+                "友だち未登録か notify_to が別アカウントの ID です。"
+                "通知を受け取るスマホの LINE から公式アカウントにメッセージを送り、"
+                "webhook.site の source.userId を再取得してください。"
+            )
+        return False, f"確認失敗 ({resp.status_code}): {resp.text[:200]}"
+    except requests.RequestException as e:
+        return False, f"確認失敗: {e}"
 
 def send_line_text_message(message):
     token, to_id, enabled = _line_notify_config()
@@ -4268,6 +4302,12 @@ with st.sidebar.expander("LINE通知"):
         st.success(line_msg)
     else:
         st.warning(line_msg)
+    if st.button("通知先を確認", key="line_verify_target_btn", use_container_width=True):
+        verify_ok, verify_msg = verify_line_notify_target()
+        if verify_ok:
+            st.success(verify_msg)
+        else:
+            st.error(verify_msg)
     if st.button("テスト通知を送信", key="line_test_notify_btn", use_container_width=True):
         test_ok, test_err = send_line_text_message("【テスト】miratech 故障通知のテストです。")
         if test_ok:
