@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-13a"
+APP_VERSION = "2026-08-13c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2178,6 +2178,114 @@ def _history_record_label(row, list_index=0):
         f"{clean_data_str(row.get('判定', ''))} [#{list_index + 1}]"
     )
 
+def _resolve_history_report_payload(report_row, target_me, default_model="", device_category=""):
+    report_detail, report_items, report_check_type, report_sections = resolve_history_inspection(report_row)
+    report_model = normalize_stored_model(
+        report_row.get("カテゴリ", ""),
+        report_row.get("機種", default_model),
+    ) or default_model or "不明"
+    report_kind = classify_inspection_type(
+        report_detail,
+        report_row.get("備考", ""),
+        report_row.get("判定", ""),
+    )
+    return {
+        "check_date": report_row.get("点検日", ""),
+        "me_no": target_me,
+        "model_name": report_model,
+        "inspector": report_row.get("実施者", "-"),
+        "result": report_row.get("判定", "-"),
+        "detail_text": report_detail,
+        "memo": report_row.get("備考", ""),
+        "device_category": clean_data_str(report_row.get("カテゴリ", device_category)),
+        "report_kind": report_kind,
+        "item_rows": report_items,
+        "check_type_label": report_check_type,
+        "report_sections": report_sections,
+    }
+
+def _render_history_report_from_row(report_row, target_me, default_model="", device_category="", key_suffix=""):
+    payload = _resolve_history_report_payload(report_row, target_me, default_model, device_category)
+    render_inspection_report(
+        payload["check_date"],
+        payload["me_no"],
+        payload["model_name"],
+        payload["inspector"],
+        payload["result"],
+        payload["detail_text"],
+        payload["memo"],
+        device_category=payload["device_category"],
+        report_kind=payload["report_kind"],
+        unique_key_suffix=str(key_suffix),
+        item_rows=payload["item_rows"],
+        check_type_label=payload["check_type_label"],
+        report_sections=payload["report_sections"],
+    )
+
+def render_device_inspection_history_reports(hist_df, target_me, default_model="", device_category="", key_prefix="hist"):
+    """機器別点検履歴：各行にチェック・PDFボタン"""
+    if hist_df is None or hist_df.empty:
+        st.info("この機器の点検履歴はありません。")
+        return
+
+    st.caption("☑ で点検結果表を表示、または「PDF」ボタンでその場ダウンロードできます。")
+
+    for list_index, (row_idx, row) in enumerate(hist_df.iterrows()):
+        row_me = clean_data_str(row.get("管理番号", target_me)) or target_me
+        row_model = normalize_stored_model(
+            row.get("カテゴリ", ""),
+            row.get("機種", default_model),
+        ) or default_model
+        row_category = clean_data_str(row.get("カテゴリ", device_category))
+        kind = classify_inspection_type(
+            get_history_detail_text(row), row.get("備考", ""), row.get("判定", ""),
+        )
+        row_key = f"{key_prefix}_{clean_data_str(row_me)}_{row_idx}"
+        col_chk, col_info, col_pdf = st.columns([0.7, 4.3, 1.2])
+        with col_chk:
+            show_report = st.checkbox(
+                "表示",
+                key=f"show_report_{row_key}",
+            )
+        with col_info:
+            me_label = f"管理番号: {row_me}　|　" if not target_me else ""
+            st.markdown(
+                f"**{clean_data_str(row.get('点検日', ''))}**　|　{me_label}{kind}　|　"
+                f"判定: **{clean_data_str(row.get('判定', '-'))}**　|　"
+                f"実施者: {clean_data_str(row.get('実施者', '-'))}"
+            )
+        with col_pdf:
+            payload = _resolve_history_report_payload(row, row_me, row_model, row_category)
+            pdf_bytes = build_inspection_report_pdf_bytes(
+                payload["check_date"],
+                payload["me_no"],
+                payload["model_name"],
+                payload["inspector"],
+                payload["result"],
+                payload["detail_text"],
+                payload["memo"],
+                device_category=payload["device_category"],
+                report_kind=payload["report_kind"],
+                item_rows=payload["item_rows"],
+                check_type_label=payload["check_type_label"],
+                report_sections=payload["report_sections"],
+            )
+            pdf_name = f"点検報告_{clean_data_str(row_me)}_{payload['check_date']}_{list_index + 1}.pdf"
+            st.download_button(
+                "PDF",
+                data=pdf_bytes,
+                file_name=pdf_name,
+                mime="application/pdf",
+                key=f"download_pdf_{row_key}",
+                use_container_width=True,
+            )
+
+        if show_report:
+            with st.container(border=True):
+                _render_history_report_from_row(
+                    row, row_me, row_model, row_category, key_suffix=row_key,
+                )
+
 def _section_item_reference(item):
     parts = []
     if item.get("note"):
@@ -2231,6 +2339,68 @@ def _render_inspection_sections_screen(report_sections):
             } for item in section.get("items", [])]
             if rows:
                 st.table(pd.DataFrame(rows))
+
+def render_inspection_live_preview(check_type, check_date, final_me_no, device_model, device_category,
+                                   inspector, result, memo, inc_o_checks,
+                                   chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+                                   flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+                                   flow_unit, press_unit,
+                                   infusion_pump_checks=None,
+                                   bubble_ad_water=0.0, bubble_ad_dry=0.0,
+                                   incu_i_checks=None, incu_i_measurements=None,
+                                   vsm_checks=None, vsm_measurements=None, vsm_meta=None,
+                                   ecg_checks=None, ecg_measurements=None,
+                                   ox370_checks=None, ox370_measurements=None):
+    """入力中の点検内容を結果表としてプレビュー表示"""
+    if not final_me_no:
+        return
+    detail_text, item_rows, report_sections = build_inspection_save_bundle(
+        check_type, device_category, result, inc_o_checks,
+        chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+        flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+        flow_unit, press_unit,
+        infusion_pump_checks=infusion_pump_checks,
+        bubble_ad_water=bubble_ad_water,
+        bubble_ad_dry=bubble_ad_dry,
+        device_model=device_model,
+        incu_i_checks=incu_i_checks,
+        incu_i_measurements=incu_i_measurements,
+        vsm_checks=vsm_checks,
+        vsm_measurements=vsm_measurements,
+        vsm_meta=vsm_meta,
+        ecg_checks=ecg_checks,
+        ecg_measurements=ecg_measurements,
+        ox370_checks=ox370_checks,
+        ox370_measurements=ox370_measurements,
+    )
+    st.markdown("---")
+    st.subheader("点検結果表（プレビュー）")
+    st.caption("チェックや数値を入力すると、この表が自動で更新されます。")
+    preview_title = (report_sections or {}).get("title") or inspection_report_title("定期点検")
+    st.write(f"**{preview_title}** （{check_date}）")
+    info_rows = {
+        "管理番号": final_me_no,
+        "機種(型式)": device_model,
+        "点検実施者": inspector or "（未入力）",
+        "総合評価": result,
+        "作業区分": check_type,
+    }
+    if device_category:
+        info_rows["機器種類"] = device_category
+    st.table(pd.DataFrame({"項目": list(info_rows.keys()), "内容": list(info_rows.values())}).set_index("項目"))
+    if report_sections and report_sections.get("sections"):
+        _render_inspection_sections_screen(report_sections)
+    elif item_rows:
+        st.table(pd.DataFrame({
+            "点検・測定項目": [r[0] for r in item_rows],
+            "点検実測値 / 結果": [r[1] for r in item_rows],
+            "判定": [r[2] for r in item_rows],
+        }))
+    elif detail_text:
+        st.markdown("**点検・測定結果**")
+        st.text(detail_text)
+    if memo and str(memo).strip():
+        st.info(f"備考・報告欄:\n{memo}")
 
 def _append_inspection_sections_pdf(story, report_sections, font_name):
     from reportlab.lib import colors
@@ -2511,6 +2681,7 @@ def render_inspection_history_viewer(conn, df_master, df_history):
         )
 
     working = df_history.copy() if df_history is not None and not df_history.empty else pd.DataFrame()
+    master_row = None
 
     if keyword:
         if df_master.empty:
@@ -2548,44 +2719,24 @@ def render_inspection_history_viewer(conn, df_master, df_history):
     list_df = working[display_cols].rename(columns={"_点検区分": "点検区分"})
     st.dataframe(_sanitize_dataframe(list_df), use_container_width=True, hide_index=True)
 
-    label_map = {}
-    for list_index, (row_idx, row) in enumerate(working.iterrows()):
-        label_map[_history_record_label(row, list_index)] = row_idx
-
-    selected_label = st.selectbox(
-        "印刷・表示する点検表を選択",
-        list(label_map.keys()),
-        key="hist_view_record_select",
-    )
-    report_row = working.loc[label_map[selected_label]]
-    report_me = clean_data_str(report_row.get("管理番号", ""))
-    report_model = normalize_stored_model(
-        report_row.get("カテゴリ", ""),
-        report_row.get("機種", ""),
-    ) or clean_data_str(report_row.get("機種", ""))
-    report_detail, report_items, report_check_type, report_sections = resolve_history_inspection(report_row)
-    report_kind = classify_inspection_type(
-        report_detail,
-        report_row.get("備考", ""),
-        report_row.get("判定", ""),
-    )
-
     st.markdown("---")
-    st.subheader("点検報告書プレビュー")
-    render_inspection_report(
-        report_row.get("点検日", ""),
-        report_me,
-        report_model,
-        report_row.get("実施者", "-"),
-        report_row.get("判定", "-"),
-        report_detail,
-        report_row.get("備考", ""),
-        device_category=clean_data_str(report_row.get("カテゴリ", "")),
-        report_kind=report_kind,
-        unique_key_suffix=str(label_map[selected_label]),
-        item_rows=report_items,
-        check_type_label=report_check_type,
-        report_sections=report_sections,
+    st.subheader("点検結果表（表示・PDF）")
+    hist_target_me = ""
+    hist_default_model = ""
+    hist_device_category = ""
+    if keyword and master_row is not None:
+        hist_target_me = clean_data_str(master_row.get("管理番号", ""))
+        hist_default_model = normalize_stored_model(
+            master_row.get("カテゴリ", ""),
+            master_row.get("機種", ""),
+        )
+        hist_device_category = clean_data_str(master_row.get("カテゴリ", ""))
+    render_device_inspection_history_reports(
+        working,
+        hist_target_me,
+        hist_default_model,
+        hist_device_category,
+        key_prefix="hist_view",
     )
 
 def ensure_inspection_history_worksheet():
@@ -3201,8 +3352,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
         ])
 
     detail_text = " | ".join(parts_list)
-    if check_type != "院内点検(miratech)":
-        detail_text = f"点検区分:{check_type}" + (f" | {detail_text}" if detail_text else "")
+    detail_text = f"点検区分:{check_type}" + (f" | {detail_text}" if detail_text else "")
     return detail_text
 
 def build_inspection_save_bundle(check_type, device_category, result, inc_o_checks,
@@ -3250,7 +3400,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
     )
-    if check_type != "院内点検(miratech)" and not item_rows:
+    if not item_rows:
         item_rows = [("点検区分", check_type, check_type)]
     detail_text = build_inspection_detail_text(
         check_type, device_category, result, inc_o_checks,
@@ -4561,130 +4711,141 @@ with tabs[0]:
         if "last_check_date" not in st.session_state:
             st.session_state["last_check_date"] = date.today()
 
-        saved_report = None
-        with st.form("check_form"):
-            check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
-            check_date = st.date_input("作業日", value=st.session_state["last_check_date"])
-            inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
+        check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
+        check_date = st.date_input("作業日", value=st.session_state["last_check_date"])
+        inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
 
-            if check_type == "院内点検(miratech)":
-                st.caption(INSPECTION_CHECK_LEGEND)
-                if device_category == "輸液ポンプ":
-                    st.write("**1. 外観・作動点検**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    with col2:
-                        chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+        if check_type == "院内点検(miratech)":
+            st.caption(INSPECTION_CHECK_LEGEND)
+            if device_category == "輸液ポンプ":
+                st.write("**1. 外観・作動点検**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                with col2:
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
-                    st.write("**2. 警報・作動点検**")
-                    alarm_col1, alarm_col2 = st.columns(2)
-                    for idx, label in enumerate(INFUSION_PUMP_ALARM_ITEMS):
-                        target_col = alarm_col1 if idx % 2 == 0 else alarm_col2
-                        with target_col:
-                            infusion_pump_checks[label] = st.radio(
-                                label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
-                                key=f"inp_alarm_{label}",
-                            )
+                st.write("**2. 警報・作動点検**")
+                alarm_col1, alarm_col2 = st.columns(2)
+                for idx, label in enumerate(INFUSION_PUMP_ALARM_ITEMS):
+                    target_col = alarm_col1 if idx % 2 == 0 else alarm_col2
+                    with target_col:
+                        infusion_pump_checks[label] = st.radio(
+                            label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
+                            key=f"inp_alarm_{label}",
+                        )
 
-                    st.write("**3. 機能・設定点検**")
-                    func_col1, func_col2 = st.columns(2)
-                    for idx, label in enumerate(INFUSION_PUMP_FUNCTION_ITEMS):
-                        target_col = func_col1 if idx % 2 == 0 else func_col2
-                        with target_col:
-                            infusion_pump_checks[label] = st.radio(
-                                label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
-                                key=f"inp_func_{label}",
-                            )
+                st.write("**3. 機能・設定点検**")
+                func_col1, func_col2 = st.columns(2)
+                for idx, label in enumerate(INFUSION_PUMP_FUNCTION_ITEMS):
+                    target_col = func_col1 if idx % 2 == 0 else func_col2
+                    with target_col:
+                        infusion_pump_checks[label] = st.radio(
+                            label, INSPECTION_CHECK_OPTIONS, horizontal=True, index=None,
+                            key=f"inp_func_{label}",
+                        )
 
-                    st.write("**4. 数値・精度チェック**")
-                    col_num1, col_num2 = st.columns(2)
-                    with col_num1:
-                        st.caption("流量精度 ※流量120ml/hr・10min・予定量20ml・許容範囲18～22ml")
-                        st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
-                        flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=20.0, step=0.1)
-                    with col_num2:
-                        st.caption("閉塞検出 ※流量120ml/h・「M」30～90kPa")
-                        st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
-                        occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=60.0, step=1.0)
+                st.write("**4. 数値・精度チェック**")
+                col_num1, col_num2 = st.columns(2)
+                with col_num1:
+                    st.caption("流量精度 ※流量120ml/hr・10min・予定量20ml・許容範囲18～22ml")
+                    st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
+                    flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=20.0, step=0.1)
+                with col_num2:
+                    st.caption("閉塞検出 ※流量120ml/h・「M」30～90kPa")
+                    st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
+                    occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=60.0, step=1.0)
 
-                    st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
-                    bubble_col1, bubble_col2 = st.columns(2)
-                    with bubble_col1:
-                        bubble_ad_water = st.number_input("水入り", min_value=0.0, value=100.0, step=1.0)
-                    with bubble_col2:
-                        bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=10.0, step=1.0)
+                st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
+                bubble_col1, bubble_col2 = st.columns(2)
+                with bubble_col1:
+                    bubble_ad_water = st.number_input("水入り", min_value=0.0, value=100.0, step=1.0)
+                with bubble_col2:
+                    bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=10.0, step=1.0)
 
-                elif device_category == "シリンジポンプ":
-                    st.write("**1. 外観・作動点検**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    with col2:
-                        chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+            elif device_category == "シリンジポンプ":
+                st.write("**1. 外観・作動点検**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                with col2:
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
-                    st.write("**2. 数値・精度チェック**")
-                    col_num1, col_num2 = st.columns(2)
-                    with col_num1:
-                        st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
-                        flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=float(max_flow + min_flow) / 2, step=0.1)
-                    with col_num2:
-                        st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
-                        occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
+                st.write("**2. 数値・精度チェック**")
+                col_num1, col_num2 = st.columns(2)
+                with col_num1:
+                    st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
+                    flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=float(max_flow + min_flow) / 2, step=0.1)
+                with col_num2:
+                    st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
+                    occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
 
-                elif device_category == "保育器":
-                    if is_incu_i_incubator(device_category, device_model):
-                        render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements)
-                    else:
-                        st.write("**2. 各種警報機能**")
-                        o3, o4 = st.columns(2)
-                        with o3:
-                            inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        with o4:
-                            inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-
-                        st.write("**3. 蘇生装置・酸素・外装**")
-                        o5, o6 = st.columns(2)
-                        with o5:
-                            inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        with o6:
-                            inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                            inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-
-                elif device_category == "生体情報モニタ":
-                    render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta)
-
-                elif device_category == "心電計":
-                    render_ecg_inspection_fields(ecg_checks, ecg_measurements)
-
-                elif is_ox370_blender(device_category, device_model):
-                    render_ox370_inspection_fields(ox370_checks, ox370_measurements)
-
+            elif device_category == "保育器":
+                if is_incu_i_incubator(device_category, device_model):
+                    render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements)
                 else:
-                    st.info("外部対応のため数値測定はスキップされます。")
+                    st.write("**2. 各種警報機能**")
+                    o3, o4 = st.columns(2)
+                    with o3:
+                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    with o4:
+                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
-            st.markdown("---")
-            result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True)
-            memo = st.text_area("備考・報告欄", placeholder="特記事項があれば記入してください")
+                    st.write("**3. 蘇生装置・酸素・外装**")
+                    o5, o6 = st.columns(2)
+                    with o5:
+                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    with o6:
+                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
-            submitted = st.form_submit_button("保存・決定", type="primary", use_container_width=True)
+            elif device_category == "生体情報モニタ":
+                render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta)
+
+            elif device_category == "心電計":
+                render_ecg_inspection_fields(ecg_checks, ecg_measurements)
+
+            elif is_ox370_blender(device_category, device_model):
+                render_ox370_inspection_fields(ox370_checks, ox370_measurements)
+
+            else:
+                st.info("外部対応のため数値測定はスキップされます。")
+
+        st.markdown("---")
+        result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True)
+        memo = st.text_area("備考・報告欄", placeholder="特記事項があれば記入してください")
+
+        render_inspection_live_preview(
+            check_type, check_date, final_me_no, device_model, device_category,
+            inspector, result, memo, inc_o_checks,
+            chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
+            flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
+            flow_unit, press_unit,
+            infusion_pump_checks=infusion_pump_checks,
+            bubble_ad_water=bubble_ad_water, bubble_ad_dry=bubble_ad_dry,
+            incu_i_checks=incu_i_checks, incu_i_measurements=incu_i_measurements,
+            vsm_checks=vsm_checks, vsm_measurements=vsm_measurements, vsm_meta=vsm_meta,
+            ecg_checks=ecg_checks, ecg_measurements=ecg_measurements,
+            ox370_checks=ox370_checks, ox370_measurements=ox370_measurements,
+        )
+        submitted = st.button("保存・決定", type="primary", use_container_width=True, key="check_save_btn")
 
         if submitted:
             if not final_me_no:
@@ -4849,6 +5010,50 @@ with tabs[2]:
             df = safe_read_worksheet(conn, view_cat_master)
             if df.empty:
                 st.info(f"「{view_cat_master}」シートにはまだデータがありません。")
+            elif view_cat_master == "点検履歴":
+                df_master_for_hist = safe_read_worksheet(conn, "機器マスター")
+                st.markdown("##### 機器別 点検結果表（表示・PDF）")
+                hist_search = st.text_input(
+                    "管理番号・旧番号 または シリアルNo",
+                    placeholder="例: INP0001",
+                    key="master_hist_device_search",
+                ).strip()
+                if hist_search:
+                    if df_master_for_hist.empty:
+                        st.warning("機器マスターが読み込めません。")
+                    else:
+                        master_row_hist, match_type_hist = find_device_row(df_master_for_hist, hist_search)
+                        if master_row_hist is None:
+                            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+                        else:
+                            target_me_hist = clean_data_str(master_row_hist.get("管理番号", ""))
+                            if match_type_hist == "旧番号":
+                                st.info(
+                                    f"旧番号「{clean_data_str(hist_search)}」→ 管理番号 {target_me_hist} の履歴を表示します。"
+                                )
+                            device_hist = filter_history_for_device(df, target_me_hist, master_row_hist)
+                            hist_model = normalize_stored_model(
+                                master_row_hist.get("カテゴリ", ""),
+                                master_row_hist.get("機種", ""),
+                            )
+                            hist_category = clean_data_str(master_row_hist.get("カテゴリ", ""))
+                            st.markdown(
+                                f"**{hist_model or '不明'}**（管理番号: {target_me_hist}）— "
+                                f"**{len(device_hist)} 件** の点検履歴"
+                            )
+                            render_device_inspection_history_reports(
+                                device_hist,
+                                target_me_hist,
+                                hist_model,
+                                hist_category,
+                                key_prefix="master_hist",
+                            )
+                else:
+                    st.caption("上の検索欄に管理番号などを入力すると、各履歴の点検結果表を表示・PDF保存できます。")
+
+                st.markdown("---")
+                st.markdown("##### 点検履歴シート（一覧）")
+                display_dataframe(df, hide_index=True, use_container_width=True)
             else:
                 display_dataframe(df, hide_index=True, use_container_width=True)
         except Exception as e:
@@ -5040,45 +5245,13 @@ with tabs[3]:
 
                         st.markdown("---")
                         st.write("#### 点検結果履歴（報告書表示・印刷）")
-                        st.caption("定期点検・修理対応の報告書をPDF保存または Cmd/Ctrl + P で印刷できます。")
-
-                        record_labels = {}
-                        for list_index, (row_idx, row) in enumerate(hist_df.iterrows()):
-                            record_labels[_history_record_label(row, list_index)] = row_idx
-
-                        selected_label = st.selectbox(
-                            "表示したい点検表を選択",
-                            list(record_labels.keys()),
-                            key=f"history_report_select_{target_me}",
+                        render_device_inspection_history_reports(
+                            hist_df,
+                            target_me,
+                            device_model,
+                            device_category,
+                            key_prefix=f"karte_{target_me}",
                         )
-
-                        if selected_label:
-                            report_data = hist_df.loc[record_labels[selected_label]]
-                            report_detail, report_items, report_check_type, report_sections = resolve_history_inspection(report_data)
-                            report_model = normalize_stored_model(
-                                report_data.get("カテゴリ", ""),
-                                report_data.get("機種", model_name),
-                            ) or model_name
-                            report_kind = classify_inspection_type(
-                                report_detail,
-                                report_data.get("備考", ""),
-                                report_data.get("判定", ""),
-                            )
-                            render_inspection_report(
-                                report_data.get("点検日", ""),
-                                target_me,
-                                report_model,
-                                report_data.get("実施者", "-"),
-                                report_data.get("判定", "-"),
-                                report_detail,
-                                report_data.get("備考", ""),
-                                device_category=clean_data_str(report_data.get("カテゴリ", device_category)),
-                                report_kind=report_kind,
-                                unique_key_suffix=f"karte_{record_labels[selected_label]}",
-                                item_rows=report_items,
-                                check_type_label=report_check_type,
-                                report_sections=report_sections,
-                            )
                     elif not has_fault:
                         st.info("この機器の点検・修理履歴はありません。")
                 elif karte_keyword:
