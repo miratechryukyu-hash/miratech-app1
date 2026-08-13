@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-07-04e"
+APP_VERSION = "2026-08-13a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -951,6 +951,167 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
         ],
     }
 
+# ATOM流量計付ブレンダ OX-370 定期点検表
+OX370_APPEARANCE_ITEMS = [
+    "本体外装部に劣化・破損はないか",
+    "ツマミはスムーズに動きますか",
+    "医療ガスの供給源に確実に接続されていますか",
+    "各ホースに劣化・破損はないか",
+]
+OX370_AIRTIGHTNESS_ITEMS = [
+    "流量調整ツマミを閉じた時、0L/minですか",
+]
+OX370_ALARM_VALVE_ITEMS = [
+    "供給ガスが酸素、または圧縮空気のどちらか一方だけになった場合、警報音がなりますか",
+    "供給ガスが酸素、または圧縮空気のどちらか一方だけになった場合、供給ガスの逆流はありませんか",
+]
+
+def _ox370_all_check_labels():
+    return OX370_APPEARANCE_ITEMS + OX370_AIRTIGHTNESS_ITEMS + OX370_ALARM_VALVE_ITEMS
+
+def default_ox370_checks():
+    return {label: "---" for label in _ox370_all_check_labels()}
+
+def default_ox370_measurements():
+    return {
+        "酸素濃度(21%設定)": 21.0,
+        "酸素濃度(60%設定)": 60.0,
+        "酸素濃度(100%設定)": 100.0,
+        "流量(10L/min設定)": 10.0,
+        "ブリード切替(60%設定)": 60.0,
+    }
+
+def is_ox370_blender(device_category, device_model):
+    if clean_data_str(device_category) == "酸素ブレンダ":
+        return True
+    model = clean_data_str(device_model).lower().replace(" ", "").replace("－", "-").replace("_", "-")
+    return any(token in model for token in ("ox-370", "ox370", "流量計付ブレンダ", "流量計ブレンダ"))
+
+def _validate_ox370_measurements(measurements, ng_items):
+    m = measurements
+    ranges = [
+        ("21%の設定値(18%~24%)", m["酸素濃度(21%設定)"], 18, 24),
+        ("60%の設定値(57%~63%)", m["酸素濃度(60%設定)"], 57, 63),
+        ("100%の設定値(97%~103%)", m["酸素濃度(100%設定)"], 97, 103),
+        ("10L/minの設定(9～11L/min)", m["流量(10L/min設定)"], 9, 11),
+        ("ブリード切替60%の設定値(57%～63%)", m["ブリード切替(60%設定)"], 57, 63),
+    ]
+    for name, val, lo, hi in ranges:
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            ng_items.append(name)
+            continue
+        if not (lo <= v <= hi):
+            ng_items.append(f"{name}（{v}）")
+
+def render_ox370_inspection_fields(ox370_checks, ox370_measurements):
+    """ATOM流量計付ブレンダ OX-370 定期点検表の入力欄"""
+    st.caption(INSPECTION_CHECK_LEGEND)
+
+    st.write("**1. 外観点検**")
+    _render_inspection_check_grid(OX370_APPEARANCE_ITEMS, ox370_checks, "ox370_app")
+
+    st.write("**2. 酸素濃度精度**")
+    st.caption("流量10L/min・校正済み酸素モニタで測定")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.caption("21%設定（18～24%）")
+        ox370_measurements["酸素濃度(21%設定)"] = st.number_input(
+            "21%設定 実測(%)", min_value=0.0, max_value=100.0,
+            value=float(ox370_measurements["酸素濃度(21%設定)"]), step=0.1, key="ox370_o2_21",
+        )
+    with c2:
+        st.caption("60%設定（57～63%）")
+        ox370_measurements["酸素濃度(60%設定)"] = st.number_input(
+            "60%設定 実測(%)", min_value=0.0, max_value=100.0,
+            value=float(ox370_measurements["酸素濃度(60%設定)"]), step=0.1, key="ox370_o2_60",
+        )
+    with c3:
+        st.caption("100%設定（97～103%）")
+        ox370_measurements["酸素濃度(100%設定)"] = st.number_input(
+            "100%設定 実測(%)", min_value=0.0, max_value=100.0,
+            value=float(ox370_measurements["酸素濃度(100%設定)"]), step=0.1, key="ox370_o2_100",
+        )
+
+    st.write("**3. 気密性確認**")
+    _render_inspection_check_grid(OX370_AIRTIGHTNESS_ITEMS, ox370_checks, "ox370_air")
+
+    st.write("**4. 流量精度**")
+    st.caption("10L/min設定（9～11L/min）")
+    ox370_measurements["流量(10L/min設定)"] = st.number_input(
+        "10L/min設定 実測(L/min)", min_value=0.0, max_value=30.0,
+        value=float(ox370_measurements["流量(10L/min設定)"]), step=0.1, key="ox370_flow_10",
+    )
+
+    st.write("**5. ブリード切替機能**")
+    st.caption("濃度60%・流量2L/min・ブリード切替ON（57～63%）")
+    ox370_measurements["ブリード切替(60%設定)"] = st.number_input(
+        "ブリード切替 60%設定 実測(%)", min_value=0.0, max_value=100.0,
+        value=float(ox370_measurements["ブリード切替(60%設定)"]), step=0.1, key="ox370_bleed_60",
+    )
+
+    st.write("**6. 差圧警報／逆止弁**")
+    _render_inspection_check_grid(OX370_ALARM_VALVE_ITEMS, ox370_checks, "ox370_alarm")
+
+def build_ox370_report_sections(ox370_checks, ox370_measurements):
+    c = ox370_checks
+    m = ox370_measurements
+    return {
+        "form": "ox370_blender",
+        "title": "ATOM流量計付ブレンダ OX-370 定期点検表",
+        "sections": [
+            {
+                "title": "1. 外観点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in OX370_APPEARANCE_ITEMS],
+            },
+            {
+                "title": "2. 酸素濃度精度",
+                "kind": "measure",
+                "items": [
+                    _measured_item("21%の設定値(18%~24%)", "流量10L/min", "18～24%",
+                                   f"{float(m['酸素濃度(21%設定)']):.1f}%",
+                                   measure_judge(18 <= float(m["酸素濃度(21%設定)"]) <= 24)),
+                    _measured_item("60%の設定値(57%~63%)", "流量10L/min", "57～63%",
+                                   f"{float(m['酸素濃度(60%設定)']):.1f}%",
+                                   measure_judge(57 <= float(m["酸素濃度(60%設定)"]) <= 63)),
+                    _measured_item("100%の設定値(97%~103%)", "流量10L/min", "97～103%",
+                                   f"{float(m['酸素濃度(100%設定)']):.1f}%",
+                                   measure_judge(97 <= float(m["酸素濃度(100%設定)"]) <= 103)),
+                ],
+            },
+            {
+                "title": "3. 気密性確認",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in OX370_AIRTIGHTNESS_ITEMS],
+            },
+            {
+                "title": "4. 流量精度",
+                "kind": "measure",
+                "items": [
+                    _measured_item("10L/minの設定(9～11L/min)", "酸素流量計で測定", "9～11L/min",
+                                   f"{float(m['流量(10L/min設定)']):.1f}L/min",
+                                   measure_judge(9 <= float(m["流量(10L/min設定)"]) <= 11)),
+                ],
+            },
+            {
+                "title": "5. ブリード切替機能",
+                "kind": "measure",
+                "items": [
+                    _measured_item("60%の設定値(57%～63%)", "濃度60%・流量2L/min・ブリードON", "57～63%",
+                                   f"{float(m['ブリード切替(60%設定)']):.1f}%",
+                                   measure_judge(57 <= float(m["ブリード切替(60%設定)"]) <= 63)),
+                ],
+            },
+            {
+                "title": "6. 差圧警報／逆止弁",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in OX370_ALARM_VALVE_ITEMS],
+            },
+        ],
+    }
+
 JST = ZoneInfo("Asia/Tokyo")
 
 def now_jst():
@@ -1791,7 +1952,9 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      vsm_measurements=None,
                                      vsm_meta=None,
                                      ecg_checks=None,
-                                     ecg_measurements=None):
+                                     ecg_measurements=None,
+                                     ox370_checks=None,
+                                     ox370_measurements=None):
     if check_type != "院内点検(miratech)":
         return None
     if device_category == "輸液ポンプ":
@@ -1831,6 +1994,11 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
         return build_ecg_report_sections(
             ecg_checks or default_ecg_checks(),
             ecg_measurements or default_ecg_measurements(),
+        )
+    if is_ox370_blender(device_category, device_model):
+        return build_ox370_report_sections(
+            ox370_checks or default_ox370_checks(),
+            ox370_measurements or default_ox370_measurements(),
         )
     return None
 
@@ -2892,8 +3060,10 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               vsm_checks=None,
                               vsm_measurements=None,
                               vsm_meta=None,
-                              ecg_checks=None,
-                              ecg_measurements=None):
+                                 ecg_checks=None,
+                                 ecg_measurements=None,
+                                 ox370_checks=None,
+                                 ox370_measurements=None):
     """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
     ng_items = []
     incomplete_items = []
@@ -2949,6 +3119,15 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
         if result == "使用可":
             _validate_ecg_measurements(
                 ecg_measurements or default_ecg_measurements(), ng_items,
+            )
+
+    elif is_ox370_blender(device_category, device_model):
+        _validate_check_dict(
+            ox370_checks or default_ox370_checks(), ng_items, incomplete_items,
+        )
+        if result == "使用可":
+            _validate_ox370_measurements(
+                ox370_measurements or default_ox370_measurements(), ng_items,
             )
 
     return ng_items, incomplete_items
@@ -3039,7 +3218,9 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  vsm_measurements=None,
                                  vsm_meta=None,
                                  ecg_checks=None,
-                                 ecg_measurements=None):
+                                 ecg_measurements=None,
+                                 ox370_checks=None,
+                                 ox370_measurements=None):
     """保存・印刷用に詳細データ・項目行・セクション構成をまとめて生成"""
     report_sections = build_inspection_report_sections(
         check_type, device_category, inc_o_checks,
@@ -3057,6 +3238,8 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         vsm_meta=vsm_meta,
         ecg_checks=ecg_checks,
         ecg_measurements=ecg_measurements,
+        ox370_checks=ox370_checks,
+        ox370_measurements=ox370_measurements,
     )
     item_rows = flatten_report_sections(report_sections) if report_sections else build_inspection_item_rows(
         check_type, device_category, result, inc_o_checks,
@@ -4095,7 +4278,7 @@ facility_name = st.session_state["logged_in_facility"]
 url_me_no = st.query_params.get("me_no", "")
 BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装置", "ネブライザー", "透視装置","無影灯","血圧計","超音波診断装置","超音波プローブ",
                    "ドプラ","検診台","血液ガス分析装置","吸引器類","加湿器類","分娩台","ベビーコット","哺乳瓶消毒器","煮沸消毒器","パルスオキシメーター",
-                   "聴力検査器","光線治療器","酸素モニタ","電気メス","麻酔器","生体情報モニタ","心電計","手術台","子宮鏡","滅菌装置", "その他"]
+                   "聴力検査器","光線治療器","酸素モニタ","酸素ブレンダ","電気メス","麻酔器","生体情報モニタ","心電計","手術台","子宮鏡","滅菌装置", "その他"]
 
 # AI設定（ログイン後すぐに gRPC を読み込まないよう REST API は利用時のみ呼び出す）
 try:
@@ -4273,6 +4456,8 @@ with tabs[0]:
     vsm_meta = default_vsm_meta()
     ecg_checks = default_ecg_checks()
     ecg_measurements = default_ecg_measurements()
+    ox370_checks = default_ox370_checks()
+    ox370_measurements = default_ox370_measurements()
     flow_acc = 0.0
     occ_press = 0.0
     bubble_ad_water = 100.0
@@ -4488,8 +4673,12 @@ with tabs[0]:
 
                 elif device_category == "心電計":
                     render_ecg_inspection_fields(ecg_checks, ecg_measurements)
-            else:
-                st.info("外部対応のため数値測定はスキップされます。")
+
+                elif is_ox370_blender(device_category, device_model):
+                    render_ox370_inspection_fields(ox370_checks, ox370_measurements)
+
+                else:
+                    st.info("外部対応のため数値測定はスキップされます。")
 
             st.markdown("---")
             result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True)
@@ -4519,6 +4708,8 @@ with tabs[0]:
                     vsm_meta=vsm_meta,
                     ecg_checks=ecg_checks,
                     ecg_measurements=ecg_measurements,
+                    ox370_checks=ox370_checks,
+                    ox370_measurements=ox370_measurements,
                 )
                 detail_text, item_rows, report_sections = build_inspection_save_bundle(
                     check_type, device_category, result, inc_o_checks,
@@ -4536,6 +4727,8 @@ with tabs[0]:
                     vsm_meta=vsm_meta,
                     ecg_checks=ecg_checks,
                     ecg_measurements=ecg_measurements,
+                    ox370_checks=ox370_checks,
+                    ox370_measurements=ox370_measurements,
                 )
                 save_payload = {
                     "final_me_no": final_me_no,
