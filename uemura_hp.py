@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-13c"
+APP_VERSION = "2026-08-13d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -175,6 +175,7 @@ INCU_I_FUNCTION_ITEMS = [
     "ファンモーターから異音がないか",
     "傾斜装置はスムーズに動作するか",
 ]
+INCU_I_WEIGHT_CHECK_LABEL = "体重計測"
 INCU_I_OPERATION_CHECK_ITEMS = [
     "加湿槽・カートリッジタンクに破損・変形はないか",
     "酸素センサーにて21%校正ができるか",
@@ -203,7 +204,7 @@ INCU_I_LEGACY_CHECKS = {
 def default_incu_i_checks():
     checks = {}
     for label in (
-        INCU_I_APPEARANCE_ITEMS + INCU_I_FUNCTION_ITEMS
+        INCU_I_APPEARANCE_ITEMS + INCU_I_FUNCTION_ITEMS + [INCU_I_WEIGHT_CHECK_LABEL]
         + INCU_I_OPERATION_CHECK_ITEMS + INCU_I_ALARM_ITEMS
     ):
         checks[label] = "---"
@@ -234,7 +235,9 @@ def is_incu_i_incubator(device_category, device_model):
     if clean_data_str(device_category) != "保育器":
         return False
     model = clean_data_str(device_model).lower().replace(" ", "")
-    return any(token in model for token in ("incui", "incu-i", "incu_i", "インキュi", "インキュｉ"))
+    return any(token in model for token in (
+        "incui", "incu-i", "incu_i", "インキュi", "インキュｉ", "rabee",
+    ))
 
 def _incu_i_symbol_judge(val):
     sym = clean_data_str(val)
@@ -272,19 +275,31 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
 
     st.write("**体重モニタテスト**")
     st.caption("体重計の校正(5kg) → サービス画面より")
-    w1, w2 = st.columns(2)
-    with w1:
-        st.caption("中央 表示値: 5000±5g")
-        incu_i_measurements["体重モニタ(中央)"] = st.number_input(
-            "中央 表示値 (g)", value=float(incu_i_measurements["体重モニタ(中央)"]), step=1.0,
-            key="incu_i_w_center",
-        )
-    with w2:
-        st.caption("四隅 表示値: 5000±10g")
-        incu_i_measurements["体重モニタ(四隅)"] = st.number_input(
-            "四隅 表示値 (g)", value=float(incu_i_measurements["体重モニタ(四隅)"]), step=1.0,
-            key="incu_i_w_corner",
-        )
+    incu_i_checks[INCU_I_WEIGHT_CHECK_LABEL] = st.radio(
+        INCU_I_WEIGHT_CHECK_LABEL,
+        opts,
+        horizontal=True,
+        index=None,
+        key="incu_i_weight_check",
+        help="体重計測機能がない機器は「---（機能なし）」を選択してください。",
+    )
+    weight_status = normalize_check_symbol(incu_i_checks.get(INCU_I_WEIGHT_CHECK_LABEL, ""))
+    if weight_status == "---":
+        st.caption("機能なしのため、数値入力は不要です。")
+    else:
+        w1, w2 = st.columns(2)
+        with w1:
+            st.caption("中央 表示値: 5000±5g")
+            incu_i_measurements["体重モニタ(中央)"] = st.number_input(
+                "中央 表示値 (g)", value=float(incu_i_measurements["体重モニタ(中央)"]), step=1.0,
+                key="incu_i_w_center",
+            )
+        with w2:
+            st.caption("四隅 表示値: 5000±10g")
+            incu_i_measurements["体重モニタ(四隅)"] = st.number_input(
+                "四隅 表示値 (g)", value=float(incu_i_measurements["体重モニタ(四隅)"]), step=1.0,
+                key="incu_i_w_corner",
+            )
 
     st.write("**3. 動作点検（保育器モード）**")
     incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[0]] = st.radio(
@@ -403,6 +418,24 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
             "患者漏れ電流I 単一故障 (μA)", incu_i_measurements["患者漏れ電流I(単一故障)"], "incu_i_pat_f",
         )
 
+def _incu_i_weight_report_items(incu_i_checks, incu_i_measurements):
+    m = incu_i_measurements
+    weight_status = normalize_check_symbol(incu_i_checks.get(INCU_I_WEIGHT_CHECK_LABEL, "")) or "---"
+    items = [_check_item(INCU_I_WEIGHT_CHECK_LABEL, weight_status)]
+    if weight_status == "---":
+        items.extend([
+            _measured_item("中央 表示値", "5000±5g", "5000±5g", "-", "---"),
+            _measured_item("四隅 表示値", "5000±10g", "5000±10g", "-", "---"),
+        ])
+    else:
+        items.extend([
+            _measured_item("中央 表示値", "5000±5g", "5000±5g", f"{m['体重モニタ(中央)']}g",
+                           _incu_i_range_judge(m["体重モニタ(中央)"], 4995, 5005)),
+            _measured_item("四隅 表示値", "5000±10g", "5000±10g", f"{m['体重モニタ(四隅)']}g",
+                           _incu_i_range_judge(m["体重モニタ(四隅)"], 4990, 5010)),
+        ])
+    return items
+
 def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
     m = incu_i_measurements
     c = incu_i_checks
@@ -422,13 +455,8 @@ def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
             },
             {
                 "title": "体重モニタテスト",
-                "kind": "measure",
-                "items": [
-                    _measured_item("中央 表示値", "5000±5g", "5000±5g", f"{m['体重モニタ(中央)']}g",
-                                   _incu_i_range_judge(m["体重モニタ(中央)"], 4995, 5005)),
-                    _measured_item("四隅 表示値", "5000±10g", "5000±10g", f"{m['体重モニタ(四隅)']}g",
-                                   _incu_i_range_judge(m["体重モニタ(四隅)"], 4990, 5010)),
-                ],
+                "kind": "mixed",
+                "items": _incu_i_weight_report_items(c, m),
             },
             {
                 "title": "3. 動作点検（保育器モード）",
@@ -3168,11 +3196,17 @@ def _validate_check_dict(checks_dict, ng_items, incomplete_items):
         elif is_check_ng(val):
             ng_items.append(label)
 
-def _validate_incu_i_measurements(measurements, ng_items):
+def _validate_incu_i_measurements(measurements, ng_items, incu_i_checks=None):
     m = measurements
-    ranges = [
-        ("体重モニタ(中央)", m["体重モニタ(中央)"], 4995, 5005, "g"),
-        ("体重モニタ(四隅)", m["体重モニタ(四隅)"], 4990, 5010, "g"),
+    checks = incu_i_checks or {}
+    weight_status = normalize_check_symbol(checks.get(INCU_I_WEIGHT_CHECK_LABEL, ""))
+    ranges = []
+    if weight_status == "〇":
+        ranges.extend([
+            ("体重モニタ(中央)", m["体重モニタ(中央)"], 4995, 5005, "g"),
+            ("体重モニタ(四隅)", m["体重モニタ(四隅)"], 4990, 5010, "g"),
+        ])
+    ranges.extend([
         ("湿度コントロール(表示)", m["湿度コントロール(表示)"], 87, 93, "%"),
         ("湿度コントロール(実測)", m["湿度コントロール(実測)"], 80, 100, "%"),
         ("マニュアルコントロール(表示)", m["マニュアルコントロール(表示)"], 33, 35, "℃"),
@@ -3181,7 +3215,7 @@ def _validate_incu_i_measurements(measurements, ng_items):
         ("サーボコントロール(実測)", m["サーボコントロール(実測)"], 33.5, 34.5, "℃"),
         ("酸素濃度制御(表示)", m["酸素濃度制御(表示)"], 37, 43, "%"),
         ("酸素濃度制御(実測)", m["酸素濃度制御(実測)"], 37, 43, "%"),
-    ]
+    ])
     for name, val, lo, hi, unit in ranges:
         if not (lo <= val <= hi):
             ng_items.append(f"{name}（{val}{unit}）")
@@ -3249,7 +3283,9 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             )
             if result == "使用可":
                 _validate_incu_i_measurements(
-                    incu_i_measurements or default_incu_i_measurements(), ng_items,
+                    incu_i_measurements or default_incu_i_measurements(),
+                    ng_items,
+                    incu_i_checks=incu_i_checks,
                 )
         else:
             _validate_check_dict(inc_o_checks, ng_items, incomplete_items)
