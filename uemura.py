@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-13c"
+APP_VERSION = "2026-08-13e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -176,6 +176,19 @@ INCU_I_FUNCTION_ITEMS = [
     "傾斜装置はスムーズに動作するか",
 ]
 INCU_I_WEIGHT_CHECK_LABEL = "体重計測"
+INCU_I_HUMIDITY_CHECK_LABEL = "湿度コントロール"
+INCU_I_MANUAL_CHECK_LABEL = "マニュアルコントロール"
+INCU_I_SERVO_CHECK_LABEL = "サーボコントロール"
+INCU_I_O2_CONTROL_CHECK_LABEL = "酸素濃度制御"
+INCU_I_O2_PORT_CHECK_LABEL = "酸素接続口1"
+INCU_I_OPTIONAL_TEST_LABELS = [
+    INCU_I_WEIGHT_CHECK_LABEL,
+    INCU_I_HUMIDITY_CHECK_LABEL,
+    INCU_I_MANUAL_CHECK_LABEL,
+    INCU_I_SERVO_CHECK_LABEL,
+    INCU_I_O2_CONTROL_CHECK_LABEL,
+    INCU_I_O2_PORT_CHECK_LABEL,
+]
 INCU_I_OPERATION_CHECK_ITEMS = [
     "加湿槽・カートリッジタンクに破損・変形はないか",
     "酸素センサーにて21%校正ができるか",
@@ -204,7 +217,7 @@ INCU_I_LEGACY_CHECKS = {
 def default_incu_i_checks():
     checks = {}
     for label in (
-        INCU_I_APPEARANCE_ITEMS + INCU_I_FUNCTION_ITEMS + [INCU_I_WEIGHT_CHECK_LABEL]
+        INCU_I_APPEARANCE_ITEMS + INCU_I_FUNCTION_ITEMS + INCU_I_OPTIONAL_TEST_LABELS
         + INCU_I_OPERATION_CHECK_ITEMS + INCU_I_ALARM_ITEMS
     ):
         checks[label] = "---"
@@ -252,6 +265,45 @@ def _incu_i_symbol_judge(val):
 def _incu_i_range_judge(val, lo, hi):
     return "〇" if lo <= val <= hi else "×"
 
+def _incu_i_optional_check_status(incu_i_checks, label):
+    return normalize_check_symbol(incu_i_checks.get(label, ""))
+
+def _render_incu_i_optional_test_block(
+    title,
+    caption,
+    check_label,
+    incu_i_checks,
+    incu_i_measurements,
+    fields,
+    key_prefix,
+):
+    """機能なし(---)対応の判定＋数値入力ブロック"""
+    opts = INSPECTION_CHECK_OPTIONS
+    if title:
+        st.write(title)
+    if caption:
+        st.caption(caption)
+    incu_i_checks[check_label] = st.radio(
+        check_label,
+        opts,
+        horizontal=True,
+        index=None,
+        key=f"{key_prefix}_check",
+        help="機能がない機器は「---（機能なし）」を選択してください。",
+    )
+    if _incu_i_optional_check_status(incu_i_checks, check_label) == "---":
+        st.caption("機能なしのため、数値入力は不要です。")
+        return
+    cols = st.columns(len(fields))
+    for col, (meas_key, input_label, step) in zip(cols, fields):
+        with col:
+            incu_i_measurements[meas_key] = st.number_input(
+                input_label,
+                value=float(incu_i_measurements[meas_key]),
+                step=step,
+                key=f"{key_prefix}_{meas_key}",
+            )
+
 def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     """インキュi 定期点検表の入力欄（フォーム内で呼び出す）"""
     opts = INSPECTION_CHECK_OPTIONS
@@ -275,103 +327,90 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
 
     st.write("**体重モニタテスト**")
     st.caption("体重計の校正(5kg) → サービス画面より")
-    incu_i_checks[INCU_I_WEIGHT_CHECK_LABEL] = st.radio(
+    _render_incu_i_optional_test_block(
+        "",
+        "",
         INCU_I_WEIGHT_CHECK_LABEL,
-        opts,
-        horizontal=True,
-        index=None,
-        key="incu_i_weight_check",
-        help="体重計測機能がない機器は「---（機能なし）」を選択してください。",
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("体重モニタ(中央)", "中央 表示値 (g) ※5000±5g", 1.0),
+            ("体重モニタ(四隅)", "四隅 表示値 (g) ※5000±10g", 1.0),
+        ],
+        "incu_i_weight",
     )
-    weight_status = normalize_check_symbol(incu_i_checks.get(INCU_I_WEIGHT_CHECK_LABEL, ""))
-    if weight_status == "---":
-        st.caption("機能なしのため、数値入力は不要です。")
-    else:
-        w1, w2 = st.columns(2)
-        with w1:
-            st.caption("中央 表示値: 5000±5g")
-            incu_i_measurements["体重モニタ(中央)"] = st.number_input(
-                "中央 表示値 (g)", value=float(incu_i_measurements["体重モニタ(中央)"]), step=1.0,
-                key="incu_i_w_center",
-            )
-        with w2:
-            st.caption("四隅 表示値: 5000±10g")
-            incu_i_measurements["体重モニタ(四隅)"] = st.number_input(
-                "四隅 表示値 (g)", value=float(incu_i_measurements["体重モニタ(四隅)"]), step=1.0,
-                key="incu_i_w_corner",
-            )
 
     st.write("**3. 動作点検（保育器モード）**")
     incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[0]] = st.radio(
         INCU_I_OPERATION_CHECK_ITEMS[0], opts, horizontal=True, index=None, key="incu_i_op_tank",
     )
 
-    st.write("**湿度コントロールテスト**")
-    st.caption("設定90% / 表示90±3% / 実測90±10%　:red[**※必ず精製水使用する**]")
-    
-    h1, h2 = st.columns(2)
-    with h1:
-        incu_i_measurements["湿度コントロール(表示)"] = st.number_input(
-            "湿度 表示値 (%)", value=float(incu_i_measurements["湿度コントロール(表示)"]), step=0.1,
-            key="incu_i_hum_disp",
-        )
-    with h2:
-        incu_i_measurements["湿度コントロール(実測)"] = st.number_input(
-            "湿度 実測値 (%)", value=float(incu_i_measurements["湿度コントロール(実測)"]), step=0.1,
-            key="incu_i_hum_meas",
-        )
+    _render_incu_i_optional_test_block(
+        "**湿度コントロールテスト**",
+        "設定90% / 表示90±3% / 実測90±10%　:red[**※必ず精製水使用する**]",
+        INCU_I_HUMIDITY_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("湿度コントロール(表示)", "湿度 表示値 (%)", 0.1),
+            ("湿度コントロール(実測)", "湿度 実測値 (%)", 0.1),
+        ],
+        "incu_i_hum",
+    )
 
-    st.write("**マニュアルコントロールテスト**")
-    st.caption("設定34℃ / 表示・実測 34±1℃")
-    m1, m2 = st.columns(2)
-    with m1:
-        incu_i_measurements["マニュアルコントロール(表示)"] = st.number_input(
-            "マニュアル 表示値 (℃)", value=float(incu_i_measurements["マニュアルコントロール(表示)"]), step=0.1,
-            key="incu_i_man_disp",
-        )
-    with m2:
-        incu_i_measurements["マニュアルコントロール(実測)"] = st.number_input(
-            "マニュアル 実測値 (℃)", value=float(incu_i_measurements["マニュアルコントロール(実測)"]), step=0.1,
-            key="incu_i_man_meas",
-        )
+    _render_incu_i_optional_test_block(
+        "**マニュアルコントロールテスト**",
+        "設定34℃ / 表示・実測 34±1℃",
+        INCU_I_MANUAL_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("マニュアルコントロール(表示)", "マニュアル 表示値 (℃)", 0.1),
+            ("マニュアルコントロール(実測)", "マニュアル 実測値 (℃)", 0.1),
+        ],
+        "incu_i_man",
+    )
 
-    st.write("**サーボコントロールテスト**")
-    st.caption("設定34℃ / 表示・実測 34±0.5℃ :red[**※温度センサーを本体に接続する**]")
-    s1, s2 = st.columns(2)
-    with s1:
-        incu_i_measurements["サーボコントロール(表示)"] = st.number_input(
-            "サーボ 表示値 (℃)", value=float(incu_i_measurements["サーボコントロール(表示)"]), step=0.1,
-            key="incu_i_srv_disp",
-        )
-    with s2:
-        incu_i_measurements["サーボコントロール(実測)"] = st.number_input(
-            "サーボ 実測値 (℃)", value=float(incu_i_measurements["サーボコントロール(実測)"]), step=0.1,
-            key="incu_i_srv_meas",
-        )
+    _render_incu_i_optional_test_block(
+        "**サーボコントロールテスト**",
+        "設定34℃ / 表示・実測 34±0.5℃ :red[**※温度センサーを本体に接続する**]",
+        INCU_I_SERVO_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("サーボコントロール(表示)", "サーボ 表示値 (℃)", 0.1),
+            ("サーボコントロール(実測)", "サーボ 実測値 (℃)", 0.1),
+        ],
+        "incu_i_srv",
+    )
 
     incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[1]] = st.radio(
         INCU_I_OPERATION_CHECK_ITEMS[1], opts, horizontal=True, index=None, key="incu_i_o2_cal",
     )
 
-    st.write("**酸素濃度制御テスト**")
-    st.caption("設定40% / 表示・実測 40±3%")
-    o1, o2 = st.columns(2)
-    with o1:
-        incu_i_measurements["酸素濃度制御(表示)"] = st.number_input(
-            "酸素濃度 表示値 (%)", value=float(incu_i_measurements["酸素濃度制御(表示)"]), step=0.1,
-            key="incu_i_o2_disp",
-        )
-    with o2:
-        incu_i_measurements["酸素濃度制御(実測)"] = st.number_input(
-            "酸素濃度 実測値 (%)", value=float(incu_i_measurements["酸素濃度制御(実測)"]), step=0.1,
-            key="incu_i_o2_meas",
-        )
+    _render_incu_i_optional_test_block(
+        "**酸素濃度制御テスト**",
+        "設定40% / 表示・実測 40±3%",
+        INCU_I_O2_CONTROL_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("酸素濃度制御(表示)", "酸素濃度 表示値 (%)", 0.1),
+            ("酸素濃度制御(実測)", "酸素濃度 実測値 (%)", 0.1),
+        ],
+        "incu_i_o2",
+    )
 
-    st.write("**酸素接続口1テスト**")
-    st.caption("設定流量10L/min / 実測65%以上")
-    incu_i_measurements["酸素接続口1(実測)"] = st.number_input(
-        "酸素接続口1 実測値 (%)", value=float(incu_i_measurements["酸素接続口1(実測)"]), step=0.1,
-        key="incu_i_o2_port",
+    _render_incu_i_optional_test_block(
+        "**酸素接続口1テスト**",
+        "設定流量10L/min / 実測65%以上",
+        INCU_I_O2_PORT_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            ("酸素接続口1(実測)", "酸素接続口1 実測値 (%)", 0.1),
+        ],
+        "incu_i_o2_port",
     )
 
     incu_i_checks[INCU_I_OPERATION_CHECK_ITEMS[2]] = st.radio(
@@ -418,22 +457,90 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
             "患者漏れ電流I 単一故障 (μA)", incu_i_measurements["患者漏れ電流I(単一故障)"], "incu_i_pat_f",
         )
 
-def _incu_i_weight_report_items(incu_i_checks, incu_i_measurements):
+def _incu_i_optional_test_report_items(check_label, incu_i_checks, incu_i_measurements, measured_specs):
+    """判定＋数値項目の報告書行（--- のとき数値は省略表示）"""
     m = incu_i_measurements
-    weight_status = normalize_check_symbol(incu_i_checks.get(INCU_I_WEIGHT_CHECK_LABEL, "")) or "---"
-    items = [_check_item(INCU_I_WEIGHT_CHECK_LABEL, weight_status)]
-    if weight_status == "---":
-        items.extend([
-            _measured_item("中央 表示値", "5000±5g", "5000±5g", "-", "---"),
-            _measured_item("四隅 表示値", "5000±10g", "5000±10g", "-", "---"),
-        ])
-    else:
-        items.extend([
-            _measured_item("中央 表示値", "5000±5g", "5000±5g", f"{m['体重モニタ(中央)']}g",
-                           _incu_i_range_judge(m["体重モニタ(中央)"], 4995, 5005)),
-            _measured_item("四隅 表示値", "5000±10g", "5000±10g", f"{m['体重モニタ(四隅)']}g",
-                           _incu_i_range_judge(m["体重モニタ(四隅)"], 4990, 5010)),
-        ])
+    status = _incu_i_optional_check_status(incu_i_checks, check_label) or "---"
+    items = [_check_item(check_label, status)]
+    if status == "---":
+        for spec in measured_specs:
+            items.append(_measured_item(spec["name"], spec["note"], spec["standard"], "-", "---"))
+        return items
+    for spec in measured_specs:
+        val = m[spec["meas_key"]]
+        suffix = spec.get("suffix", "")
+        if spec.get("min_ok") is not None:
+            judge = "〇" if val >= spec["min_ok"] else "×"
+        else:
+            judge = _incu_i_range_judge(val, spec["lo"], spec["hi"])
+        items.append(_measured_item(
+            spec["name"], spec["note"], spec["standard"], f"{val}{suffix}", judge,
+        ))
+    return items
+
+def _incu_i_weight_report_items(incu_i_checks, incu_i_measurements):
+    return _incu_i_optional_test_report_items(
+        INCU_I_WEIGHT_CHECK_LABEL,
+        incu_i_checks,
+        incu_i_measurements,
+        [
+            {"name": "中央 表示値", "note": "5000±5g", "standard": "5000±5g",
+             "meas_key": "体重モニタ(中央)", "lo": 4995, "hi": 5005, "suffix": "g"},
+            {"name": "四隅 表示値", "note": "5000±10g", "standard": "5000±10g",
+             "meas_key": "体重モニタ(四隅)", "lo": 4990, "hi": 5010, "suffix": "g"},
+        ],
+    )
+
+def _incu_i_operation_report_items(incu_i_checks, incu_i_measurements):
+    c = incu_i_checks
+    items = [
+        _check_item(INCU_I_OPERATION_CHECK_ITEMS[0], c.get(INCU_I_OPERATION_CHECK_ITEMS[0], "---")),
+    ]
+    items.extend(_incu_i_optional_test_report_items(
+        INCU_I_HUMIDITY_CHECK_LABEL, c, incu_i_measurements,
+        [
+            {"name": "湿度コントロール(表示)", "note": "設定90% / 表示90±3%", "standard": "90±3%",
+             "meas_key": "湿度コントロール(表示)", "lo": 87, "hi": 93, "suffix": "%"},
+            {"name": "湿度コントロール(実測)", "note": "実測90±10%", "standard": "90±10%",
+             "meas_key": "湿度コントロール(実測)", "lo": 80, "hi": 100, "suffix": "%"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        INCU_I_MANUAL_CHECK_LABEL, c, incu_i_measurements,
+        [
+            {"name": "マニュアルコントロール(表示)", "note": "設定34℃ / 34±1℃", "standard": "34±1℃",
+             "meas_key": "マニュアルコントロール(表示)", "lo": 33, "hi": 35, "suffix": "℃"},
+            {"name": "マニュアルコントロール(実測)", "note": "設定34℃ / 34±1℃", "standard": "34±1℃",
+             "meas_key": "マニュアルコントロール(実測)", "lo": 33, "hi": 35, "suffix": "℃"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        INCU_I_SERVO_CHECK_LABEL, c, incu_i_measurements,
+        [
+            {"name": "サーボコントロール(表示)", "note": "設定34℃ / 34±0.5℃", "standard": "34±0.5℃",
+             "meas_key": "サーボコントロール(表示)", "lo": 33.5, "hi": 34.5, "suffix": "℃"},
+            {"name": "サーボコントロール(実測)", "note": "設定34℃ / 34±0.5℃", "standard": "34±0.5℃",
+             "meas_key": "サーボコントロール(実測)", "lo": 33.5, "hi": 34.5, "suffix": "℃"},
+        ],
+    ))
+    items.append(_check_item(INCU_I_OPERATION_CHECK_ITEMS[1], c.get(INCU_I_OPERATION_CHECK_ITEMS[1], "---")))
+    items.extend(_incu_i_optional_test_report_items(
+        INCU_I_O2_CONTROL_CHECK_LABEL, c, incu_i_measurements,
+        [
+            {"name": "酸素濃度制御(表示)", "note": "設定40% / 40±3%", "standard": "40±3%",
+             "meas_key": "酸素濃度制御(表示)", "lo": 37, "hi": 43, "suffix": "%"},
+            {"name": "酸素濃度制御(実測)", "note": "設定40% / 40±3%", "standard": "40±3%",
+             "meas_key": "酸素濃度制御(実測)", "lo": 37, "hi": 43, "suffix": "%"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        INCU_I_O2_PORT_CHECK_LABEL, c, incu_i_measurements,
+        [
+            {"name": "酸素接続口1", "note": "10L/min / 65%以上", "standard": "65%以上",
+             "meas_key": "酸素接続口1(実測)", "min_ok": 65, "suffix": "%"},
+        ],
+    ))
+    items.append(_check_item(INCU_I_OPERATION_CHECK_ITEMS[2], c.get(INCU_I_OPERATION_CHECK_ITEMS[2], "---")))
     return items
 
 def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
@@ -461,38 +568,7 @@ def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
             {
                 "title": "3. 動作点検（保育器モード）",
                 "kind": "mixed",
-                "items": [
-                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[0], c.get(INCU_I_OPERATION_CHECK_ITEMS[0], "---")),
-                    _measured_item("湿度コントロール(表示)", "設定90% / 表示90±3%", "90±3%",
-                                   f"{m['湿度コントロール(表示)']}%",
-                                   _incu_i_range_judge(m["湿度コントロール(表示)"], 87, 93)),
-                    _measured_item("湿度コントロール(実測)", "実測90±10%", "90±10%",
-                                   f"{m['湿度コントロール(実測)']}%",
-                                   _incu_i_range_judge(m["湿度コントロール(実測)"], 80, 100)),
-                    _measured_item("マニュアルコントロール(表示)", "設定34℃ / 34±1℃", "34±1℃",
-                                   f"{m['マニュアルコントロール(表示)']}℃",
-                                   _incu_i_range_judge(m["マニュアルコントロール(表示)"], 33, 35)),
-                    _measured_item("マニュアルコントロール(実測)", "設定34℃ / 34±1℃", "34±1℃",
-                                   f"{m['マニュアルコントロール(実測)']}℃",
-                                   _incu_i_range_judge(m["マニュアルコントロール(実測)"], 33, 35)),
-                    _measured_item("サーボコントロール(表示)", "設定34℃ / 34±0.5℃", "34±0.5℃",
-                                   f"{m['サーボコントロール(表示)']}℃",
-                                   _incu_i_range_judge(m["サーボコントロール(表示)"], 33.5, 34.5)),
-                    _measured_item("サーボコントロール(実測)", "設定34℃ / 34±0.5℃", "34±0.5℃",
-                                   f"{m['サーボコントロール(実測)']}℃",
-                                   _incu_i_range_judge(m["サーボコントロール(実測)"], 33.5, 34.5)),
-                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[1], c.get(INCU_I_OPERATION_CHECK_ITEMS[1], "---")),
-                    _measured_item("酸素濃度制御(表示)", "設定40% / 40±3%", "40±3%",
-                                   f"{m['酸素濃度制御(表示)']}%",
-                                   _incu_i_range_judge(m["酸素濃度制御(表示)"], 37, 43)),
-                    _measured_item("酸素濃度制御(実測)", "設定40% / 40±3%", "40±3%",
-                                   f"{m['酸素濃度制御(実測)']}%",
-                                   _incu_i_range_judge(m["酸素濃度制御(実測)"], 37, 43)),
-                    _measured_item("酸素接続口1", "10L/min / 65%以上", "65%以上",
-                                   f"{m['酸素接続口1(実測)']}%",
-                                   "〇" if m["酸素接続口1(実測)"] >= 65 else "×"),
-                    _check_item(INCU_I_OPERATION_CHECK_ITEMS[2], c.get(INCU_I_OPERATION_CHECK_ITEMS[2], "---")),
-                ],
+                "items": _incu_i_operation_report_items(c, m),
             },
             {
                 "title": "4. 警報",
@@ -3199,28 +3275,40 @@ def _validate_check_dict(checks_dict, ng_items, incomplete_items):
 def _validate_incu_i_measurements(measurements, ng_items, incu_i_checks=None):
     m = measurements
     checks = incu_i_checks or {}
-    weight_status = normalize_check_symbol(checks.get(INCU_I_WEIGHT_CHECK_LABEL, ""))
     ranges = []
-    if weight_status == "〇":
-        ranges.extend([
-            ("体重モニタ(中央)", m["体重モニタ(中央)"], 4995, 5005, "g"),
-            ("体重モニタ(四隅)", m["体重モニタ(四隅)"], 4990, 5010, "g"),
-        ])
-    ranges.extend([
-        ("湿度コントロール(表示)", m["湿度コントロール(表示)"], 87, 93, "%"),
-        ("湿度コントロール(実測)", m["湿度コントロール(実測)"], 80, 100, "%"),
-        ("マニュアルコントロール(表示)", m["マニュアルコントロール(表示)"], 33, 35, "℃"),
-        ("マニュアルコントロール(実測)", m["マニュアルコントロール(実測)"], 33, 35, "℃"),
-        ("サーボコントロール(表示)", m["サーボコントロール(表示)"], 33.5, 34.5, "℃"),
-        ("サーボコントロール(実測)", m["サーボコントロール(実測)"], 33.5, 34.5, "℃"),
-        ("酸素濃度制御(表示)", m["酸素濃度制御(表示)"], 37, 43, "%"),
-        ("酸素濃度制御(実測)", m["酸素濃度制御(実測)"], 37, 43, "%"),
-    ])
+
+    optional_range_groups = [
+        (INCU_I_WEIGHT_CHECK_LABEL, [
+            ("体重モニタ(中央)", "体重モニタ(中央)", 4995, 5005, "g"),
+            ("体重モニタ(四隅)", "体重モニタ(四隅)", 4990, 5010, "g"),
+        ]),
+        (INCU_I_HUMIDITY_CHECK_LABEL, [
+            ("湿度コントロール(表示)", "湿度コントロール(表示)", 87, 93, "%"),
+            ("湿度コントロール(実測)", "湿度コントロール(実測)", 80, 100, "%"),
+        ]),
+        (INCU_I_MANUAL_CHECK_LABEL, [
+            ("マニュアルコントロール(表示)", "マニュアルコントロール(表示)", 33, 35, "℃"),
+            ("マニュアルコントロール(実測)", "マニュアルコントロール(実測)", 33, 35, "℃"),
+        ]),
+        (INCU_I_SERVO_CHECK_LABEL, [
+            ("サーボコントロール(表示)", "サーボコントロール(表示)", 33.5, 34.5, "℃"),
+            ("サーボコントロール(実測)", "サーボコントロール(実測)", 33.5, 34.5, "℃"),
+        ]),
+        (INCU_I_O2_CONTROL_CHECK_LABEL, [
+            ("酸素濃度制御(表示)", "酸素濃度制御(表示)", 37, 43, "%"),
+            ("酸素濃度制御(実測)", "酸素濃度制御(実測)", 37, 43, "%"),
+        ]),
+    ]
+    for check_label, specs in optional_range_groups:
+        if _incu_i_optional_check_status(checks, check_label) == "〇":
+            ranges.extend([(name, m[meas_key], lo, hi, unit) for name, meas_key, lo, hi, unit in specs])
+
     for name, val, lo, hi, unit in ranges:
         if not (lo <= val <= hi):
             ng_items.append(f"{name}（{val}{unit}）")
-    if m["酸素接続口1(実測)"] < 65:
-        ng_items.append(f"酸素接続口1（{m['酸素接続口1(実測)']}%）")
+    if _incu_i_optional_check_status(checks, INCU_I_O2_PORT_CHECK_LABEL) == "〇":
+        if m["酸素接続口1(実測)"] < 65:
+            ng_items.append(f"酸素接続口1（{m['酸素接続口1(実測)']}%）")
     limits = [
         ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 200),
         ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 500),
