@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-18b"
+APP_VERSION = "2026-08-18c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -1666,6 +1666,46 @@ def protect_zeros(val_str):
         return f"'{val_str}"
     return val_str
 
+def sync_history_me_columns(df):
+    """点検履歴の管理番号列（管理番号 / 管理番号(新) / 管理番号(旧)）を相互補完"""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    has_std = "管理番号" in out.columns
+    has_new = HISTORY_CURRENT_ME_COLUMN in out.columns
+    has_legacy = HISTORY_LEGACY_ME_COLUMN in out.columns
+
+    if has_std and has_new:
+        out["管理番号"] = out.apply(
+            lambda r: clean_data_str(r.get("管理番号", ""))
+            or clean_data_str(r.get(HISTORY_CURRENT_ME_COLUMN, "")),
+            axis=1,
+        )
+        out[HISTORY_CURRENT_ME_COLUMN] = out.apply(
+            lambda r: clean_data_str(r.get(HISTORY_CURRENT_ME_COLUMN, ""))
+            or clean_data_str(r.get("管理番号", "")),
+            axis=1,
+        )
+    elif has_new and not has_std:
+        out["管理番号"] = out[HISTORY_CURRENT_ME_COLUMN].apply(clean_data_str)
+    elif has_std and not has_new:
+        out[HISTORY_CURRENT_ME_COLUMN] = out["管理番号"].apply(clean_data_str)
+
+    if has_legacy:
+        out[HISTORY_LEGACY_ME_COLUMN] = out[HISTORY_LEGACY_ME_COLUMN].apply(clean_data_str)
+    return out
+
+def history_me_series(df):
+    """点検履歴 DataFrame から照合用の管理番号 Series を取得"""
+    if df is None or df.empty:
+        return pd.Series(dtype=str)
+    working = sync_history_me_columns(df)
+    if "管理番号" in working.columns:
+        return clean_series(working["管理番号"])
+    if HISTORY_CURRENT_ME_COLUMN in working.columns:
+        return clean_series(working[HISTORY_CURRENT_ME_COLUMN])
+    return pd.Series(dtype=str)
+
 def normalize_inspection_history_df(df):
     """点検履歴シートを標準列構成に揃える（不足列は空で補完）"""
     if df is None or df.empty:
@@ -1674,7 +1714,7 @@ def normalize_inspection_history_df(df):
     for col in INSPECTION_HISTORY_COLUMNS:
         if col not in out.columns:
             out[col] = ""
-    return out
+    return sync_history_me_columns(out)
 
 def format_history_display_df(df):
     """点検履歴の表示用列名をアプリ標準（旧番号・管理番号）に揃える"""
@@ -1695,14 +1735,19 @@ def format_history_display_df(df):
             out = out.rename(columns={HISTORY_CURRENT_ME_COLUMN: "管理番号"})
     return out
 
-def append_inspection_history_row(existing_history, new_hist_row):
+def append_inspection_history_row(existing_history, new_hist_row, legacy_me=""):
     """点検履歴へ1行追加（管理番号・シリアルNo が欠落しないよう列を統一）"""
     existing = normalize_inspection_history_df(existing_history)
     row = {col: new_hist_row.get(col, "") for col in INSPECTION_HISTORY_COLUMNS}
-    if row.get("管理番号"):
-        row["管理番号"] = protect_zeros(clean_data_str(row["管理番号"]))
+    me_no = clean_data_str(row.get("管理番号", ""))
+    if me_no:
+        row["管理番号"] = protect_zeros(me_no)
     if row.get("シリアルNo"):
         row["シリアルNo"] = protect_zeros(clean_data_str(row["シリアルNo"]))
+    if HISTORY_CURRENT_ME_COLUMN in existing.columns and me_no:
+        row[HISTORY_CURRENT_ME_COLUMN] = row["管理番号"]
+    if HISTORY_LEGACY_ME_COLUMN in existing.columns:
+        row[HISTORY_LEGACY_ME_COLUMN] = clean_data_str(legacy_me)
     new_df = pd.DataFrame([row])
     extra_cols = [c for c in existing.columns if c not in INSPECTION_HISTORY_COLUMNS]
     combined_cols = list(dict.fromkeys(list(INSPECTION_HISTORY_COLUMNS) + extra_cols))
@@ -2284,8 +2329,12 @@ def filter_history_for_device(df_history, target_me, master_row=None):
         return pd.DataFrame()
 
     working = normalize_inspection_history_df(df_history)
-    normalized_me = clean_series(working["管理番号"])
+    normalized_me = history_me_series(working)
     mask = normalized_me.isin(tokens)
+
+    if HISTORY_LEGACY_ME_COLUMN in working.columns:
+        legacy_me = clean_series(working[HISTORY_LEGACY_ME_COLUMN])
+        mask = mask | legacy_me.isin(tokens)
 
     master_sn = clean_data_str(master_row.get("シリアルNo", "")) if master_row is not None else ""
     if master_sn:
@@ -2918,6 +2967,9 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     if not mask.any():
         raise ValueError(f"マスターに管理番号「{final_me_no}」が見つかりません。")
 
+    master_rec = df_master.loc[mask].iloc[0]
+    legacy_me = ", ".join(_legacy_numbers_from_row(master_rec))
+
     df_master.loc[mask, "最終点検日"] = str(check_date)
     df_master.loc[mask, "最終判定"] = f"{result}({check_type})"
     df_master.loc[mask, "最終実施者"] = inspector
@@ -2940,7 +2992,10 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
         "詳細データ": stored_detail,
         "備考": memo,
     }
-    updated_history = append_inspection_history_row(existing_history, new_hist_row)
+    updated_history = append_inspection_history_row(
+        existing_history, new_hist_row, legacy_me=legacy_me,
+    )
+    updated_history = sync_history_me_columns(updated_history)
     ensure_inspection_history_worksheet()
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
@@ -3099,6 +3154,7 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
         device_category = clean_data_str(master_rec.get("カテゴリ", "その他"))
         scan_year_val = clean_data_str(master_rec.get("製造年月日", ""))
         serial_no = clean_data_str(master_rec.get("シリアルNo", ""))
+    legacy_me = ", ".join(_legacy_numbers_from_row(master_rec)) if not m_row.empty else ""
 
     existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
 
@@ -3114,7 +3170,10 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
         "詳細データ": detail_text,
         "備考": f"元故障症状: {clean_data_str(job_data.get('症状', ''))} / 備考: {repair_memo}",
     }
-    updated_history = append_inspection_history_row(existing_history, new_hist_row)
+    updated_history = append_inspection_history_row(
+        existing_history, new_hist_row, legacy_me=legacy_me,
+    )
+    updated_history = sync_history_me_columns(updated_history)
     ensure_inspection_history_worksheet()
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
@@ -5364,14 +5423,21 @@ with tabs[2]:
 
                             try:
                                 df_hist_edit = safe_read_worksheet(conn, "点検履歴")
-                                if not df_hist_edit.empty and "管理番号" in df_hist_edit.columns:
-                                    clean_hist_me = clean_series(df_hist_edit["管理番号"])
+                                if not df_hist_edit.empty:
+                                    df_hist_edit = sync_history_me_columns(df_hist_edit)
+                                    clean_hist_me = history_me_series(df_hist_edit)
                                     mask_h = clean_hist_me == clean_edit_me_no
                                     if mask_h.any():
                                         df_hist_edit.loc[mask_h, "カテゴリ"] = new_cat
                                         df_hist_edit.loc[mask_h, "機種"] = model_for_spreadsheet(new_model)
                                         df_hist_edit.loc[mask_h, "シリアルNo"] = safe_new_sn
                                         df_hist_edit.loc[mask_h, "製造年月日"] = new_year
+                                        if "管理番号" in df_hist_edit.columns:
+                                            df_hist_edit.loc[mask_h, "管理番号"] = clean_edit_me_no
+                                        if HISTORY_CURRENT_ME_COLUMN in df_hist_edit.columns:
+                                            df_hist_edit.loc[mask_h, HISTORY_CURRENT_ME_COLUMN] = clean_edit_me_no
+                                        if HISTORY_LEGACY_ME_COLUMN in df_hist_edit.columns:
+                                            df_hist_edit.loc[mask_h, HISTORY_LEGACY_ME_COLUMN] = clean_data_str(new_legacy)
                                         conn.update(worksheet="点検履歴", data=df_hist_edit)
                             except Exception:
                                 pass 
