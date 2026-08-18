@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-18d"
+APP_VERSION = "2026-08-18e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3104,8 +3104,8 @@ def _fault_report_label(row):
     rep_date = clean_data_str(row.get("報告日", ""))
     return f"{me} - {model} ({dept} / 症状: {symptom}) 報告日: {rep_date}"
 
-def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
-                           chk_r1, chk_r2, chk_r3, repair_result, repair_memo, inspector):
+def save_repair_completion(conn, selected_idx, repair_date, inspection_content,
+                           repair_result, repair_memo, inspector):
     """故障報告の対応完了・点検履歴・機器マスターを更新"""
     st.cache_data.clear()
     df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS, raise_on_fail=True)
@@ -3127,13 +3127,13 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
     df_failed.at[selected_idx, "対応状況"] = f"対応済 ({repair_date})"
     conn.update(worksheet="故障報告", data=_sanitize_dataframe(df_failed))
 
-    chk_str = f"外観:{'〇' if chk_r1 else '×'}, 作動:{'〇' if chk_r2 else '×'}, 警報:{'〇' if chk_r3 else '×'}"
-    readable_detail = f"【故障修理後点検】 処置: {repair_detail} / 安全確認: {chk_str}"
+    fault_symptom = clean_data_str(job_data.get("症状", ""))
+    readable_detail = (
+        f"【故障修理後点検】 不具合症状: {fault_symptom} / 点検内容: {clean_data_str(inspection_content)}"
+    )
     repair_item_rows = [
-        ("修理・処置内容", clean_data_str(repair_detail), "-"),
-        ("外観点検", "〇" if chk_r1 else "×", "〇" if chk_r1 else "×"),
-        ("作動点検", "〇" if chk_r2 else "×", "〇" if chk_r2 else "×"),
-        ("警報点検", "〇" if chk_r3 else "×", "〇" if chk_r3 else "×"),
+        ("不具合症状（依頼）", fault_symptom, "-"),
+        ("点検内容", clean_data_str(inspection_content), "-"),
     ]
     detail_text = serialize_inspection_detail(
         readable_detail,
@@ -3191,8 +3191,18 @@ def save_repair_completion(conn, selected_idx, repair_date, repair_detail,
     write_log(inspector, f"{target_me} の故障対応・修理点検を完了")
     return target_me, job_data, detail_text
 
-def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
-                              chk_r1, chk_r2, chk_r3, repair_result, inspector):
+def _build_repair_report_html(target_me, job_data, repair_date, inspection_content,
+                              repair_result, inspector, repair_memo=""):
+    fault_symptom = clean_data_str(job_data.get("症状", ""))
+    inspection_html = html.escape(clean_data_str(inspection_content)).replace("\n", "<br/>")
+    memo_html = ""
+    if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
+        memo_html = f"""
+        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 備考</h4>
+        <div style="padding: 10px; border: 1px solid #aaa; margin-bottom: 20px; background-color: #fafafa;">
+            {html.escape(clean_data_str(repair_memo)).replace(chr(10), '<br/>')}
+        </div>
+        """
     return f"""
     <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
         <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">医療機器 修理・点検完了報告書</h2>
@@ -3208,50 +3218,30 @@ def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
                 <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{html.escape(clean_data_str(job_data.get('機種', '')))}</td>
             </tr>
             <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>故障発生部署</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('部署', '')))}</td>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>初期報告者</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('報告者', '')))}</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>現場報告の症状</b></td>
-                <td colspan="3" style="padding: 10px; border: 1px solid #aaa;">{html.escape(clean_data_str(job_data.get('症状', '')))}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>総合判定</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; font-weight: bold;">{html.escape(str(repair_result))}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>点検技術者</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(str(inspector))}</td>
             </tr>
         </table>
-        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 修理・処置内容</h4>
-        <div style="padding: 10px; border: 1px solid #aaa; min-height: 50px; margin-bottom: 20px; background-color: #fafafa;">
-            {html.escape(str(repair_detail)).replace(chr(10), '<br/>')}
-        </div>
-        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 出荷前・現場安全点検結果 (翌日実施分含む)</h4>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px; text-align: center;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
             <tr style="background-color: #f0f0f0;">
-                <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
-                <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
-                <th style="padding: 8px; border: 1px solid #aaa;">点検項目</th>
-                <th style="padding: 8px; border: 1px solid #aaa;">判定</th>
+                <th style="padding: 10px; border: 1px solid #aaa; width: 28%; text-align: left;">項目</th>
+                <th style="padding: 10px; border: 1px solid #aaa; text-align: left;">内容</th>
             </tr>
             <tr>
-                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">1. 外観・筐体破損チェック</td>
-                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r1 else '不適合'}</td>
-                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">3. 各種警報・アラーム作動確認</td>
-                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r3 else '不適合'}</td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #fafafa;"><b>不具合症状（依頼）</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(fault_symptom)}</td>
             </tr>
             <tr>
-                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">2. 通電・実作動シーケンスチェック</td>
-                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">{'正常 (適合)' if chk_r2 else '不適合'}</td>
-                <td style="padding: 8px; border: 1px solid #aaa; text-align: left;">4. その他総合安全性</td>
-                <td style="padding: 8px; border: 1px solid #aaa; color: green; font-weight: bold;">適合</td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #fafafa; vertical-align: top;"><b>点検内容</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; white-space: pre-wrap;">{inspection_html}</td>
             </tr>
         </table>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 20px;">
+        {memo_html}
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px;">
             <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>総合判定</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; font-size: 16px; color: red; font-weight: bold;">{html.escape(str(repair_result))}</td>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>点検技術者（実施者）</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; text-align: center;">{html.escape(str(inspector))} (印)</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>施設側 収領・確認印</b></td>
+                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0; width: 25%;"><b>施設側 収領・確認印</b></td>
                 <td colspan="3" style="padding: 25px; border: 1px solid #aaa; text-align: right; color: #ccc;">確認日: &nbsp;&nbsp;&nbsp;&nbsp;年 &nbsp;&nbsp;&nbsp;月 &nbsp;&nbsp;&nbsp;日 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; サイン / 職印欄: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
             </tr>
         </table>
@@ -3259,12 +3249,8 @@ def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
     </div>
     """
 
-def _repair_check_label(ok):
-    return "正常 (適合)" if ok else "不適合"
-
-def build_repair_report_plain_text(target_me, job_data, repair_date, repair_detail,
-                                   chk_r1, chk_r2, chk_r3, repair_result, inspector,
-                                   repair_memo=""):
+def build_repair_report_plain_text(target_me, job_data, repair_date, inspection_content,
+                                   repair_result, inspector, repair_memo=""):
     """修理点検報告書のプレーンテキスト（コピー・TXT保存用）"""
     lines = [
         "医療機器 修理・点検完了報告書",
@@ -3272,33 +3258,27 @@ def build_repair_report_plain_text(target_me, job_data, repair_date, repair_deta
         "",
         f"管理番号: {clean_data_str(target_me)}",
         f"対象機種: {clean_data_str(job_data.get('機種', ''))}",
-        f"故障発生部署: {clean_data_str(job_data.get('部署', ''))}",
-        f"初期報告者: {clean_data_str(job_data.get('報告者', ''))}",
-        f"現場報告の症状: {clean_data_str(job_data.get('症状', ''))}",
-        "",
-        "■ 修理・処置内容",
-        clean_data_str(repair_detail),
-        "",
-        "■ 出荷前・現場安全点検結果",
-        f"1. 外観・筐体破損チェック: {_repair_check_label(chk_r1)}",
-        f"2. 通電・実作動シーケンスチェック: {_repair_check_label(chk_r2)}",
-        f"3. 各種警報・アラーム作動確認: {_repair_check_label(chk_r3)}",
-        "4. その他総合安全性: 適合",
-        "",
         f"総合判定: {clean_data_str(repair_result)}",
-        f"点検技術者（実施者）: {clean_data_str(inspector)}",
+        f"点検技術者: {clean_data_str(inspector)}",
+        "",
+        "【点検内容一覧】",
+        "",
+        "■ 不具合症状（依頼）",
+        clean_data_str(job_data.get("症状", "")),
+        "",
+        "■ 点検内容",
+        clean_data_str(inspection_content),
     ]
     if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
-        lines.extend(["", "備考", clean_data_str(repair_memo)])
+        lines.extend(["", "■ 備考", clean_data_str(repair_memo)])
     lines.extend([
         "",
         f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')} | miratech 医療機器管理システム",
     ])
     return "\n".join(lines)
 
-def build_repair_report_pdf_bytes(target_me, job_data, repair_date, repair_detail,
-                                  chk_r1, chk_r2, chk_r3, repair_result, inspector,
-                                  repair_memo=""):
+def build_repair_report_pdf_bytes(target_me, job_data, repair_date, inspection_content,
+                                  repair_result, inspector, repair_memo=""):
     """修理・点検完了報告書 PDF"""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -3320,8 +3300,7 @@ def build_repair_report_pdf_bytes(target_me, job_data, repair_date, repair_detai
 
     info_rows = [
         ["管理番号", clean_data_str(target_me), "対象機種", clean_data_str(job_data.get("機種", ""))],
-        ["故障発生部署", clean_data_str(job_data.get("部署", "")), "初期報告者", clean_data_str(job_data.get("報告者", ""))],
-        ["現場報告の症状", clean_data_str(job_data.get("症状", "")), "", ""],
+        ["総合判定", clean_data_str(repair_result), "点検技術者", clean_data_str(inspector)],
     ]
     info_table_data = []
     for row in info_rows:
@@ -3331,52 +3310,31 @@ def build_repair_report_pdf_bytes(target_me, job_data, repair_date, repair_detai
         ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8e8e8")),
         ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e8e8e8")),
-        ("SPAN", (1, 2), (3, 2)),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     story.extend([info_table, Spacer(1, 4 * mm)])
 
-    story.append(_daily_monthly_pdf_paragraph("■ 修理・処置内容", font_name, 10))
-    story.append(_daily_monthly_pdf_paragraph(clean_data_str(repair_detail), font_name, 9))
-    story.append(Spacer(1, 3 * mm))
-
-    story.append(_daily_monthly_pdf_paragraph("■ 出荷前・現場安全点検結果", font_name, 10))
-    check_table_data = [[
-        _daily_monthly_pdf_paragraph("点検項目", font_name, 8),
-        _daily_monthly_pdf_paragraph("判定", font_name, 8),
-        _daily_monthly_pdf_paragraph("点検項目", font_name, 8),
-        _daily_monthly_pdf_paragraph("判定", font_name, 8),
+    story.append(_daily_monthly_pdf_paragraph("点検内容一覧", font_name, 11))
+    story.append(Spacer(1, 2 * mm))
+    content_table_data = [[
+        _daily_monthly_pdf_paragraph("項目", font_name, 9),
+        _daily_monthly_pdf_paragraph("内容", font_name, 9),
     ]]
-    check_rows = [
-        ("1. 外観・筐体破損チェック", _repair_check_label(chk_r1),
-         "3. 各種警報・アラーム作動確認", _repair_check_label(chk_r3)),
-        ("2. 通電・実作動シーケンスチェック", _repair_check_label(chk_r2),
-         "4. その他総合安全性", "適合"),
-    ]
-    for row in check_rows:
-        check_table_data.append([_daily_monthly_pdf_paragraph(c, font_name, 8) for c in row])
-    check_table = Table(check_table_data, colWidths=[52 * mm, 38 * mm, 52 * mm, 38 * mm])
-    check_table.setStyle(TableStyle([
+    content_table_data.append([
+        _daily_monthly_pdf_paragraph("不具合症状（依頼）", font_name, 9),
+        _daily_monthly_pdf_paragraph(clean_data_str(job_data.get("症状", "")), font_name, 9),
+    ])
+    content_table_data.append([
+        _daily_monthly_pdf_paragraph("点検内容", font_name, 9),
+        _daily_monthly_pdf_paragraph(clean_data_str(inspection_content), font_name, 9),
+    ])
+    content_table = Table(content_table_data, colWidths=[42 * mm, 126 * mm])
+    content_table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-    story.extend([check_table, Spacer(1, 4 * mm)])
-
-    result_table_data = [[
-        _daily_monthly_pdf_paragraph("総合判定", font_name, 9),
-        _daily_monthly_pdf_paragraph(clean_data_str(repair_result), font_name, 10),
-        _daily_monthly_pdf_paragraph("点検技術者", font_name, 9),
-        _daily_monthly_pdf_paragraph(clean_data_str(inspector), font_name, 9),
-    ]]
-    result_table = Table(result_table_data, colWidths=[32 * mm, 52 * mm, 32 * mm, 52 * mm])
-    result_table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
-        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#e8e8e8")),
-        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e8e8e8")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    story.extend([result_table, Spacer(1, 3 * mm)])
+    story.extend([content_table, Spacer(1, 4 * mm)])
 
     if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
         story.extend([
@@ -3392,10 +3350,17 @@ def build_repair_report_pdf_bytes(target_me, job_data, repair_date, repair_detai
     doc.build(story)
     return buf.getvalue()
 
-def render_repair_report(target_me, job_data, repair_date, repair_detail,
-                         chk_r1, chk_r2, chk_r3, repair_result, inspector,
-                         repair_memo="", unique_key_suffix=""):
+def render_repair_report(target_me, job_data, repair_date, inspection_content,
+                         repair_result, inspector, repair_memo="", unique_key_suffix=""):
     """修理点検報告書の表示・PDF/テキストダウンロード"""
+    if isinstance(job_data, dict):
+        job = job_data
+    else:
+        job = job_data.to_dict() if hasattr(job_data, "to_dict") else dict(job_data)
+    # 旧形式セッション（repair_detail / chk_*）との互換
+    if not inspection_content and job.get("repair_detail"):
+        inspection_content = job.get("repair_detail", "")
+
     st.markdown("""
     <style>
     @media print {
@@ -3406,16 +3371,16 @@ def render_repair_report(target_me, job_data, repair_date, repair_detail,
     """, unsafe_allow_html=True)
 
     pdf_bytes = build_repair_report_pdf_bytes(
-        target_me, job_data, repair_date, repair_detail,
-        chk_r1, chk_r2, chk_r3, repair_result, inspector, repair_memo,
+        target_me, job, repair_date, inspection_content,
+        repair_result, inspector, repair_memo,
     )
     plain_text = build_repair_report_plain_text(
-        target_me, job_data, repair_date, repair_detail,
-        chk_r1, chk_r2, chk_r3, repair_result, inspector, repair_memo,
+        target_me, job, repair_date, inspection_content,
+        repair_result, inspector, repair_memo,
     )
     html_report = _build_repair_report_html(
-        target_me, job_data, repair_date, repair_detail,
-        chk_r1, chk_r2, chk_r3, repair_result, inspector,
+        target_me, job, repair_date, inspection_content,
+        repair_result, inspector, repair_memo,
     )
     pdf_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.pdf"
     txt_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.txt"
@@ -3460,21 +3425,18 @@ def render_repair_report(target_me, job_data, repair_date, repair_detail,
 def render_repair_fault_management(conn):
     """修理・故障対応管理（未対応故障報告の処理・報告書）"""
     st.subheader("修理故障・対応管理")
-    st.caption("現場からの故障報告に対する修理対応・安全点検の記録")
+    st.caption("現場からの故障報告に対する修理対応・点検内容の記録")
 
     if st.session_state.get("repair_saved_report"):
         report = st.session_state["repair_saved_report"]
-        st.success(f"{report['target_me']} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
+        st.success(f"{report['target_me']} の修理対応・点検記録を保存し、台帳を更新しました！")
         st.markdown("---")
         job_data = report.get("job_data", {})
         render_repair_report(
             report["target_me"],
             job_data,
             report.get("repair_date", ""),
-            report.get("repair_detail", ""),
-            report.get("chk_r1", True),
-            report.get("chk_r2", True),
-            report.get("chk_r3", True),
+            report.get("inspection_content") or report.get("repair_detail", ""),
             report.get("repair_result", ""),
             report.get("inspector", ""),
             repair_memo=report.get("repair_memo", ""),
@@ -3529,17 +3491,24 @@ def render_repair_fault_management(conn):
                 selected_idx = pending_labels[selected_job]
                 target_me = clean_data_str(df_failed.loc[selected_idx].get("管理番号", ""))
 
+                selected_row = df_failed.loc[selected_idx]
+                fault_symptom = clean_data_str(selected_row.get("症状", ""))
+
                 with st.form("repair_form"):
                     st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
                     repair_date = st.date_input("対応完了日（現場点検日）", value=date.today())
-                    repair_detail = st.text_area(
-                        "修理・処置内容",
-                        placeholder="例: 包包交換、内部清掃、設定リセット実施",
+                    st.markdown(f"**不具合症状（依頼）:** {fault_symptom or '（未記載）'}")
+                    inspection_content = st.text_area(
+                        "点検内容",
+                        placeholder=(
+                            "点検した内容を一覧で記入してください。\n"
+                            "例:\n"
+                            "1. 外観確認 … 異常なし\n"
+                            "2. 通電・作動確認 … 正常\n"
+                            "3. アラーム確認 … 正常"
+                        ),
+                        height=180,
                     )
-                    st.write("修理後の安全点検チェック（エビデンス確保）")
-                    chk_r1 = st.checkbox("外観点検（汚れ、破損、変形がないこと）", value=True)
-                    chk_r2 = st.checkbox("作動点検（基本動作、セルフチェックが正常なこと）", value=True)
-                    chk_r3 = st.checkbox("警報点検（アラーム、シミュレータテスト正常なこと）", value=True)
                     repair_result = st.radio(
                         "総合評価", ["使用可", "メーカー修理依頼", "廃棄手続き"], horizontal=True,
                     )
@@ -3552,10 +3521,7 @@ def render_repair_fault_management(conn):
                                 conn,
                                 selected_idx,
                                 repair_date,
-                                repair_detail,
-                                chk_r1,
-                                chk_r2,
-                                chk_r3,
+                                inspection_content,
                                 repair_result,
                                 repair_memo,
                                 inspector,
@@ -3564,10 +3530,7 @@ def render_repair_fault_management(conn):
                                 "target_me": saved_me,
                                 "job_data": job_data.to_dict() if hasattr(job_data, "to_dict") else dict(job_data),
                                 "repair_date": str(repair_date),
-                                "repair_detail": repair_detail,
-                                "chk_r1": chk_r1,
-                                "chk_r2": chk_r2,
-                                "chk_r3": chk_r3,
+                                "inspection_content": inspection_content,
                                 "repair_result": repair_result,
                                 "repair_memo": repair_memo,
                                 "inspector": inspector,
