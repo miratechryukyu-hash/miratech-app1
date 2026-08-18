@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-18c"
+APP_VERSION = "2026-08-18d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3259,6 +3259,204 @@ def _build_repair_report_html(target_me, job_data, repair_date, repair_detail,
     </div>
     """
 
+def _repair_check_label(ok):
+    return "正常 (適合)" if ok else "不適合"
+
+def build_repair_report_plain_text(target_me, job_data, repair_date, repair_detail,
+                                   chk_r1, chk_r2, chk_r3, repair_result, inspector,
+                                   repair_memo=""):
+    """修理点検報告書のプレーンテキスト（コピー・TXT保存用）"""
+    lines = [
+        "医療機器 修理・点検完了報告書",
+        f"完了報告日: {repair_date}",
+        "",
+        f"管理番号: {clean_data_str(target_me)}",
+        f"対象機種: {clean_data_str(job_data.get('機種', ''))}",
+        f"故障発生部署: {clean_data_str(job_data.get('部署', ''))}",
+        f"初期報告者: {clean_data_str(job_data.get('報告者', ''))}",
+        f"現場報告の症状: {clean_data_str(job_data.get('症状', ''))}",
+        "",
+        "■ 修理・処置内容",
+        clean_data_str(repair_detail),
+        "",
+        "■ 出荷前・現場安全点検結果",
+        f"1. 外観・筐体破損チェック: {_repair_check_label(chk_r1)}",
+        f"2. 通電・実作動シーケンスチェック: {_repair_check_label(chk_r2)}",
+        f"3. 各種警報・アラーム作動確認: {_repair_check_label(chk_r3)}",
+        "4. その他総合安全性: 適合",
+        "",
+        f"総合判定: {clean_data_str(repair_result)}",
+        f"点検技術者（実施者）: {clean_data_str(inspector)}",
+    ]
+    if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
+        lines.extend(["", "備考", clean_data_str(repair_memo)])
+    lines.extend([
+        "",
+        f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')} | miratech 医療機器管理システム",
+    ])
+    return "\n".join(lines)
+
+def build_repair_report_pdf_bytes(target_me, job_data, repair_date, repair_detail,
+                                  chk_r1, chk_r2, chk_r3, repair_result, inspector,
+                                  repair_memo=""):
+    """修理・点検完了報告書 PDF"""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer
+
+    font_name = _daily_monthly_pdf_font()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=14 * mm, rightMargin=14 * mm,
+        topMargin=14 * mm, bottomMargin=14 * mm,
+    )
+    story = [
+        _daily_monthly_pdf_paragraph("医療機器 修理・点検完了報告書", font_name, 14, align=1),
+        _daily_monthly_pdf_paragraph(f"完了報告日: {repair_date}", font_name, 10, align=1),
+        Spacer(1, 4 * mm),
+    ]
+
+    info_rows = [
+        ["管理番号", clean_data_str(target_me), "対象機種", clean_data_str(job_data.get("機種", ""))],
+        ["故障発生部署", clean_data_str(job_data.get("部署", "")), "初期報告者", clean_data_str(job_data.get("報告者", ""))],
+        ["現場報告の症状", clean_data_str(job_data.get("症状", "")), "", ""],
+    ]
+    info_table_data = []
+    for row in info_rows:
+        info_table_data.append([_daily_monthly_pdf_paragraph(cell, font_name, 9) for cell in row])
+    info_table = Table(info_table_data, colWidths=[32 * mm, 52 * mm, 32 * mm, 52 * mm])
+    info_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8e8e8")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e8e8e8")),
+        ("SPAN", (1, 2), (3, 2)),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([info_table, Spacer(1, 4 * mm)])
+
+    story.append(_daily_monthly_pdf_paragraph("■ 修理・処置内容", font_name, 10))
+    story.append(_daily_monthly_pdf_paragraph(clean_data_str(repair_detail), font_name, 9))
+    story.append(Spacer(1, 3 * mm))
+
+    story.append(_daily_monthly_pdf_paragraph("■ 出荷前・現場安全点検結果", font_name, 10))
+    check_table_data = [[
+        _daily_monthly_pdf_paragraph("点検項目", font_name, 8),
+        _daily_monthly_pdf_paragraph("判定", font_name, 8),
+        _daily_monthly_pdf_paragraph("点検項目", font_name, 8),
+        _daily_monthly_pdf_paragraph("判定", font_name, 8),
+    ]]
+    check_rows = [
+        ("1. 外観・筐体破損チェック", _repair_check_label(chk_r1),
+         "3. 各種警報・アラーム作動確認", _repair_check_label(chk_r3)),
+        ("2. 通電・実作動シーケンスチェック", _repair_check_label(chk_r2),
+         "4. その他総合安全性", "適合"),
+    ]
+    for row in check_rows:
+        check_table_data.append([_daily_monthly_pdf_paragraph(c, font_name, 8) for c in row])
+    check_table = Table(check_table_data, colWidths=[52 * mm, 38 * mm, 52 * mm, 38 * mm])
+    check_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([check_table, Spacer(1, 4 * mm)])
+
+    result_table_data = [[
+        _daily_monthly_pdf_paragraph("総合判定", font_name, 9),
+        _daily_monthly_pdf_paragraph(clean_data_str(repair_result), font_name, 10),
+        _daily_monthly_pdf_paragraph("点検技術者", font_name, 9),
+        _daily_monthly_pdf_paragraph(clean_data_str(inspector), font_name, 9),
+    ]]
+    result_table = Table(result_table_data, colWidths=[32 * mm, 52 * mm, 32 * mm, 52 * mm])
+    result_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#e8e8e8")),
+        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#e8e8e8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([result_table, Spacer(1, 3 * mm)])
+
+    if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
+        story.extend([
+            _daily_monthly_pdf_paragraph("備考", font_name, 10),
+            _daily_monthly_pdf_paragraph(clean_data_str(repair_memo), font_name, 9),
+            Spacer(1, 3 * mm),
+        ])
+
+    story.append(_daily_monthly_pdf_paragraph(
+        f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')}　|　miratech 医療機器管理システム",
+        font_name, 7,
+    ))
+    doc.build(story)
+    return buf.getvalue()
+
+def render_repair_report(target_me, job_data, repair_date, repair_detail,
+                         chk_r1, chk_r2, chk_r3, repair_result, inspector,
+                         repair_memo="", unique_key_suffix=""):
+    """修理点検報告書の表示・PDF/テキストダウンロード"""
+    st.markdown("""
+    <style>
+    @media print {
+        header, [data-testid="stSidebar"], footer, .no-print { display: none !important; }
+        .block-container { max-width: 100% !important; padding-top: 0 !important; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    pdf_bytes = build_repair_report_pdf_bytes(
+        target_me, job_data, repair_date, repair_detail,
+        chk_r1, chk_r2, chk_r3, repair_result, inspector, repair_memo,
+    )
+    plain_text = build_repair_report_plain_text(
+        target_me, job_data, repair_date, repair_detail,
+        chk_r1, chk_r2, chk_r3, repair_result, inspector, repair_memo,
+    )
+    html_report = _build_repair_report_html(
+        target_me, job_data, repair_date, repair_detail,
+        chk_r1, chk_r2, chk_r3, repair_result, inspector,
+    )
+    pdf_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.pdf"
+    txt_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.txt"
+    key_base = f"repair_report_{clean_data_str(target_me)}_{repair_date}_{unique_key_suffix}"
+
+    col_pdf, col_txt, col_hint = st.columns([1, 1, 2])
+    with col_pdf:
+        st.download_button(
+            "PDFをダウンロード",
+            data=pdf_bytes,
+            file_name=pdf_name,
+            mime="application/pdf",
+            type="primary",
+            key=f"{key_base}_pdf",
+        )
+    with col_txt:
+        st.download_button(
+            "テキストをダウンロード",
+            data=plain_text.encode("utf-8"),
+            file_name=txt_name,
+            mime="text/plain; charset=utf-8",
+            key=f"{key_base}_txt",
+        )
+    with col_hint:
+        st.caption("A4縦向きPDF。下のテキスト欄からコピー、または Cmd/Ctrl + P で印刷もできます。")
+
+    with st.expander("報告書テキスト（選択してコピー）", expanded=False):
+        st.text_area(
+            "報告書テキスト",
+            value=plain_text,
+            height=260,
+            label_visibility="collapsed",
+            key=f"{key_base}_copy_text",
+        )
+
+    st.markdown("---")
+    st.subheader("提出用 報告書プレビュー")
+    st.markdown(html_report, unsafe_allow_html=True)
+    if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
+        st.info(f"備考:\n{repair_memo}")
+
 def render_repair_fault_management(conn):
     """修理・故障対応管理（未対応故障報告の処理・報告書）"""
     st.subheader("修理故障・対応管理")
@@ -3268,9 +3466,20 @@ def render_repair_fault_management(conn):
         report = st.session_state["repair_saved_report"]
         st.success(f"{report['target_me']} の修理対応・安全点検の記録を保存し、台帳を更新しました！")
         st.markdown("---")
-        st.subheader("提出用 報告書の印刷レイアウト")
-        st.markdown(report["html"], unsafe_allow_html=True)
-        st.info("Cmd/Ctrl + P で印刷またはPDF保存できます。")
+        job_data = report.get("job_data", {})
+        render_repair_report(
+            report["target_me"],
+            job_data,
+            report.get("repair_date", ""),
+            report.get("repair_detail", ""),
+            report.get("chk_r1", True),
+            report.get("chk_r2", True),
+            report.get("chk_r3", True),
+            report.get("repair_result", ""),
+            report.get("inspector", ""),
+            repair_memo=report.get("repair_memo", ""),
+            unique_key_suffix="saved",
+        )
         if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
             st.session_state.pop("repair_saved_report", None)
             st.cache_data.clear()
@@ -3353,10 +3562,15 @@ def render_repair_fault_management(conn):
                             )
                             st.session_state["repair_saved_report"] = {
                                 "target_me": saved_me,
-                                "html": _build_repair_report_html(
-                                    saved_me, job_data, repair_date, repair_detail,
-                                    chk_r1, chk_r2, chk_r3, repair_result, inspector,
-                                ),
+                                "job_data": job_data.to_dict() if hasattr(job_data, "to_dict") else dict(job_data),
+                                "repair_date": str(repair_date),
+                                "repair_detail": repair_detail,
+                                "chk_r1": chk_r1,
+                                "chk_r2": chk_r2,
+                                "chk_r3": chk_r3,
+                                "repair_result": repair_result,
+                                "repair_memo": repair_memo,
+                                "inspector": inspector,
                             }
                             st.cache_data.clear()
                             st.rerun()
