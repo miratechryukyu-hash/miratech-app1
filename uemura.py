@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-13e"
+APP_VERSION = "2026-08-18a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -244,13 +244,32 @@ def default_incu_i_measurements():
         "患者漏れ電流I(単一故障)": 0,
     }
 
+INCU_I_MODEL_TOKENS = (
+    "incui", "incu-i", "incu_i", "インキュi", "インキュｉ", "rabee", "rabeeincui",
+    "incui102", "rabee102", "dualincui", "atominfantincubator",
+)
+INCU_I_SERIES_MODEL_NUMBERS = ("102",)
+
+def _normalize_incu_i_model_key(device_model):
+    raw = clean_data_str(device_model).lower()
+    return re.sub(r"[\s\-_　]+", "", raw)
+
 def is_incu_i_incubator(device_category, device_model):
+    """アトム インキュi / Rabee Incu i 系（Model 102 含む）"""
     if clean_data_str(device_category) != "保育器":
         return False
-    model = clean_data_str(device_model).lower().replace(" ", "")
-    return any(token in model for token in (
-        "incui", "incu-i", "incu_i", "インキュi", "インキュｉ", "rabee",
-    ))
+    compact = _normalize_incu_i_model_key(device_model)
+    if not compact:
+        return False
+    if any(token.replace("-", "").replace("_", "") in compact for token in INCU_I_MODEL_TOKENS):
+        return True
+    if compact in INCU_I_SERIES_MODEL_NUMBERS:
+        return True
+    if compact.endswith("102") and any(k in compact for k in ("incu", "rabee", "インキュ", "atom")):
+        return True
+    if re.search(r"(?:incu.?i|rabee|インキュ).?102", compact):
+        return True
+    return False
 
 def _incu_i_symbol_judge(val):
     sym = clean_data_str(val)
@@ -548,7 +567,7 @@ def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
     c = incu_i_checks
     return {
         "form": "incu_i",
-        "title": "アトム保育器 インキュi 定期点検表",
+        "title": "アトム保育器 インキュi / Rabee Incu i 定期点検表",
         "sections": [
             {
                 "title": "1. 外観点検",
@@ -3899,6 +3918,55 @@ def parse_check_date_flexible(date_str):
         return date(int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
     return None
 
+def get_master_purchase_date(row):
+    """機器マスター行から購入日（納入日等）を date に解釈"""
+    for col in ("購入年月日", "購入日", "納入日", "納品日"):
+        parsed = parse_check_date_flexible(row.get(col, ""))
+        if parsed is not None:
+            return parsed
+    return None
+
+def format_elapsed_years_label(purchase_date, reference_date=None):
+    """購入日から基準日（デフォルト: 本日 JST）までの経過年数を表示"""
+    if purchase_date is None:
+        return "-"
+    today = reference_date or now_jst().date()
+    if purchase_date > today:
+        return "未購入"
+    years = today.year - purchase_date.year
+    months = today.month - purchase_date.month
+    if today.day < purchase_date.day:
+        months -= 1
+    if months < 0:
+        years -= 1
+        months += 12
+    if years <= 0 and months <= 0:
+        days = (today - purchase_date).days
+        return "0日" if days == 0 else f"{days}日"
+    if years == 0:
+        return f"{months}ヶ月"
+    if months == 0:
+        return f"{years}年"
+    return f"{years}年{months}ヶ月"
+
+def enrich_master_with_elapsed_years(df, reference_date=None):
+    """機器マスター DataFrame に経過年数列を追加（スプレッドシートには保存しない）"""
+    if df is None or df.empty:
+        return df
+    enriched = df.copy()
+    enriched["経過年数"] = enriched.apply(
+        lambda r: format_elapsed_years_label(get_master_purchase_date(r), reference_date),
+        axis=1,
+    )
+    cols = list(enriched.columns)
+    cols.remove("経過年数")
+    insert_after = next((c for c in ("納入日", "購入日", "購入年月日", "納品日") if c in cols), None)
+    if insert_after:
+        cols.insert(cols.index(insert_after) + 1, "経過年数")
+    else:
+        cols.append("経過年数")
+    return enriched[cols]
+
 def list_daily_inspection_devices(df_master):
     if df_master is None or df_master.empty or "カテゴリ" not in df_master.columns:
         return []
@@ -5179,7 +5247,17 @@ with tabs[2]:
                 st.markdown("##### 点検履歴シート（一覧）")
                 display_dataframe(df, hide_index=True, use_container_width=True)
             else:
-                display_dataframe(df, hide_index=True, use_container_width=True)
+                if view_cat_master == "機器マスター":
+                    st.caption(
+                        f"経過年数は購入日（納入日）から本日（{format_jst(fmt='%Y-%m-%d')}）までの期間を自動計算しています。"
+                    )
+                    display_dataframe(
+                        enrich_master_with_elapsed_years(df),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                else:
+                    display_dataframe(df, hide_index=True, use_container_width=True)
         except Exception as e:
             st.error(f"接続エラー: {e}")
 
@@ -5236,6 +5314,10 @@ with tabs[2]:
                         except:
                             saved_delivery_date = date.today()
                         new_delivery = st.date_input("購入日", value=saved_delivery_date, min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+                        elapsed_label = format_elapsed_years_label(get_master_purchase_date(target_row))
+                        st.caption(
+                            f"経過年数（本日 {format_jst(fmt='%Y-%m-%d')} 時点）: **{elapsed_label}**"
+                        )
 
                         if st.form_submit_button("変更を上書き保存する", type="primary"):
                             safe_new_sn = protect_zeros(new_sn)
