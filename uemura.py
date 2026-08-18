@@ -1249,6 +1249,8 @@ INSPECTION_HISTORY_COLUMNS = [
     "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
     "実施者", "判定", "詳細データ", "備考",
 ]
+HISTORY_LEGACY_ME_COLUMN = "管理番号(旧)"
+HISTORY_CURRENT_ME_COLUMN = "管理番号(新)"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"

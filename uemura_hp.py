@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-18a"
+APP_VERSION = "2026-08-18b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -1249,6 +1249,8 @@ INSPECTION_HISTORY_COLUMNS = [
     "点検日", "管理番号", "カテゴリ", "シリアルNo", "製造年月日", "機種",
     "実施者", "判定", "詳細データ", "備考",
 ]
+HISTORY_LEGACY_ME_COLUMN = "管理番号(旧)"
+HISTORY_CURRENT_ME_COLUMN = "管理番号(新)"
 
 TEPRA_IOS_STORE = "https://apps.apple.com/jp/app/tepra-link-2/id1614816445"
 TEPRA_ANDROID_STORE = "https://play.google.com/store/apps/details?id=jp.co.kingjim.android.tepra2"
@@ -1672,6 +1674,25 @@ def normalize_inspection_history_df(df):
     for col in INSPECTION_HISTORY_COLUMNS:
         if col not in out.columns:
             out[col] = ""
+    return out
+
+def format_history_display_df(df):
+    """点検履歴の表示用列名をアプリ標準（旧番号・管理番号）に揃える"""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    if HISTORY_LEGACY_ME_COLUMN in out.columns:
+        out = out.rename(columns={HISTORY_LEGACY_ME_COLUMN: "旧番号"})
+    if HISTORY_CURRENT_ME_COLUMN in out.columns:
+        if "管理番号" in out.columns:
+            out["管理番号"] = out.apply(
+                lambda r: clean_data_str(r.get(HISTORY_CURRENT_ME_COLUMN, ""))
+                or clean_data_str(r.get("管理番号", "")),
+                axis=1,
+            )
+            out = out.drop(columns=[HISTORY_CURRENT_ME_COLUMN])
+        else:
+            out = out.rename(columns={HISTORY_CURRENT_ME_COLUMN: "管理番号"})
     return out
 
 def append_inspection_history_row(existing_history, new_hist_row):
@@ -2840,7 +2861,11 @@ def render_inspection_history_viewer(conn, df_master, df_history):
     st.write(f"**{len(working)} 件** の点検表が見つかりました。")
     display_cols = [c for c in ["点検日", "管理番号", "カテゴリ", "機種", "_点検区分", "実施者", "判定"] if c in working.columns]
     list_df = working[display_cols].rename(columns={"_点検区分": "点検区分"})
-    st.dataframe(_sanitize_dataframe(list_df), use_container_width=True, hide_index=True)
+    st.dataframe(
+        _sanitize_dataframe(format_history_display_df(list_df)),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.markdown("---")
     st.subheader("点検結果表（表示・PDF）")
@@ -5245,7 +5270,7 @@ with tabs[2]:
 
                 st.markdown("---")
                 st.markdown("##### 点検履歴シート（一覧）")
-                display_dataframe(df, hide_index=True, use_container_width=True)
+                display_dataframe(format_history_display_df(df), hide_index=True, use_container_width=True)
             else:
                 if view_cat_master == "機器マスター":
                     st.caption(
@@ -5447,7 +5472,11 @@ with tabs[3]:
                             ),
                             axis=1,
                         )
-                        st.dataframe(_sanitize_dataframe(hist_display), use_container_width=True, hide_index=True)
+                        st.dataframe(
+                            _sanitize_dataframe(format_history_display_df(hist_display)),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
 
                         st.markdown("---")
                         st.write("#### 点検結果履歴（報告書表示・印刷）")
@@ -5490,7 +5519,11 @@ with tabs[3]:
                 day_detail_df = df_history[df_history["点検日"] == str(target_date)]
                 if not day_detail_df.empty:
                     st.success(f"{target_date} は 合計 {len(day_detail_df)} 台 の点検が完了しています。")
-                    display_dataframe(day_detail_df, use_container_width=True, hide_index=True)
+                    display_dataframe(
+                        format_history_display_df(day_detail_df),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
                 else:
                     st.info(f"選択された日付（{target_date}）の点検データはありません。")
             else:
