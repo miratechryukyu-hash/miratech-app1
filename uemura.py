@@ -3898,6 +3898,41 @@ def format_overdue_category_summary(category_counts):
     ]
     return "、".join(parts)
 
+def render_overdue_category_cards(category_counts, total_devices=None, title="1年以上点検していない機器"):
+    """カテゴリ別台数を囲い付きカードで表示"""
+    if not category_counts:
+        return
+    sorted_items = sorted(category_counts.items(), key=lambda x: (-x[1], x[0]))
+    with st.container(border=True):
+        st.markdown(f"#### {title}")
+        if total_devices is not None:
+            st.markdown(f"**合計 {total_devices} 台**")
+        per_row = 4
+        for row_start in range(0, len(sorted_items), per_row):
+            row_items = sorted_items[row_start:row_start + per_row]
+            cols = st.columns(len(row_items))
+            for col, (category, count) in zip(cols, row_items):
+                with col:
+                    with st.container(border=True):
+                        st.caption(category)
+                        st.markdown(f"**{count} 台**")
+
+def render_overdue_device_groups(devices):
+    """機器一覧をカテゴリごとの囲いで表示"""
+    if not devices:
+        return
+    by_category = {}
+    for device in devices:
+        by_category.setdefault(device["カテゴリ"], []).append(device)
+    for category in sorted(by_category.keys()):
+        cat_devices = by_category[category]
+        with st.container(border=True):
+            st.markdown(f"**{category}**　{len(cat_devices)} 台")
+            display_df = pd.DataFrame([
+                {k: v for k, v in device.items() if not k.startswith("_")} for device in cat_devices
+            ])
+            display_dataframe(display_df, hide_index=True, use_container_width=True)
+
 def list_annual_overdue_devices(df_master, reference_date=None):
     """1年以上点検していない機器の一覧"""
     devices = []
@@ -3947,17 +3982,14 @@ def render_annual_overdue_inspection_tab(conn, df_master=None):
     for device in devices:
         cat = device["カテゴリ"]
         annual_counts[cat] = annual_counts.get(cat, 0) + 1
-    summary = format_overdue_category_summary(annual_counts)
-    st.warning(f"**合計 {len(devices)} 台:** {summary}")
+    render_overdue_category_cards(annual_counts, total_devices=len(devices))
     categories = sorted({device["カテゴリ"] for device in devices})
     filter_cat = st.selectbox("カテゴリで絞り込み", ["すべて"] + categories, key="overdue_cat_filter")
     filtered = devices if filter_cat == "すべて" else [
         device for device in devices if device["カテゴリ"] == filter_cat
     ]
-    display_df = pd.DataFrame([
-        {k: v for k, v in device.items() if not k.startswith("_")} for device in filtered
-    ])
-    display_dataframe(display_df, hide_index=True, use_container_width=True)
+    st.markdown("#### 機器一覧")
+    render_overdue_device_groups(filtered)
 
 def render_overdue_inspection_notice(conn, df_master=None, reference_date=None):
     """定期点検保存後などに、点検期限超過の台数サマリーを表示"""
@@ -3966,19 +3998,20 @@ def render_overdue_inspection_notice(conn, df_master=None, reference_date=None):
     annual_counts, quarterly_incubator_count = compute_overdue_inspection_counts(
         df_master, reference_date=reference_date,
     )
-    annual_summary = format_overdue_category_summary(annual_counts)
     st.markdown("#### 点検期限超過のお知らせ")
-    if annual_summary:
-        st.warning(f"**1年以上点検していない機器:** {annual_summary}")
+    if annual_counts:
+        total = sum(annual_counts.values())
+        render_overdue_category_cards(annual_counts, total_devices=total)
     else:
-        st.success("1年以上点検していない機器はありません。")
+        with st.container(border=True):
+            st.success("1年以上点検していない機器はありません。")
     if quarterly_incubator_count > 0:
-        st.warning(
-            f"**3ヶ月点検超過（保育器）:** "
-            f"{QUARTERLY_INSPECTION_CATEGORY}{quarterly_incubator_count}台"
-        )
+        with st.container(border=True):
+            st.markdown("#### 3ヶ月点検超過（保育器）")
+            st.markdown(f"**{quarterly_incubator_count} 台**")
     else:
-        st.info("3ヶ月点検超過の保育器はありません。")
+        with st.container(border=True):
+            st.info("3ヶ月点検超過の保育器はありません。")
 
 # ==========================================
 # 日常点検（動作点検）— 超音波診断装置・保育器
