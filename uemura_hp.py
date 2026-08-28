@@ -3858,6 +3858,67 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         "report_kind": "定期点検",
     }
 
+ANNUAL_INSPECTION_OVERDUE_DAYS = 365
+QUARTERLY_INSPECTION_CATEGORY = "保育器"
+QUARTERLY_INSPECTION_OVERDUE_DAYS = 90
+
+def compute_overdue_inspection_counts(df_master, reference_date=None):
+    """最終点検日から、年次（1年超）・四半期（3ヶ月超・保育器）の未点検台数を集計"""
+    annual_counts = {}
+    quarterly_incubator_count = 0
+    if df_master is None or df_master.empty:
+        return annual_counts, quarterly_incubator_count
+
+    today = reference_date or now_jst().date()
+    for _, row in df_master.iterrows():
+        me_no = clean_data_str(row.get("管理番号", ""))
+        if not me_no:
+            continue
+        category = clean_data_str(row.get("カテゴリ", "")) or "その他"
+        last_check = parse_check_date_flexible(row.get("最終点検日", ""))
+        if last_check is None:
+            annual_counts[category] = annual_counts.get(category, 0) + 1
+            if category == QUARTERLY_INSPECTION_CATEGORY:
+                quarterly_incubator_count += 1
+            continue
+        days_since = (today - last_check).days
+        if days_since >= ANNUAL_INSPECTION_OVERDUE_DAYS:
+            annual_counts[category] = annual_counts.get(category, 0) + 1
+        if category == QUARTERLY_INSPECTION_CATEGORY and days_since > QUARTERLY_INSPECTION_OVERDUE_DAYS:
+            quarterly_incubator_count += 1
+    return annual_counts, quarterly_incubator_count
+
+def format_overdue_category_summary(category_counts):
+    """カテゴリ別台数を「輸液ポンプ3台、保育器2台」形式の文字列に整形"""
+    if not category_counts:
+        return ""
+    parts = [
+        f"{category}{count}台"
+        for category, count in sorted(category_counts.items(), key=lambda x: (-x[1], x[0]))
+    ]
+    return "、".join(parts)
+
+def render_overdue_inspection_notice(conn, df_master=None, reference_date=None):
+    """定期点検保存後などに、点検期限超過の台数サマリーを表示"""
+    if df_master is None or df_master.empty:
+        df_master = safe_read_worksheet(conn, "機器マスター")
+    annual_counts, quarterly_incubator_count = compute_overdue_inspection_counts(
+        df_master, reference_date=reference_date,
+    )
+    annual_summary = format_overdue_category_summary(annual_counts)
+    st.markdown("#### 点検期限超過のお知らせ")
+    if annual_summary:
+        st.warning(f"**1年以上点検していない機器:** {annual_summary}")
+    else:
+        st.success("1年以上点検していない機器はありません。")
+    if quarterly_incubator_count > 0:
+        st.warning(
+            f"**3ヶ月点検超過（保育器）:** "
+            f"{QUARTERLY_INSPECTION_CATEGORY}{quarterly_incubator_count}台"
+        )
+    else:
+        st.info("3ヶ月点検超過の保育器はありません。")
+
 # ==========================================
 # 日常点検（動作点検）— 超音波診断装置・保育器
 # ==========================================
@@ -5099,6 +5160,8 @@ with tabs[0]:
             check_type_label=saved_inspection.get("check_type", ""),
             report_sections=saved_inspection.get("report_sections"),
         )
+        st.markdown("---")
+        render_overdue_inspection_notice(conn)
         if st.button("次の点検入力へ", type="primary", key="inspection_report_done"):
             st.session_state.pop("inspection_saved_report", None)
             st.session_state.pop("check_registered_msg", None)
