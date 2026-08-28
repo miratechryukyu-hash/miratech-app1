@@ -3938,10 +3938,12 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     bar_colors = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7"]
 
     month_labels = []
+    month_pcts = []
     for month in range(1, 13):
         month_start = date(year, month, 1)
         offset_days = (month_start - year_start).days
         left_pct = offset_days / total_days * 100
+        month_pcts.append(left_pct)
         month_labels.append(
             f"<div class='plan-month' style='left:{left_pct:.2f}%'>{month}月</div>"
         )
@@ -3950,9 +3952,16 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     today_label_html = ""
     if year_start <= today <= year_end:
         today_pct = (today - year_start).days / total_days * 100
+        label_pct = today_pct
+        for month_pct in month_pcts:
+            if abs(today_pct - month_pct) < 3.2:
+                label_pct = min(max(today_pct + 2.8, 2.0), 98.0) if today_pct >= month_pct else min(max(today_pct - 2.8, 2.0), 98.0)
+                break
+        today_badge = f"本日 {today.month}/{today.day}"
         today_label_html = (
-            f"<div class='plan-today-label' style='left:{today_pct:.2f}%'>"
-            f"{html.escape('本日')}</div>"
+            f"<div class='plan-today-label' style='left:{label_pct:.2f}%' "
+            f"title='{html.escape(format_plan_date_label(today))}'>"
+            f"{html.escape(today_badge)}</div>"
         )
 
     rows_html = []
@@ -4000,15 +4009,21 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     font-weight: 700;
     margin-bottom: 12px;
 }}
+.plan-axis-wrap {{
+    margin: 0 0 8px 180px;
+}}
+.plan-today-axis {{
+    position: relative;
+    height: 24px;
+}}
 .plan-axis {{
     position: relative;
-    height: 28px;
-    margin: 0 0 8px 180px;
+    height: 26px;
     border-bottom: 1px solid #ccc;
 }}
 .plan-month {{
     position: absolute;
-    top: 0;
+    top: 6px;
     transform: translateX(-50%);
     font-size: 11px;
     color: #666;
@@ -4028,9 +4043,24 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     top: 0;
     transform: translateX(-50%);
     font-size: 10px;
-    color: #e74c3c;
+    color: #fff;
+    background: #e74c3c;
     font-weight: 700;
     white-space: nowrap;
+    padding: 2px 8px;
+    border-radius: 4px;
+    z-index: 5;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}}
+.plan-today-label::after {{
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -5px;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #e74c3c;
 }}
 .plan-body {{
     padding-top: 4px;
@@ -4088,14 +4118,17 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     .plan-row {{
         grid-template-columns: 1fr;
     }}
-    .plan-axis {{
+    .plan-axis-wrap {{
         margin-left: 0;
     }}
 }}
 </style>
 <div class="plan-chart-wrap">
     <div class="plan-chart-title">{year}年 定期点検予定</div>
-    <div class="plan-axis">{today_label_html}{''.join(month_labels)}</div>
+    <div class="plan-axis-wrap">
+        <div class="plan-today-axis">{today_label_html}</div>
+        <div class="plan-axis">{''.join(month_labels)}</div>
+    </div>
     <div class="plan-body">{''.join(rows_html)}</div>
 </div>
 """
