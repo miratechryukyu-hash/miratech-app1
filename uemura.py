@@ -4073,13 +4073,16 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     z-index: 1;
 }}
 .plan-bar-text {{
-    color: #fff;
+    color: #1f2937;
     font-size: 10px;
     font-weight: 700;
     white-space: nowrap;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-    padding: 0 6px;
+    padding: 2px 8px;
     line-height: 1.2;
+    background: rgba(255, 255, 255, 0.94);
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }}
 @media (max-width: 900px) {{
     .plan-row {{
