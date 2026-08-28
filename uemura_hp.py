@@ -3861,6 +3861,249 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
 ANNUAL_INSPECTION_OVERDUE_DAYS = 365
 QUARTERLY_INSPECTION_CATEGORY = "保育器"
 QUARTERLY_INSPECTION_OVERDUE_DAYS = 90
+WEEKDAY_JA = "月火水木金土日"
+
+def get_annual_inspection_plan(year=2026):
+    """定期点検年間計画（予定日）"""
+    return [
+        {
+            "label": "保育器(閉鎖式)",
+            "models": "V-2100G, 102, Rabee incu i",
+            "start": date(year, 8, 3),
+            "end": date(year, 8, 29),
+        },
+        {
+            "label": "レサシフロー",
+            "models": "",
+            "start": date(year, 8, 3),
+            "end": date(year, 8, 14),
+        },
+        {
+            "label": "生体情報モニタ",
+            "models": "PVM-2701, PVM-4761, BP-88S, WEP-1200",
+            "start": date(year, 8, 24),
+            "end": date(year, 8, 29),
+        },
+        {
+            "label": "心電計",
+            "models": "cardiofax M",
+            "start": date(year, 8, 24),
+            "end": date(year, 8, 29),
+        },
+        {
+            "label": "輸液ポンプ",
+            "models": "TE-131A",
+            "start": date(year, 9, 1),
+            "end": date(year, 9, 26),
+        },
+        {
+            "label": "酸素モニター・ブレンダー",
+            "models": "EO-220G, OX-370",
+            "start": date(year, 10, 19),
+            "end": date(year, 10, 31),
+        },
+        {
+            "label": "パルスオキシメーター",
+            "models": "Rad-8, WEC-7201, LKL2800ma, OXY max N-65, ライトテック DP1",
+            "start": date(year, 10, 19),
+            "end": date(year, 10, 31),
+        },
+        {
+            "label": "フットポンプ",
+            "models": "SCD700",
+            "start": date(year, 11, 9),
+            "end": date(year, 11, 21),
+        },
+    ]
+
+def format_plan_date_label(plan_date):
+    """計画日を「2026年8月3日(月)」形式で表示"""
+    return f"{plan_date.year}年{plan_date.month}月{plan_date.day}日({WEEKDAY_JA[plan_date.weekday()]})"
+
+def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=None):
+    """年間計画のガント風タイムライン HTML"""
+    if not plan_items:
+        return ""
+    today = reference_date or now_jst().date()
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    total_days = (year_end - year_start).days + 1
+    bar_colors = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7"]
+
+    month_labels = []
+    for month in range(1, 13):
+        month_start = date(year, month, 1)
+        offset_days = (month_start - year_start).days
+        left_pct = offset_days / total_days * 100
+        month_labels.append(
+            f"<div class='plan-month' style='left:{left_pct:.2f}%'>{month}月</div>"
+        )
+
+    today_pct = None
+    today_label_html = ""
+    if year_start <= today <= year_end:
+        today_pct = (today - year_start).days / total_days * 100
+        today_label_html = (
+            f"<div class='plan-today-label' style='left:{today_pct:.2f}%'>"
+            f"{html.escape('本日')}</div>"
+        )
+
+    rows_html = []
+    for index, item in enumerate(plan_items):
+        start_day = max(item["start"], year_start)
+        end_day = min(item["end"], year_end)
+        if end_day < start_day:
+            continue
+        left_pct = (start_day - year_start).days / total_days * 100
+        width_pct = ((end_day - start_day).days + 1) / total_days * 100
+        color = bar_colors[index % len(bar_colors)]
+        period = f"{format_plan_date_label(item['start'])} ～ {format_plan_date_label(item['end'])}"
+        models = clean_data_str(item.get("models", ""))
+        models_html = f"<div class='plan-row-models'>{html.escape(models)}</div>" if models else ""
+        today_line_html = ""
+        if today_pct is not None:
+            today_line_html = (
+                f"<div class='plan-today-line' style='left:{today_pct:.2f}%' "
+                f"title='本日 {format_plan_date_label(today)}'></div>"
+            )
+        rows_html.append(
+            f"<div class='plan-row'>"
+            f"<div class='plan-row-label'>{html.escape(item['label'])}"
+            f"{models_html}</div>"
+            f"<div class='plan-row-track'>"
+            f"{today_line_html}"
+            f"<div class='plan-bar' style='left:{left_pct:.2f}%;width:{width_pct:.2f}%;background:{color};' "
+            f"title='{html.escape(period)}'></div>"
+            f"</div>"
+            f"<div class='plan-row-period'>{html.escape(period)}</div>"
+            f"</div>"
+        )
+
+    return f"""
+<style>
+.plan-chart-wrap {{
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #222;
+}}
+.plan-chart-title {{
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}}
+.plan-axis {{
+    position: relative;
+    height: 28px;
+    margin: 0 0 8px 180px;
+    border-bottom: 1px solid #ccc;
+}}
+.plan-month {{
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #666;
+    white-space: nowrap;
+}}
+.plan-today-line {{
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #e74c3c;
+    z-index: 2;
+    pointer-events: none;
+}}
+.plan-today-label {{
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #e74c3c;
+    font-weight: 700;
+    white-space: nowrap;
+}}
+.plan-body {{
+    padding-top: 4px;
+}}
+.plan-row {{
+    display: grid;
+    grid-template-columns: 180px 1fr 260px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+}}
+.plan-row-label {{
+    font-weight: 600;
+    line-height: 1.35;
+}}
+.plan-row-models {{
+    font-size: 11px;
+    color: #666;
+    font-weight: 400;
+    margin-top: 2px;
+}}
+.plan-row-track {{
+    position: relative;
+    height: 22px;
+    background: #f4f6f8;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    overflow: hidden;
+}}
+.plan-bar {{
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    border-radius: 3px;
+    min-width: 4px;
+}}
+.plan-row-period {{
+    font-size: 11px;
+    color: #444;
+    line-height: 1.35;
+}}
+@media (max-width: 900px) {{
+    .plan-row {{
+        grid-template-columns: 1fr;
+    }}
+    .plan-axis {{
+        margin-left: 0;
+    }}
+    .plan-row-period {{
+        margin-top: -4px;
+    }}
+}}
+</style>
+<div class="plan-chart-wrap">
+    <div class="plan-chart-title">{year}年 定期点検予定</div>
+    <div class="plan-axis">{today_label_html}{''.join(month_labels)}</div>
+    <div class="plan-body">{''.join(rows_html)}</div>
+</div>
+"""
+
+def render_annual_inspection_plan_graph(reference_date=None, plan_year=None):
+    """年間計画グラフと予定一覧"""
+    today = reference_date or now_jst().date()
+    year = plan_year or today.year
+    plan_items = get_annual_inspection_plan(year)
+    with st.container(border=True):
+        st.markdown("#### 定期点検 年間計画")
+        st.caption(f"{year}年の点検予定期間を一覧表示します。赤線は本日（{format_plan_date_label(today)}）です。")
+        chart_html = build_annual_inspection_plan_chart_html(plan_items, year, reference_date=today)
+        st.markdown(chart_html, unsafe_allow_html=True)
+        plan_rows = []
+        for index, item in enumerate(plan_items, start=1):
+            plan_rows.append({
+                "No.": index,
+                "機器種別": item["label"],
+                "対象機種": item.get("models", "") or "-",
+                "点検予定": (
+                    f"{format_plan_date_label(item['start'])} ～ "
+                    f"{format_plan_date_label(item['end'])}"
+                ),
+            })
+        display_dataframe(pd.DataFrame(plan_rows), hide_index=True, use_container_width=True)
 
 def compute_overdue_inspection_counts(df_master, reference_date=None):
     """最終点検日から、年次（1年超）・四半期（3ヶ月超・保育器）の未点検台数を集計"""
@@ -3968,6 +4211,9 @@ def list_annual_overdue_devices(df_master, reference_date=None):
 def render_annual_overdue_inspection_tab(conn, df_master=None):
     """1年超過点検の一覧タブ"""
     st.subheader("点検超過一覧（1年以上）")
+    render_annual_inspection_plan_graph()
+    st.markdown("---")
+    st.markdown("#### 1年以上点検していない機器")
     st.caption("最終点検日から1年以上経過している機器、または点検記録がない機器を表示します。")
     if st.button("最新のデータを読み込む", key="refresh_overdue_tab"):
         st.cache_data.clear()
@@ -3976,7 +4222,8 @@ def render_annual_overdue_inspection_tab(conn, df_master=None):
         df_master = safe_read_worksheet(conn, "機器マスター")
     devices = list_annual_overdue_devices(df_master)
     if not devices:
-        st.success("1年以上点検していない機器はありません。")
+        with st.container(border=True):
+            st.success("1年以上点検していない機器はありません。")
         return
     annual_counts = {}
     for device in devices:
