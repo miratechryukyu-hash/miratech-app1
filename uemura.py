@@ -3898,6 +3898,67 @@ def format_overdue_category_summary(category_counts):
     ]
     return "、".join(parts)
 
+def list_annual_overdue_devices(df_master, reference_date=None):
+    """1年以上点検していない機器の一覧"""
+    devices = []
+    if df_master is None or df_master.empty:
+        return devices
+    today = reference_date or now_jst().date()
+    for _, row in df_master.iterrows():
+        me_no = clean_data_str(row.get("管理番号", ""))
+        if not me_no:
+            continue
+        category = clean_data_str(row.get("カテゴリ", "")) or "その他"
+        last_check = parse_check_date_flexible(row.get("最終点検日", ""))
+        if last_check is None:
+            days_since = None
+            is_overdue = True
+        else:
+            days_since = (today - last_check).days
+            is_overdue = days_since >= ANNUAL_INSPECTION_OVERDUE_DAYS
+        if not is_overdue:
+            continue
+        devices.append({
+            "管理番号": me_no,
+            "カテゴリ": category,
+            "機種": normalize_stored_model(category, row.get("機種", "")),
+            "シリアルNo": clean_data_str(row.get("シリアルNo", "")),
+            "最終点検日": clean_data_str(row.get("最終点検日", "")) or "未点検",
+            "経過日数": f"{days_since}日" if days_since is not None else "-",
+            "_sort_days": days_since if days_since is not None else 999999,
+        })
+    devices.sort(key=lambda d: (-d["_sort_days"], d["カテゴリ"], d["管理番号"]))
+    return devices
+
+def render_annual_overdue_inspection_tab(conn, df_master=None):
+    """1年超過点検の一覧タブ"""
+    st.subheader("点検超過一覧（1年以上）")
+    st.caption("最終点検日から1年以上経過している機器、または点検記録がない機器を表示します。")
+    if st.button("最新のデータを読み込む", key="refresh_overdue_tab"):
+        st.cache_data.clear()
+        st.rerun()
+    if df_master is None or df_master.empty:
+        df_master = safe_read_worksheet(conn, "機器マスター")
+    devices = list_annual_overdue_devices(df_master)
+    if not devices:
+        st.success("1年以上点検していない機器はありません。")
+        return
+    annual_counts = {}
+    for device in devices:
+        cat = device["カテゴリ"]
+        annual_counts[cat] = annual_counts.get(cat, 0) + 1
+    summary = format_overdue_category_summary(annual_counts)
+    st.warning(f"**合計 {len(devices)} 台:** {summary}")
+    categories = sorted({device["カテゴリ"] for device in devices})
+    filter_cat = st.selectbox("カテゴリで絞り込み", ["すべて"] + categories, key="overdue_cat_filter")
+    filtered = devices if filter_cat == "すべて" else [
+        device for device in devices if device["カテゴリ"] == filter_cat
+    ]
+    display_df = pd.DataFrame([
+        {k: v for k, v in device.items() if not k.startswith("_")} for device in filtered
+    ])
+    display_dataframe(display_df, hide_index=True, use_container_width=True)
+
 def render_overdue_inspection_notice(conn, df_master=None, reference_date=None):
     """定期点検保存後などに、点検期限超過の台数サマリーを表示"""
     if df_master is None or df_master.empty:
@@ -5082,11 +5143,15 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検入力", "日常点検", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
+tab_names = ["点検超過（1年）", "点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
 tabs = st.tabs(tab_names)
 
-# ====== タブ1：入力画面 ======
+# ====== タブ1：点検超過一覧 ======
 with tabs[0]:
+    render_annual_overdue_inspection_tab(conn, df_master_global)
+
+# ====== タブ2：入力画面 ======
+with tabs[1]:
     st.markdown("""
     <style>
     @media print {
@@ -5477,16 +5542,6 @@ with tabs[0]:
                     st.session_state.pop("pending_check_save", None)
                     st.info("保存をキャンセルしました。未設定の項目を入力してください。")
                     st.rerun()
-
-# ====== タブ2：日常点検 ======
-with tabs[1]:
-    st.subheader("日常点検（動作点検）")
-    st.caption("対象: 超音波診断装置・保育器（毎日の動作確認）")
-    daily_input_tab, daily_print_tab = st.tabs(["点検入力", "月次PDF・印刷"])
-    with daily_input_tab:
-        render_daily_inspection_form(conn, df_master_global, form_key_prefix="admin_daily")
-    with daily_print_tab:
-        render_monthly_daily_inspection_export(conn, df_master_global, facility_name)
 
 # ====== タブ3：マスター ======
 with tabs[2]:
