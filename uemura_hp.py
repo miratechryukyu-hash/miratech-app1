@@ -3920,6 +3920,13 @@ def format_plan_date_label(plan_date):
     """計画日を「2026年8月3日(月)」形式で表示"""
     return f"{plan_date.year}年{plan_date.month}月{plan_date.day}日({WEEKDAY_JA[plan_date.weekday()]})"
 
+def format_plan_period_compact(start_date, end_date):
+    """グラフバー内用の短い日付表示"""
+    return (
+        f"{start_date.month}/{start_date.day}({WEEKDAY_JA[start_date.weekday()]})"
+        f"～{end_date.month}/{end_date.day}({WEEKDAY_JA[end_date.weekday()]})"
+    )
+
 def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=None):
     """年間計画のガント風タイムライン HTML"""
     if not plan_items:
@@ -3958,6 +3965,7 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
         width_pct = ((end_day - start_day).days + 1) / total_days * 100
         color = bar_colors[index % len(bar_colors)]
         period = f"{format_plan_date_label(item['start'])} ～ {format_plan_date_label(item['end'])}"
+        period_compact = format_plan_period_compact(item["start"], item["end"])
         models = clean_data_str(item.get("models", ""))
         models_html = f"<div class='plan-row-models'>{html.escape(models)}</div>" if models else ""
         today_line_html = ""
@@ -3973,9 +3981,10 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
             f"<div class='plan-row-track'>"
             f"{today_line_html}"
             f"<div class='plan-bar' style='left:{left_pct:.2f}%;width:{width_pct:.2f}%;background:{color};' "
-            f"title='{html.escape(period)}'></div>"
+            f"title='{html.escape(period)}'>"
+            f"<span class='plan-bar-text'>{html.escape(period_compact)}</span>"
             f"</div>"
-            f"<div class='plan-row-period'>{html.escape(period)}</div>"
+            f"</div>"
             f"</div>"
         )
 
@@ -4028,7 +4037,7 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 }}
 .plan-row {{
     display: grid;
-    grid-template-columns: 180px 1fr 260px;
+    grid-template-columns: 180px 1fr;
     gap: 10px;
     align-items: center;
     margin-bottom: 10px;
@@ -4045,23 +4054,32 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 }}
 .plan-row-track {{
     position: relative;
-    height: 22px;
+    height: 34px;
     background: #f4f6f8;
     border: 1px solid #e0e0e0;
     border-radius: 4px;
-    overflow: hidden;
+    overflow: visible;
 }}
 .plan-bar {{
     position: absolute;
-    top: 2px;
-    bottom: 2px;
+    top: 3px;
+    bottom: 3px;
     border-radius: 3px;
     min-width: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    z-index: 1;
 }}
-.plan-row-period {{
-    font-size: 11px;
-    color: #444;
-    line-height: 1.35;
+.plan-bar-text {{
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    padding: 0 6px;
+    line-height: 1.2;
 }}
 @media (max-width: 900px) {{
     .plan-row {{
@@ -4069,9 +4087,6 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     }}
     .plan-axis {{
         margin-left: 0;
-    }}
-    .plan-row-period {{
-        margin-top: -4px;
     }}
 }}
 </style>
