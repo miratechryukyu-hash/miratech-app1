@@ -3858,6 +3858,158 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         "report_kind": "定期点検",
     }
 
+def resolve_device_me_from_keyword(keyword, df_master):
+    """検索キーワードから管理番号を解決（検索文字列変更だけでは機器未確定）"""
+    if not keyword or df_master is None or df_master.empty:
+        return ""
+    master_row, _ = find_device_row(df_master, keyword)
+    if master_row is None:
+        return ""
+    return clean_data_str(master_row.get("管理番号", ""))
+
+def _pending_check_payload_keys():
+    return {"incomplete_items", "ng_items", "_pending_reason", "_pending_error"}
+
+def store_pending_check_save(payload, reason="incomplete", error_msg=""):
+    """点検保存待ちデータを機器別に保持（保存失敗・未設定項目でも消えない）"""
+    data = dict(payload)
+    data["_pending_reason"] = reason
+    data["_pending_error"] = clean_data_str(error_msg)
+    me_no = clean_data_str(data.get("final_me_no", ""))
+    bucket = st.session_state.setdefault("pending_check_saves", {})
+    if me_no:
+        bucket[me_no] = data
+    st.session_state["pending_check_save"] = data
+
+def clear_pending_check_save(me_no=""):
+    """点検保存待ちデータをクリア"""
+    me_no = clean_data_str(me_no)
+    bucket = st.session_state.get("pending_check_saves", {})
+    if me_no and me_no in bucket:
+        del bucket[me_no]
+    pending = st.session_state.get("pending_check_save")
+    if not me_no or (pending and clean_data_str(pending.get("final_me_no", "")) == me_no):
+        st.session_state.pop("pending_check_save", None)
+
+def sync_pending_check_save_for_device(me_no):
+    """表示中の機器に合わせて保存待ちデータを復元"""
+    me_no = clean_data_str(me_no)
+    if not me_no:
+        st.session_state.pop("pending_check_save", None)
+        return
+    pending = st.session_state.get("pending_check_saves", {}).get(me_no)
+    st.session_state["pending_check_save"] = pending
+
+def attempt_inspection_save(conn, save_payload):
+    """点検をスプレッドシートへ保存。失敗しても payload を保持"""
+    me_no = clean_data_str(save_payload.get("final_me_no", ""))
+    clean_payload = {
+        k: v for k, v in save_payload.items() if k not in _pending_check_payload_keys()
+    }
+    try:
+        with st.spinner("スプレッドシートに保存しています..."):
+            saved_report = execute_inspection_save(conn, **clean_payload)
+        clear_pending_check_save(me_no)
+        st.session_state["inspection_saved_report"] = saved_report
+        st.rerun()
+    except Exception as e:
+        store_pending_check_save(save_payload, reason="failed", error_msg=str(e))
+        st.error(f"登録エラー: {e}")
+        st.warning("入力内容は保持されています。下の「保存を再試行」から再度保存できます。")
+
+def render_pending_check_save_recovery(conn):
+    """未保存・保存失敗の点検データを復元して再試行"""
+    pending = st.session_state.get("pending_check_save")
+    bucket = st.session_state.get("pending_check_saves", {})
+    other_pending = {
+        me: data for me, data in bucket.items()
+        if not pending or clean_data_str(data.get("final_me_no", "")) != clean_data_str(pending.get("final_me_no", ""))
+    }
+    if other_pending:
+        with st.container(border=True):
+            st.warning("他の機器に未保存の点検データがあります。")
+            for me, data in sorted(other_pending.items()):
+                reason = data.get("_pending_reason", "incomplete")
+                reason_label = {
+                    "failed": "保存失敗",
+                    "incomplete": "未設定項目あり",
+                    "validation": "確認待ち",
+                }.get(reason, "未保存")
+                st.caption(f"{me} — {reason_label}")
+
+    if not pending:
+        return
+
+    reason = pending.get("_pending_reason", "incomplete")
+    me_no = clean_data_str(pending.get("final_me_no", ""))
+    st.markdown("---")
+    with st.container(border=True):
+        if reason == "failed":
+            st.error(f"**{me_no}** の保存に失敗しました。通信環境を確認のうえ再試行してください。")
+            if pending.get("_pending_error"):
+                st.caption(f"エラー詳細: {pending['_pending_error']}")
+        elif reason == "validation":
+            st.error("総合評価が「使用可」のため保存できませんでした。")
+            ng_items = pending.get("ng_items", [])
+            if ng_items:
+                st.warning("該当項目: " + "、".join(ng_items))
+            st.info("項目または総合評価を修正してから、再度「保存・決定」を押してください。入力内容は保持されています。")
+            if st.button("確認待ちデータを破棄", key="discard_validation_pending"):
+                clear_pending_check_save(me_no)
+                st.rerun()
+            return
+        else:
+            st.warning("未設定の項目があります。このまま保存しますか？")
+            incomplete = pending.get("incomplete_items", [])
+            if incomplete:
+                st.write("未設定の項目: " + "、".join(incomplete))
+
+        col_retry, col_discard = st.columns(2)
+        with col_retry:
+            retry_label = "保存を再試行" if reason == "failed" else "Yes（保存する）"
+            if st.button(retry_label, type="primary", use_container_width=True, key="confirm_pending_check_save"):
+                attempt_inspection_save(conn, pending)
+        with col_discard:
+            if st.button("破棄する", use_container_width=True, key="discard_pending_check_save"):
+                clear_pending_check_save(me_no)
+                st.info("保存待ちデータを破棄しました。必要に応じて再度入力してください。")
+                st.rerun()
+
+def store_pending_daily_save(payload, pending_key, reason="incomplete", error_msg="", pending_bucket_key=None):
+    """日常点検の保存待ちデータを保持"""
+    data = dict(payload)
+    data["_pending_reason"] = reason
+    data["_pending_error"] = clean_data_str(error_msg)
+    st.session_state[pending_key] = data
+    if pending_bucket_key:
+        me_no = clean_data_str(data.get("final_me_no", ""))
+        if me_no:
+            st.session_state.setdefault(pending_bucket_key, {})[me_no] = data
+
+def attempt_daily_inspection_save(conn, save_payload, pending_key, msg_key, pending_bucket_key=None):
+    """日常点検を保存。失敗しても payload を保持"""
+    me_no = clean_data_str(save_payload.get("final_me_no", ""))
+    clean_payload = {
+        k: v for k, v in save_payload.items()
+        if k not in ("incomplete_items", "ng_items", "msg_key", "_pending_reason", "_pending_error")
+    }
+    try:
+        with st.spinner("保存しています..."):
+            execute_daily_inspection_save(conn, **clean_payload, msg_key=msg_key)
+        st.session_state.pop(pending_key, None)
+        if pending_bucket_key and me_no:
+            bucket = st.session_state.get(pending_bucket_key, {})
+            bucket.pop(me_no, None)
+        st.success(st.session_state[msg_key])
+        st.rerun()
+    except Exception as e:
+        store_pending_daily_save(
+            save_payload, pending_key, reason="failed", error_msg=str(e),
+            pending_bucket_key=pending_bucket_key,
+        )
+        st.error(f"保存エラー: {e}")
+        st.warning("入力内容は保持されています。下の「保存を再試行」から再度保存できます。")
+
 ANNUAL_INSPECTION_OVERDUE_DAYS = 365
 QUARTERLY_INSPECTION_CATEGORY = "保育器"
 QUARTERLY_INSPECTION_OVERDUE_DAYS = 90
@@ -4443,8 +4595,15 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
 
     if input_keyword != st.session_state.get(search_key, ""):
         st.session_state.pop(msg_key, None)
-        st.session_state.pop(pending_key, None)
         st.session_state[search_key] = input_keyword
+
+    resolved_me = resolve_device_me_from_keyword(input_keyword, df_master)
+    device_track_key = f"{form_key_prefix}_last_device_me"
+    pending_bucket_key = f"{form_key_prefix}_pending_saves"
+    if resolved_me != st.session_state.get(device_track_key, ""):
+        st.session_state[device_track_key] = resolved_me
+        bucket = st.session_state.get(pending_bucket_key, {})
+        st.session_state[pending_key] = bucket.get(resolved_me) if resolved_me else None
 
     master_row = None
     match_type = None
@@ -4538,49 +4697,44 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
             if incomplete_items:
                 st.error(f"未選択の項目があります。{INSPECTION_CHECK_LEGEND.replace('判定: ', '')} のいずれかを選択してください。")
                 st.warning("未設定: " + "、".join(incomplete_items))
-                st.session_state[pending_key] = save_payload
+                store_pending_daily_save(
+                    save_payload, pending_key, reason="incomplete", pending_bucket_key=pending_bucket_key,
+                )
             else:
                 if ng_items:
                     st.warning("問題項目: " + "、".join(ng_items))
-                st.session_state.pop(pending_key, None)
-                try:
-                    with st.spinner("保存しています..."):
-                        saved_report = execute_daily_inspection_save(
-                            conn,
-                            **{k: v for k, v in save_payload.items()
-                               if k not in ("incomplete_items", "ng_items", "msg_key")},
-                            msg_key=msg_key,
-                        )
-                    st.success(st.session_state[msg_key])
-                except Exception as e:
-                    st.error(f"保存エラー: {e}")
+                attempt_daily_inspection_save(
+                    conn, save_payload, pending_key, msg_key, pending_bucket_key=pending_bucket_key,
+                )
 
     pending = st.session_state.get(pending_key)
     if pending:
+        reason = pending.get("_pending_reason", "incomplete")
         st.markdown("---")
-        st.warning("未選択の項目があります。このまま保存しますか？")
-        st.write("未設定: " + "、".join(pending.get("incomplete_items", [])))
-        col_yes, col_no = st.columns(2)
-        with col_yes:
-            if st.button("Yes（保存する）", type="primary", use_container_width=True,
-                         key=f"{form_key_prefix}_confirm_yes"):
-                try:
-                    with st.spinner("保存しています..."):
-                        saved_report = execute_daily_inspection_save(
-                            conn,
-                            **{k: v for k, v in pending.items()
-                               if k not in ("incomplete_items", "ng_items", "msg_key")},
-                            msg_key=pending.get("msg_key", msg_key),
-                        )
+        with st.container(border=True):
+            if reason == "failed":
+                st.error("保存に失敗しました。通信環境を確認のうえ、再試行してください。")
+                if pending.get("_pending_error"):
+                    st.caption(f"エラー詳細: {pending['_pending_error']}")
+            else:
+                st.warning("未選択の項目があります。このまま保存しますか？")
+                st.write("未設定: " + "、".join(pending.get("incomplete_items", [])))
+            col_yes, col_no = st.columns(2)
+            with col_yes:
+                retry_label = "保存を再試行" if reason == "failed" else "Yes（保存する）"
+                if st.button(retry_label, type="primary", use_container_width=True,
+                             key=f"{form_key_prefix}_confirm_yes"):
+                    attempt_daily_inspection_save(
+                        conn, pending, pending_key, pending.get("msg_key", msg_key),
+                        pending_bucket_key=pending_bucket_key,
+                    )
+            with col_no:
+                if st.button("破棄する", use_container_width=True, key=f"{form_key_prefix}_confirm_no"):
                     st.session_state.pop(pending_key, None)
-                    st.success(st.session_state[pending.get("msg_key", msg_key)])
-                except Exception as e:
-                    st.error(f"保存エラー: {e}")
-        with col_no:
-            if st.button("No（キャンセル）", use_container_width=True, key=f"{form_key_prefix}_confirm_no"):
-                st.session_state.pop(pending_key, None)
-                st.info("保存をキャンセルしました。")
-                st.rerun()
+                    bucket = st.session_state.get(pending_bucket_key, {})
+                    bucket.pop(final_me_no, None)
+                    st.info("保存待ちデータを破棄しました。")
+                    st.rerun()
 
     if saved_report:
         render_daily_inspection_report(
@@ -5520,9 +5674,12 @@ with tabs[1]:
 
     if input_keyword != st.session_state.get("check_last_search_keyword", ""):
         st.session_state.pop("check_registered_msg", None)
-        st.session_state.pop("pending_check_save", None)
-        st.session_state.pop("inspection_saved_report", None)
         st.session_state["check_last_search_keyword"] = input_keyword
+
+    resolved_me = resolve_device_me_from_keyword(input_keyword, df_master_global)
+    if resolved_me != st.session_state.get("check_last_device_me", ""):
+        st.session_state["check_last_device_me"] = resolved_me
+        sync_pending_check_save_for_device(resolved_me)
 
     if st.session_state.get("inspection_saved_report"):
         saved_inspection = st.session_state["inspection_saved_report"]
@@ -5812,55 +5969,20 @@ with tabs[1]:
                 if incomplete_items:
                     st.error(f"未選択の項目があります。{INSPECTION_CHECK_LEGEND.replace('判定: ', '')} のいずれかを選択してください。")
                     st.warning("未設定の項目: " + "、".join(incomplete_items))
-                    st.session_state["pending_check_save"] = save_payload
+                    store_pending_check_save(save_payload, reason="incomplete")
                 elif ng_items and check_type == "院内点検(miratech)" and result == "使用可":
                     st.error("不合格(×)・修理検討(△)または基準外の測定値があります。")
                     st.warning("該当項目: " + "、".join(ng_items))
-                    st.session_state.pop("pending_check_save", None)
+                    store_pending_check_save(save_payload, reason="validation")
                     st.error("総合評価が「使用可」のため保存できません。数値・項目を修正するか、総合評価を【メーカー修理】等に変更してください。")
                 else:
                     if ng_items:
                         st.warning("問題項目: " + "、".join(ng_items))
                         if check_type == "院内点検(miratech)" and result != "使用可":
                             st.info("総合評価が「使用可」以外のため、問題項目があっても保存します。")
-                    st.session_state.pop("pending_check_save", None)
-                    try:
-                        with st.spinner("スプレッドシートに保存しています..."):
-                            saved_report = execute_inspection_save(
-                                conn,
-                                **{k: v for k, v in save_payload.items() if k not in ("incomplete_items", "ng_items")},
-                            )
-                        st.session_state["inspection_saved_report"] = saved_report
-                        st.success(st.session_state["check_registered_msg"])
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"登録エラー: {e}")
+                    attempt_inspection_save(conn, save_payload)
 
-        pending = st.session_state.get("pending_check_save")
-        if pending:
-            st.markdown("---")
-            st.warning("未設定の項目があります。保存しますか？")
-            st.write("未設定の項目: " + "、".join(pending.get("incomplete_items", [])))
-            col_yes, col_no = st.columns(2)
-            with col_yes:
-                if st.button("Yes（保存する）", type="primary", use_container_width=True, key="confirm_incomplete_save_yes"):
-                    try:
-                        with st.spinner("スプレッドシートに保存しています..."):
-                            saved_report = execute_inspection_save(
-                                conn,
-                                **{k: v for k, v in pending.items() if k not in ("incomplete_items", "ng_items")},
-                            )
-                        st.session_state["inspection_saved_report"] = saved_report
-                        st.session_state.pop("pending_check_save", None)
-                        st.success(st.session_state["check_registered_msg"])
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"登録エラー: {e}")
-            with col_no:
-                if st.button("No（キャンセル）", use_container_width=True, key="confirm_incomplete_save_no"):
-                    st.session_state.pop("pending_check_save", None)
-                    st.info("保存をキャンセルしました。未設定の項目を入力してください。")
-                    st.rerun()
+    render_pending_check_save_recovery(conn)
 
 # ====== タブ3：マスター ======
 with tabs[2]:
