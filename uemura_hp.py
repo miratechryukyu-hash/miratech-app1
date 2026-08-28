@@ -4134,7 +4134,7 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 """
 
 def render_annual_inspection_plan_graph(reference_date=None, plan_year=None):
-    """年間計画グラフと予定一覧"""
+    """年間計画グラフ"""
     today = reference_date or now_jst().date()
     year = plan_year or today.year
     plan_items = get_annual_inspection_plan(year)
@@ -4143,18 +4143,6 @@ def render_annual_inspection_plan_graph(reference_date=None, plan_year=None):
         st.caption(f"{year}年の点検予定期間を一覧表示します。赤線は本日（{format_plan_date_label(today)}）です。")
         chart_html = build_annual_inspection_plan_chart_html(plan_items, year, reference_date=today)
         st.markdown(chart_html, unsafe_allow_html=True)
-        plan_rows = []
-        for index, item in enumerate(plan_items, start=1):
-            plan_rows.append({
-                "No.": index,
-                "機器種別": item["label"],
-                "対象機種": item.get("models", "") or "-",
-                "点検予定": (
-                    f"{format_plan_date_label(item['start'])} ～ "
-                    f"{format_plan_date_label(item['end'])}"
-                ),
-            })
-        display_dataframe(pd.DataFrame(plan_rows), hide_index=True, use_container_width=True)
 
 def compute_overdue_inspection_counts(df_master, reference_date=None):
     """最終点検日から、年次（1年超）・四半期（3ヶ月超・保育器）の未点検台数を集計"""
