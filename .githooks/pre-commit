@@ -1,0 +1,8 @@
+#!/bin/sh
+# コミット時に App バージョン（日付+英字）を自動更新して同梱する
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+python3 scripts/bump_app_version.py
+git add uemura_hp.py uemura.py
+exit 0

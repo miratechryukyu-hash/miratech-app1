@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-29a"
+APP_VERSION = "2026-08-29b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -6715,8 +6715,8 @@ with tabs[3]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ6：QRコード・管理番号シール ======
-with tabs[5]:
+# ====== タブ5：QRコード・管理番号シール ======
+with tabs[4]:
     st.subheader("管理番号シール ＆ QRコード")
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
@@ -6784,8 +6784,8 @@ with tabs[5]:
             button_key="tepra_qr_tab",
         )
 
-# ====== タブ7：新規機器の登録 ======
-with tabs[6]:
+# ====== タブ6：新規機器の登録 ======
+with tabs[5]:
     st.subheader("新規機器の直接登録")
     st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
     
@@ -6902,6 +6902,10 @@ with tabs[6]:
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
 
-# ====== タブ8：修理故障・対応管理 ======
-with tabs[7]:
+# ====== タブ7：修理故障・対応管理 ======
+with tabs[6]:
     render_repair_fault_management(conn)
+
+# ====== タブ8：日報 ======
+with tabs[7]:
+    render_daily_report_tab(conn, facility_name)
