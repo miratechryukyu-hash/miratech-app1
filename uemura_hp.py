@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-29b"
+APP_VERSION = "2026-08-29c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -5361,8 +5361,8 @@ def render_daily_report_tab(conn, facility_name):
         st.session_state["daily_report_date"] = report_date
         reporter = st.text_input("報告者", value=st.session_state.get("current_user_name", ""), key="daily_report_reporter")
         visit_place = st.text_input(
-            "訪問先", value=facility_name, key="daily_report_visit_place",
-            placeholder="訪問先施設名・部署名",
+            "訪問先", value="", key="daily_report_visit_place",
+            placeholder="例: ○○総合病院 外来",
         )
         visit_content = st.text_area(
             "訪問内容", height=120, key="daily_report_visit_content",
