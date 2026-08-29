@@ -5046,6 +5046,384 @@ def build_monthly_daily_inspection_pdf_for_devices(facility_name, devices_data, 
     buf.seek(0)
     return buf.getvalue()
 
+# ==========================================
+# 日報（訪問・作業・時間記録）
+# ==========================================
+DAILY_REPORT_COLUMNS = [
+    "日報日", "報告者", "訪問先", "訪問内容", "作業内容", "時間記録", "合計時間", "登録日時",
+]
+
+def default_daily_report_time_row():
+    return {"start_time": "09:00", "end_time": "10:00", "content": ""}
+
+def parse_hm_to_minutes(value):
+    """時刻文字列または time オブジェクトを分に変換"""
+    if value is None:
+        return None
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return value.hour * 60 + value.minute
+    matched = re.match(r"^(\d{1,2}):(\d{2})$", clean_data_str(value))
+    if not matched:
+        return None
+    hours = int(matched.group(1))
+    minutes = int(matched.group(2))
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+def minutes_to_hm_label(minutes):
+    if minutes is None or minutes < 0:
+        return "-"
+    hours, mins = divmod(int(minutes), 60)
+    if hours and mins:
+        return f"{hours}時間{mins}分"
+    if hours:
+        return f"{hours}時間"
+    return f"{mins}分"
+
+def normalize_time_record_rows(rows):
+    normalized = []
+    for row in rows or []:
+        start = clean_data_str(row.get("start_time", ""))
+        end = clean_data_str(row.get("end_time", ""))
+        content = clean_data_str(row.get("content", ""))
+        if not any([start, end, content]):
+            continue
+        normalized.append({
+            "start_time": start,
+            "end_time": end,
+            "content": content,
+        })
+    return normalized
+
+def calc_time_record_total_minutes(rows):
+    total = 0
+    for row in normalize_time_record_rows(rows):
+        start_min = parse_hm_to_minutes(row.get("start_time"))
+        end_min = parse_hm_to_minutes(row.get("end_time"))
+        if start_min is None or end_min is None:
+            continue
+        if end_min < start_min:
+            continue
+        total += end_min - start_min
+    return total
+
+def serialize_time_records(rows):
+    return json.dumps(normalize_time_record_rows(rows), ensure_ascii=False)
+
+def deserialize_time_records(raw):
+    text = clean_data_str(raw)
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return normalize_time_record_rows(data)
+
+def format_time_records_display(rows):
+    lines = []
+    for row in normalize_time_record_rows(rows):
+        start_min = parse_hm_to_minutes(row.get("start_time"))
+        end_min = parse_hm_to_minutes(row.get("end_time"))
+        duration = ""
+        if start_min is not None and end_min is not None and end_min >= start_min:
+            duration = f"（{minutes_to_hm_label(end_min - start_min)}）"
+        lines.append(
+            f"{row.get('start_time', '-')}～{row.get('end_time', '-')}{duration} "
+            f"{row.get('content', '')}".strip()
+        )
+    return "\n".join(lines) if lines else "（記録なし）"
+
+def ensure_daily_report_worksheet():
+    """日報シートが無ければ自動作成"""
+    client, spreadsheet_id = _get_sheet_client()
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        sh.worksheet("日報")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="日報", rows=2000, cols=len(DAILY_REPORT_COLUMNS))
+        ws.update([DAILY_REPORT_COLUMNS], "A1")
+    st.cache_data.clear()
+
+def save_daily_report_to_sheets(conn, report_date, reporter, visit_place, visit_content,
+                              work_content, time_rows):
+    ensure_daily_report_worksheet()
+    normalized_rows = normalize_time_record_rows(time_rows)
+    total_minutes = calc_time_record_total_minutes(normalized_rows)
+    total_label = minutes_to_hm_label(total_minutes)
+    existing = safe_read_worksheet(conn, "日報", DAILY_REPORT_COLUMNS)
+    new_row = {
+        "日報日": str(report_date),
+        "報告者": reporter,
+        "訪問先": visit_place,
+        "訪問内容": visit_content,
+        "作業内容": work_content,
+        "時間記録": serialize_time_records(normalized_rows),
+        "合計時間": total_label,
+        "登録日時": format_jst(),
+    }
+    updated = pd.concat([existing, pd.DataFrame([new_row])], ignore_index=True)
+    conn.update(worksheet="日報", data=_sanitize_dataframe(updated))
+    return {
+        **new_row,
+        "time_rows": normalized_rows,
+        "total_minutes": total_minutes,
+    }
+
+def build_daily_report_pdf_bytes(report_data, facility_name=""):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer
+
+    font_name = _daily_monthly_pdf_font()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+    )
+    report_date = clean_data_str(report_data.get("日報日", ""))
+    reporter = clean_data_str(report_data.get("報告者", ""))
+    visit_place = clean_data_str(report_data.get("訪問先", ""))
+    visit_content = clean_data_str(report_data.get("訪問内容", ""))
+    work_content = clean_data_str(report_data.get("作業内容", ""))
+    total_label = clean_data_str(report_data.get("合計時間", ""))
+    time_rows = report_data.get("time_rows") or deserialize_time_records(report_data.get("時間記録", ""))
+
+    story = [
+        _daily_monthly_pdf_paragraph("作 業 日 報", font_name, 16, align=1),
+        Spacer(1, 6 * mm),
+    ]
+    meta_rows = [
+        [_daily_monthly_pdf_paragraph("日報日", font_name, 9), _daily_monthly_pdf_paragraph(report_date, font_name, 9)],
+        [_daily_monthly_pdf_paragraph("報告者", font_name, 9), _daily_monthly_pdf_paragraph(reporter, font_name, 9)],
+        [_daily_monthly_pdf_paragraph("訪問先", font_name, 9), _daily_monthly_pdf_paragraph(visit_place, font_name, 9)],
+    ]
+    if facility_name:
+        meta_rows.append([
+            _daily_monthly_pdf_paragraph("施設", font_name, 9),
+            _daily_monthly_pdf_paragraph(facility_name, font_name, 9),
+        ])
+    meta_table = Table(meta_rows, colWidths=[28 * mm, 130 * mm])
+    meta_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f5f5f5")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([meta_table, Spacer(1, 5 * mm)])
+
+    def _section_block(title, body):
+        block = [
+            _daily_monthly_pdf_paragraph(title, font_name, 11),
+            Spacer(1, 2 * mm),
+            _daily_monthly_pdf_paragraph(body or "（記載なし）", font_name, 9),
+            Spacer(1, 4 * mm),
+        ]
+        return block
+
+    story.extend(_section_block("訪問内容", visit_content))
+    story.extend(_section_block("作業内容", work_content))
+
+    story.append(_daily_monthly_pdf_paragraph("時間記録", font_name, 11))
+    story.append(Spacer(1, 2 * mm))
+    time_table_data = [[
+        _daily_monthly_pdf_paragraph("開始", font_name, 8),
+        _daily_monthly_pdf_paragraph("終了", font_name, 8),
+        _daily_monthly_pdf_paragraph("時間", font_name, 8),
+        _daily_monthly_pdf_paragraph("内容", font_name, 8),
+    ]]
+    for row in time_rows:
+        start_min = parse_hm_to_minutes(row.get("start_time"))
+        end_min = parse_hm_to_minutes(row.get("end_time"))
+        duration = minutes_to_hm_label(end_min - start_min) if (
+            start_min is not None and end_min is not None and end_min >= start_min
+        ) else "-"
+        time_table_data.append([
+            _daily_monthly_pdf_paragraph(row.get("start_time", ""), font_name, 8),
+            _daily_monthly_pdf_paragraph(row.get("end_time", ""), font_name, 8),
+            _daily_monthly_pdf_paragraph(duration, font_name, 8),
+            _daily_monthly_pdf_paragraph(row.get("content", ""), font_name, 8),
+        ])
+    if len(time_table_data) == 1:
+        time_table_data.append([
+            _daily_monthly_pdf_paragraph("-", font_name, 8),
+            _daily_monthly_pdf_paragraph("-", font_name, 8),
+            _daily_monthly_pdf_paragraph("-", font_name, 8),
+            _daily_monthly_pdf_paragraph("（記録なし）", font_name, 8),
+        ])
+    time_table = Table(time_table_data, colWidths=[24 * mm, 24 * mm, 24 * mm, 86 * mm])
+    time_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.extend([
+        time_table,
+        Spacer(1, 3 * mm),
+        _daily_monthly_pdf_paragraph(f"合計時間: {total_label or '-'}", font_name, 9),
+        Spacer(1, 4 * mm),
+        _daily_monthly_pdf_paragraph(
+            f"PDF出力: miratech 作業日報　|　{format_jst(fmt='%Y-%m-%d %H:%M')}",
+            font_name, 7,
+        ),
+    ])
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
+
+def render_daily_report_time_rows(key_prefix="daily_report"):
+    """時間記録の入力行"""
+    rows_key = f"{key_prefix}_time_rows"
+    if rows_key not in st.session_state:
+        st.session_state[rows_key] = [default_daily_report_time_row()]
+
+    st.markdown("**時間記録**")
+    st.caption("開始・終了時刻（例: 09:00）と内容を入力してください。")
+    updated_rows = []
+    rows = list(st.session_state[rows_key])
+    for index, row in enumerate(rows):
+        col_start, col_end, col_content, col_action = st.columns([1.1, 1.1, 3.2, 0.8])
+        with col_start:
+            start_time = st.text_input(
+                "開始", value=row.get("start_time", "09:00"),
+                key=f"{key_prefix}_start_{index}", placeholder="09:00",
+            )
+        with col_end:
+            end_time = st.text_input(
+                "終了", value=row.get("end_time", "10:00"),
+                key=f"{key_prefix}_end_{index}", placeholder="10:00",
+            )
+        with col_content:
+            content = st.text_input(
+                "内容", value=row.get("content", ""),
+                key=f"{key_prefix}_content_{index}", placeholder="作業内容",
+            )
+        with col_action:
+            st.write("")
+            if st.button("削除", key=f"{key_prefix}_delete_{index}", use_container_width=True):
+                if len(rows) > 1:
+                    rows.pop(index)
+                    st.session_state[rows_key] = rows
+                    st.rerun()
+        updated_rows.append({
+            "start_time": start_time.strip(),
+            "end_time": end_time.strip(),
+            "content": content.strip(),
+        })
+    st.session_state[rows_key] = updated_rows
+    total_minutes = calc_time_record_total_minutes(updated_rows)
+    st.info(f"合計時間: **{minutes_to_hm_label(total_minutes)}**")
+    if st.button("＋ 時間行を追加", key=f"{key_prefix}_add_row"):
+        st.session_state[rows_key].append(default_daily_report_time_row())
+        st.rerun()
+    return updated_rows
+
+def render_daily_report_saved_pdf(report_data, facility_name, key_suffix="saved"):
+    pdf_bytes = build_daily_report_pdf_bytes(report_data, facility_name=facility_name)
+    report_date = clean_data_str(report_data.get("日報日", "unknown"))
+    reporter = clean_data_str(report_data.get("報告者", "unknown"))
+    pdf_name = f"作業日報_{report_date}_{reporter}.pdf"
+    st.download_button(
+        "PDFをダウンロード",
+        data=pdf_bytes,
+        file_name=pdf_name,
+        mime="application/pdf",
+        type="primary",
+        key=f"daily_report_pdf_{key_suffix}",
+    )
+
+def render_daily_report_tab(conn, facility_name):
+    """日報入力・履歴・PDF"""
+    st.subheader("作業日報")
+    input_tab, history_tab = st.tabs(["日報入力", "履歴・PDF"])
+
+    with input_tab:
+        if st.session_state.get("daily_report_saved"):
+            saved = st.session_state["daily_report_saved"]
+            st.success(f"{saved.get('日報日', '')} の日報を保存しました。")
+            render_daily_report_saved_pdf(saved, facility_name, key_suffix="saved_session")
+            if st.button("次の日報入力へ", type="primary", key="daily_report_next"):
+                st.session_state.pop("daily_report_saved", None)
+                st.session_state.pop("daily_report_time_rows", None)
+                st.rerun()
+            st.markdown("---")
+
+        if "daily_report_date" not in st.session_state:
+            st.session_state["daily_report_date"] = date.today()
+        report_date = st.date_input("日報日", value=st.session_state["daily_report_date"], key="daily_report_date_input")
+        st.session_state["daily_report_date"] = report_date
+        reporter = st.text_input("報告者", value=st.session_state.get("current_user_name", ""), key="daily_report_reporter")
+        visit_place = st.text_input(
+            "訪問先", value=facility_name, key="daily_report_visit_place",
+            placeholder="訪問先施設名・部署名",
+        )
+        visit_content = st.text_area(
+            "訪問内容", height=120, key="daily_report_visit_content",
+            placeholder="訪問目的、対応先、打ち合わせ内容など",
+        )
+        work_content = st.text_area(
+            "作業内容", height=160, key="daily_report_work_content",
+            placeholder="実施した作業の詳細",
+        )
+        time_rows = render_daily_report_time_rows("daily_report")
+
+        if st.button("日報を保存", type="primary", use_container_width=True, key="daily_report_save"):
+            if not reporter.strip():
+                st.warning("報告者を入力してください。")
+            elif not visit_content.strip() and not work_content.strip() and not normalize_time_record_rows(time_rows):
+                st.warning("訪問内容・作業内容・時間記録のいずれかを入力してください。")
+            else:
+                try:
+                    with st.spinner("日報を保存しています..."):
+                        saved = save_daily_report_to_sheets(
+                            conn, report_date, reporter.strip(), visit_place.strip(),
+                            visit_content.strip(), work_content.strip(), time_rows,
+                        )
+                    write_log(reporter.strip(), f"日報を登録 ({report_date})")
+                    st.session_state["daily_report_saved"] = saved
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"保存エラー: {e}")
+
+    with history_tab:
+        st.markdown("#### 日報履歴")
+        if st.button("最新のデータを読み込む", key="refresh_daily_report_history"):
+            st.cache_data.clear()
+            st.rerun()
+        df_reports = safe_read_worksheet(conn, "日報", DAILY_REPORT_COLUMNS)
+        if df_reports.empty:
+            st.info("保存された日報はまだありません。")
+            return
+        display_df = df_reports.copy()
+        if "時間記録" in display_df.columns:
+            display_df["時間記録"] = display_df["時間記録"].apply(format_time_records_display)
+        show_cols = [c for c in DAILY_REPORT_COLUMNS if c in display_df.columns]
+        display_dataframe(display_df[show_cols].sort_values("日報日", ascending=False), hide_index=True, use_container_width=True)
+
+        st.markdown("##### PDFダウンロード")
+        options = []
+        for idx, row in df_reports.sort_values("日報日", ascending=False).iterrows():
+            label = (
+                f"{clean_data_str(row.get('日報日', ''))} | "
+                f"{clean_data_str(row.get('報告者', ''))} | "
+                f"{clean_data_str(row.get('訪問先', ''))}"
+            )
+            options.append((label, idx))
+        if not options:
+            return
+        selected_label = st.selectbox("日報を選択", [opt[0] for opt in options], key="daily_report_history_select")
+        selected_idx = next(idx for label, idx in options if label == selected_label)
+        selected_row = df_reports.loc[selected_idx].to_dict()
+        selected_row["time_rows"] = deserialize_time_records(selected_row.get("時間記録", ""))
+        render_daily_report_saved_pdf(selected_row, facility_name, key_suffix=f"hist_{selected_idx}")
+
 def build_monthly_daily_inspection_html(facility_name, device_info, year, month, table_rows, record_count):
     me_no = html.escape(device_info["me_no"])
     category = html.escape(device_info["category"])
@@ -5616,7 +5994,7 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検超過（1年）", "点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
+tab_names = ["点検超過（1年）", "点検入力", "日報", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
 tabs = st.tabs(tab_names)
 
 # ====== タブ1：点検超過一覧 ======
@@ -5984,8 +6362,12 @@ with tabs[1]:
 
     render_pending_check_save_recovery(conn)
 
-# ====== タブ3：マスター ======
+# ====== タブ3：日報 ======
 with tabs[2]:
+    render_daily_report_tab(conn, facility_name)
+
+# ====== タブ4：マスター ======
+with tabs[3]:
     st.subheader("機器台帳 ＆ データ管理")
     
     sub_m1, sub_m2 = st.tabs(["資産統計 ＆ 一覧表示", "登録データの修正・変更"])
@@ -6186,8 +6568,8 @@ with tabs[2]:
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
 
-# ====== タブ4：機器カルテ・実績 ======
-with tabs[3]:
+# ====== タブ5：機器カルテ・実績 ======
+with tabs[4]:
     st.subheader("機器カルテ照合 ＆ 日次実績")
     
     if st.button("最新のデータを読み込む", key="refresh_history_tab"):
@@ -6337,8 +6719,8 @@ with tabs[3]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ5：QRコード・管理番号シール ======
-with tabs[4]:
+# ====== タブ6：QRコード・管理番号シール ======
+with tabs[5]:
     st.subheader("管理番号シール ＆ QRコード")
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
@@ -6406,8 +6788,8 @@ with tabs[4]:
             button_key="tepra_qr_tab",
         )
 
-# ====== タブ6：新規機器の登録 ======
-with tabs[5]:
+# ====== タブ7：新規機器の登録 ======
+with tabs[6]:
     st.subheader("新規機器の直接登録")
     st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
     
@@ -6524,6 +6906,6 @@ with tabs[5]:
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
 
-# ====== タブ7：修理故障・対応管理 ======
-with tabs[6]:
+# ====== タブ8：修理故障・対応管理 ======
+with tabs[7]:
     render_repair_fault_management(conn)
