@@ -1,0 +1,14 @@
+#!/bin/sh
+# Push 前に App バージョン（日付+英字）を自動更新する
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+python3 scripts/bump_app_version.py
+
+if ! git diff --quiet -- uemura_hp.py uemura.py; then
+  git add uemura_hp.py uemura.py
+  git commit -m "Bump app version for deployment"
+fi
+
+exit 0

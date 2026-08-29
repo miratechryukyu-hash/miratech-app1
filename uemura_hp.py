@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-18e"
+APP_VERSION = "2026-08-29a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -5994,7 +5994,7 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検超過（1年）", "点検入力", "日報", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理"]
+tab_names = ["点検超過（1年）", "点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理", "日報"]
 tabs = st.tabs(tab_names)
 
 # ====== タブ1：点検超過一覧 ======
@@ -6362,12 +6362,8 @@ with tabs[1]:
 
     render_pending_check_save_recovery(conn)
 
-# ====== タブ3：日報 ======
+# ====== タブ3：マスター ======
 with tabs[2]:
-    render_daily_report_tab(conn, facility_name)
-
-# ====== タブ4：マスター ======
-with tabs[3]:
     st.subheader("機器台帳 ＆ データ管理")
     
     sub_m1, sub_m2 = st.tabs(["資産統計 ＆ 一覧表示", "登録データの修正・変更"])
@@ -6568,8 +6564,8 @@ with tabs[3]:
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
 
-# ====== タブ5：機器カルテ・実績 ======
-with tabs[4]:
+# ====== タブ4：機器カルテ・実績 ======
+with tabs[3]:
     st.subheader("機器カルテ照合 ＆ 日次実績")
     
     if st.button("最新のデータを読み込む", key="refresh_history_tab"):
@@ -6719,8 +6715,8 @@ with tabs[4]:
     except Exception as e:
         st.error(f"システムエラー: {e}")
 
-# ====== タブ6：QRコード・管理番号シール ======
-with tabs[5]:
+# ====== タブ5：QRコード・管理番号シール ======
+with tabs[4]:
     st.subheader("管理番号シール ＆ QRコード")
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
@@ -6788,8 +6784,8 @@ with tabs[5]:
             button_key="tepra_qr_tab",
         )
 
-# ====== タブ7：新規機器の登録 ======
-with tabs[6]:
+# ====== タブ6：新規機器の登録 ======
+with tabs[5]:
     st.subheader("新規機器の直接登録")
     st.write("ここで登録した機器データは、直接「機器マスター」へ保存されます。点検は登録後に「点検入力」タブで行えます。")
     
@@ -6906,6 +6902,10 @@ with tabs[6]:
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
 
-# ====== タブ8：修理故障・対応管理 ======
-with tabs[7]:
+# ====== タブ7：修理故障・対応管理 ======
+with tabs[6]:
     render_repair_fault_management(conn)
+
+# ====== タブ8：日報 ======
+with tabs[7]:
+    render_daily_report_tab(conn, facility_name)
