@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-29c"
+APP_VERSION = "2026-08-31a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -5123,9 +5123,18 @@ def deserialize_time_records(raw):
         return []
     return normalize_time_record_rows(data)
 
-def format_time_records_display(rows):
+def resolve_time_record_rows(raw):
+    """時間記録をリスト形式に正規化（JSON文字列・list の両対応）"""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return normalize_time_record_rows(raw)
+    return deserialize_time_records(raw)
+
+def format_time_records_display(raw):
+    rows = resolve_time_record_rows(raw)
     lines = []
-    for row in normalize_time_record_rows(rows):
+    for row in rows:
         start_min = parse_hm_to_minutes(row.get("start_time"))
         end_min = parse_hm_to_minutes(row.get("end_time"))
         duration = ""
@@ -5361,8 +5370,8 @@ def render_daily_report_tab(conn, facility_name):
         st.session_state["daily_report_date"] = report_date
         reporter = st.text_input("報告者", value=st.session_state.get("current_user_name", ""), key="daily_report_reporter")
         visit_place = st.text_input(
-            "訪問先", value=facility_name, key="daily_report_visit_place",
-            placeholder="訪問先施設名・部署名",
+            "訪問先", value="", key="daily_report_visit_place",
+            placeholder="例: ○○総合病院 外来",
         )
         visit_content = st.text_area(
             "訪問内容", height=120, key="daily_report_visit_content",
@@ -5405,11 +5414,19 @@ def render_daily_report_tab(conn, facility_name):
         if "時間記録" in display_df.columns:
             display_df["時間記録"] = display_df["時間記録"].apply(format_time_records_display)
         show_cols = [c for c in DAILY_REPORT_COLUMNS if c in display_df.columns]
-        display_dataframe(display_df[show_cols].sort_values("日報日", ascending=False), hide_index=True, use_container_width=True)
+        sorted_df = display_df[show_cols].copy()
+        if "日報日" in sorted_df.columns:
+            sorted_df["日報日"] = sorted_df["日報日"].astype(str)
+            sorted_df = sorted_df.sort_values("日報日", ascending=False)
+        display_dataframe(sorted_df, hide_index=True, use_container_width=True)
 
         st.markdown("##### PDFダウンロード")
         options = []
-        for idx, row in df_reports.sort_values("日報日", ascending=False).iterrows():
+        history_df = df_reports.copy()
+        if "日報日" in history_df.columns:
+            history_df = history_df.assign(_sort_date=history_df["日報日"].astype(str))
+            history_df = history_df.sort_values("_sort_date", ascending=False)
+        for idx, row in history_df.iterrows():
             label = (
                 f"{clean_data_str(row.get('日報日', ''))} | "
                 f"{clean_data_str(row.get('報告者', ''))} | "
