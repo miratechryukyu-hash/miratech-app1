@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-31a"
+APP_VERSION = "2026-08-31b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -680,15 +680,36 @@ VSM_IBP_ITEMS = [
     "設定 AO(波型波形)",
 ]
 
-def _vsm_all_check_labels():
+def is_bp88_vsm(device_model):
+    """Nihon Kohden BP-88 / BP-88S など"""
+    model = clean_data_str(device_model).upper().replace(" ", "").replace("－", "-")
+    compact = model.replace("-", "")
+    return "BP-88" in model or compact.startswith("BP88")
+
+def vsm_appearance_items(device_model=""):
+    if is_bp88_vsm(device_model):
+        return [item for item in VSM_APPEARANCE_ITEMS if item != "マルチコネクタの破損"]
+    return list(VSM_APPEARANCE_ITEMS)
+
+def vsm_transmitter_items(device_model=""):
+    if is_bp88_vsm(device_model):
+        return []
+    return list(VSM_TRANSMITTER_ITEMS)
+
+def vsm_ibp_items(device_model=""):
+    if is_bp88_vsm(device_model):
+        return []
+    return list(VSM_IBP_ITEMS)
+
+def _vsm_all_check_labels(device_model=""):
     return (
-        VSM_APPEARANCE_ITEMS + VSM_FUNCTION_ITEMS + VSM_BATTERY_CHECK_ITEMS
-        + VSM_TRANSMITTER_ITEMS + VSM_ECG_RESP_ITEMS + VSM_SPO2_ITEMS
-        + VSM_NIBP_ITEMS + VSM_IBP_ITEMS
+        vsm_appearance_items(device_model) + VSM_FUNCTION_ITEMS + VSM_BATTERY_CHECK_ITEMS
+        + vsm_transmitter_items(device_model) + VSM_ECG_RESP_ITEMS + VSM_SPO2_ITEMS
+        + VSM_NIBP_ITEMS + vsm_ibp_items(device_model)
     )
 
-def default_vsm_checks():
-    return {label: "---" for label in _vsm_all_check_labels()}
+def default_vsm_checks(device_model=""):
+    return {label: "---" for label in _vsm_all_check_labels(device_model)}
 
 def default_vsm_measurements():
     return {
@@ -728,12 +749,16 @@ def _validate_leakage_currents(measurements, ng_items):
         if leakage_ua_int(val) > limit:
             ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
 
-def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
+def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta, device_model=""):
     """ベッドサイドモニタ 定期点検表の入力欄"""
     st.caption(INSPECTION_CHECK_LEGEND)
-    st.caption(
-        "対象機種例: PVM-2701 , PVM-4761"
-    )
+    if is_bp88_vsm(device_model):
+        st.caption("対象機種: BP-88 / BP-88S（IBP・送信機・マルチコネクタ項目は対象外）")
+    else:
+        st.caption("対象機種例: PVM-2701 , PVM-4761")
+    appearance_items = vsm_appearance_items(device_model)
+    transmitter_items = vsm_transmitter_items(device_model)
+    ibp_items = vsm_ibp_items(device_model)
     m1, m2 = st.columns(2)
     with m1:
         vsm_meta["設置病棟"] = st.text_input(
@@ -745,7 +770,7 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
         )
 
     st.write("**外観点検**")
-    _render_inspection_check_grid(VSM_APPEARANCE_ITEMS, vsm_checks, "vsm_app")
+    _render_inspection_check_grid(appearance_items, vsm_checks, "vsm_app")
 
     st.write("**機能点検**")
     _render_inspection_check_grid(VSM_FUNCTION_ITEMS, vsm_checks, "vsm_func")
@@ -766,8 +791,9 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
             min_value=0, step=1, key="vsm_bat_cycle",
         )
 
-    st.write("**送信機**")
-    _render_inspection_check_grid(VSM_TRANSMITTER_ITEMS, vsm_checks, "vsm_tx")
+    if transmitter_items:
+        st.write("**送信機**")
+        _render_inspection_check_grid(transmitter_items, vsm_checks, "vsm_tx")
 
     st.write("**ECG・RESP**")
     _render_inspection_check_grid(VSM_ECG_RESP_ITEMS, vsm_checks, "vsm_ecg")
@@ -778,8 +804,9 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
     st.write("**NIBP**")
     _render_inspection_check_grid(VSM_NIBP_ITEMS, vsm_checks, "vsm_nibp")
 
-    st.write("**IBP**")
-    _render_inspection_check_grid(VSM_IBP_ITEMS, vsm_checks, "vsm_ibp")
+    if ibp_items:
+        st.write("**IBP**")
+        _render_inspection_check_grid(ibp_items, vsm_checks, "vsm_ibp")
 
     st.write("**漏れ電流**")
     st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
@@ -813,96 +840,104 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta):
             "患者漏れ電流I 単一故障 (μA)", vsm_measurements["患者漏れ電流I(単一故障)"], "vsm_pat_f",
         )
 
-def build_vsm_report_sections(vsm_checks, vsm_measurements, vsm_meta):
+def build_vsm_report_sections(vsm_checks, vsm_measurements, vsm_meta, device_model=""):
     c = vsm_checks
     m = vsm_measurements
     meta = vsm_meta or {}
+    appearance_items = vsm_appearance_items(device_model)
+    transmitter_items = vsm_transmitter_items(device_model)
+    ibp_items = vsm_ibp_items(device_model)
+    sections = [
+        {
+            "title": "点検情報",
+            "kind": "check",
+            "items": [
+                {"name": "設置病棟", "result": meta.get("設置病棟", ""), "judge": "-"},
+                {"name": "チャンネル番号", "result": meta.get("チャンネル番号", ""), "judge": "-"},
+            ],
+        },
+        {
+            "title": "外観点検",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in appearance_items],
+        },
+        {
+            "title": "機能点検",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in VSM_FUNCTION_ITEMS],
+        },
+        {
+            "title": "バッテリ",
+            "kind": "mixed",
+            "items": [_check_item(l, c.get(l, "---")) for l in VSM_BATTERY_CHECK_ITEMS] + [
+                _measured_item(
+                    "バッテリ製造年月日", "CSM-1000/BSM-5700/PVM-4000", "-",
+                    meta.get("バッテリ製造年月日", ""), "-",
+                ),
+                _measured_item(
+                    "バッテリサイクル数", "回数記録", "-",
+                    f"{m.get('バッテリサイクル数', 0)}回", "-",
+                ),
+            ],
+        },
+    ]
+    if transmitter_items:
+        sections.append({
+            "title": "送信機",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in transmitter_items],
+        })
+    sections.extend([
+        {
+            "title": "ECG・RESP",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in VSM_ECG_RESP_ITEMS],
+        },
+        {
+            "title": "SpO2",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in VSM_SPO2_ITEMS],
+        },
+        {
+            "title": "NIBP",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in VSM_NIBP_ITEMS],
+        },
+    ])
+    if ibp_items:
+        sections.append({
+            "title": "IBP",
+            "kind": "check",
+            "items": [_check_item(l, c.get(l, "---")) for l in ibp_items],
+        })
+    sections.append({
+        "title": "漏れ電流",
+        "kind": "measure",
+        "items": [
+            _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
+                           format_leakage_ua(m["接地漏れ電流(正常)"]),
+                           measure_judge(leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200)),
+            _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                           format_leakage_ua(m["接地漏れ電流(単一故障)"]),
+                           measure_judge(leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500)),
+            _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
+                           format_leakage_ua(m["外装漏れ電流(正常)"]),
+                           measure_judge(leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100)),
+            _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                           format_leakage_ua(m["外装漏れ電流(単一故障)"]),
+                           measure_judge(leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500)),
+            _measured_item("患者漏れ電流I(正常)", "正常100μA以下", "≤100μA",
+                           format_leakage_ua(m["患者漏れ電流I(正常)"]),
+                           measure_judge(leakage_ua_int(m["患者漏れ電流I(正常)"]) <= 100)),
+            _measured_item("患者漏れ電流I(単一故障)", "単一故障500μA以下", "≤500μA",
+                           format_leakage_ua(m["患者漏れ電流I(単一故障)"]),
+                           measure_judge(leakage_ua_int(m["患者漏れ電流I(単一故障)"]) <= 500)),
+        ],
+    })
     return {
         "form": "vsm_bedside",
         "title": "ベッドサイドモニタ定期点検",
-        "sections": [
-            {
-                "title": "点検情報",
-                "kind": "check",
-                "items": [
-                    {"name": "設置病棟", "result": meta.get("設置病棟", ""), "judge": "-"},
-                    {"name": "チャンネル番号", "result": meta.get("チャンネル番号", ""), "judge": "-"},
-                ],
-            },
-            {
-                "title": "外観点検",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_APPEARANCE_ITEMS],
-            },
-            {
-                "title": "機能点検",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_FUNCTION_ITEMS],
-            },
-            {
-                "title": "バッテリ",
-                "kind": "mixed",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_BATTERY_CHECK_ITEMS] + [
-                    _measured_item(
-                        "バッテリ製造年月日", "CSM-1000/BSM-5700/PVM-4000", "-",
-                        meta.get("バッテリ製造年月日", ""), "-",
-                    ),
-                    _measured_item(
-                        "バッテリサイクル数", "回数記録", "-",
-                        f"{m.get('バッテリサイクル数', 0)}回", "-",
-                    ),
-                ],
-            },
-            {
-                "title": "送信機",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_TRANSMITTER_ITEMS],
-            },
-            {
-                "title": "ECG・RESP",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_ECG_RESP_ITEMS],
-            },
-            {
-                "title": "SpO2",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_SPO2_ITEMS],
-            },
-            {
-                "title": "NIBP",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_NIBP_ITEMS],
-            },
-            {
-                "title": "IBP",
-                "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in VSM_IBP_ITEMS],
-            },
-            {
-                "title": "漏れ電流",
-                "kind": "measure",
-                "items": [
-                    _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
-                                   format_leakage_ua(m["接地漏れ電流(正常)"]),
-                                   measure_judge(leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200)),
-                    _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   format_leakage_ua(m["接地漏れ電流(単一故障)"]),
-                                   measure_judge(leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500)),
-                    _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
-                                   format_leakage_ua(m["外装漏れ電流(正常)"]),
-                                   measure_judge(leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100)),
-                    _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   format_leakage_ua(m["外装漏れ電流(単一故障)"]),
-                                   measure_judge(leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500)),
-                    _measured_item("患者漏れ電流I(正常)", "正常100μA以下", "≤100μA",
-                                   format_leakage_ua(m["患者漏れ電流I(正常)"]),
-                                   measure_judge(leakage_ua_int(m["患者漏れ電流I(正常)"]) <= 100)),
-                    _measured_item("患者漏れ電流I(単一故障)", "単一故障500μA以下", "≤500μA",
-                                   format_leakage_ua(m["患者漏れ電流I(単一故障)"]),
-                                   measure_judge(leakage_ua_int(m["患者漏れ電流I(単一故障)"]) <= 500)),
-                ],
-            },
-        ],
+        "sections": sections,
     }
 
 # 心電計 定期点検表
@@ -2175,9 +2210,10 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
         }
     if device_category == "生体情報モニタ":
         return build_vsm_report_sections(
-            vsm_checks or default_vsm_checks(),
+            vsm_checks or default_vsm_checks(device_model),
             vsm_measurements or default_vsm_measurements(),
             vsm_meta or default_vsm_meta(),
+            device_model=device_model,
         )
     if device_category == "心電計":
         return build_ecg_report_sections(
@@ -3659,9 +3695,11 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             _validate_check_dict(inc_o_checks, ng_items, incomplete_items)
 
     elif device_category == "生体情報モニタ":
-        _validate_check_dict(
-            vsm_checks or default_vsm_checks(), ng_items, incomplete_items,
-        )
+        applicable_checks = {
+            label: (vsm_checks or {}).get(label, "---")
+            for label in _vsm_all_check_labels(device_model)
+        }
+        _validate_check_dict(applicable_checks, ng_items, incomplete_items)
         if result == "使用可":
             _validate_leakage_currents(
                 vsm_measurements or default_vsm_measurements(), ng_items,
@@ -6269,7 +6307,7 @@ with tabs[1]:
                         inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
 
             elif device_category == "生体情報モニタ":
-                render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta)
+                render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta, device_model)
 
             elif device_category == "心電計":
                 render_ecg_inspection_fields(ecg_checks, ecg_measurements)
