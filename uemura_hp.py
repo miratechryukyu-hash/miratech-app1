@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-08-31b"
+APP_VERSION = "2026-09-02a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3227,64 +3227,6 @@ def save_repair_completion(conn, selected_idx, repair_date, inspection_content,
     write_log(inspector, f"{target_me} の故障対応・修理点検を完了")
     return target_me, job_data, detail_text
 
-def _build_repair_report_html(target_me, job_data, repair_date, inspection_content,
-                              repair_result, inspector, repair_memo=""):
-    fault_symptom = clean_data_str(job_data.get("症状", ""))
-    inspection_html = html.escape(clean_data_str(inspection_content)).replace("\n", "<br/>")
-    memo_html = ""
-    if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
-        memo_html = f"""
-        <h4 style="border-left: 4px solid #333; padding-left: 8px; margin-bottom: 10px;">■ 備考</h4>
-        <div style="padding: 10px; border: 1px solid #aaa; margin-bottom: 20px; background-color: #fafafa;">
-            {html.escape(clean_data_str(repair_memo)).replace(chr(10), '<br/>')}
-        </div>
-        """
-    return f"""
-    <div style="padding: 30px; border: 2px solid #333; background-color: white; color: black; border-radius: 5px; font-family: sans-serif;">
-        <h2 style="text-align: center; border-bottom: 2px solid black; padding-bottom: 10px; margin-top:0;">医療機器 修理・点検完了報告書</h2>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-            <div><b>提出先:</b> 現場責任者 / 看護師長 殿</div>
-            <div><b>完了報告日:</b> {html.escape(str(repair_date))}</div>
-        </div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>管理番号</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{html.escape(str(target_me))}</td>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%; background-color: #f0f0f0;"><b>対象機種</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; width: 25%;">{html.escape(clean_data_str(job_data.get('機種', '')))}</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>総合判定</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; font-weight: bold;">{html.escape(str(repair_result))}</td>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0;"><b>点検技術者</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(str(inspector))}</td>
-            </tr>
-        </table>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
-            <tr style="background-color: #f0f0f0;">
-                <th style="padding: 10px; border: 1px solid #aaa; width: 28%; text-align: left;">項目</th>
-                <th style="padding: 10px; border: 1px solid #aaa; text-align: left;">内容</th>
-            </tr>
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #fafafa;"><b>不具合症状（依頼）</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa;">{html.escape(fault_symptom)}</td>
-            </tr>
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #fafafa; vertical-align: top;"><b>点検内容</b></td>
-                <td style="padding: 10px; border: 1px solid #aaa; white-space: pre-wrap;">{inspection_html}</td>
-            </tr>
-        </table>
-        {memo_html}
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px;">
-            <tr>
-                <td style="padding: 10px; border: 1px solid #aaa; background-color: #f0f0f0; width: 25%;"><b>施設側 収領・確認印</b></td>
-                <td colspan="3" style="padding: 25px; border: 1px solid #aaa; text-align: right; color: #ccc;">確認日: &nbsp;&nbsp;&nbsp;&nbsp;年 &nbsp;&nbsp;&nbsp;月 &nbsp;&nbsp;&nbsp;日 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; サイン / 職印欄: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>
-            </tr>
-        </table>
-        <p style="text-align: right; font-size: 11px; color: gray; margin-top: 15px; margin-bottom: 0;">技術管理・保守責任: miratech 琉球 医療機器管理システム</p>
-    </div>
-    """
-
 def build_repair_report_plain_text(target_me, job_data, repair_date, inspection_content,
                                    repair_result, inspector, repair_memo=""):
     """修理点検報告書のプレーンテキスト（コピー・TXT保存用）"""
@@ -3414,10 +3356,6 @@ def render_repair_report(target_me, job_data, repair_date, inspection_content,
         target_me, job, repair_date, inspection_content,
         repair_result, inspector, repair_memo,
     )
-    html_report = _build_repair_report_html(
-        target_me, job, repair_date, inspection_content,
-        repair_result, inspector, repair_memo,
-    )
     pdf_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.pdf"
     txt_name = f"修理点検報告_{clean_data_str(target_me)}_{repair_date}.txt"
     key_base = f"repair_report_{clean_data_str(target_me)}_{repair_date}_{unique_key_suffix}"
@@ -3454,9 +3392,32 @@ def render_repair_report(target_me, job_data, repair_date, inspection_content,
 
     st.markdown("---")
     st.subheader("提出用 報告書プレビュー")
-    st.markdown(html_report, unsafe_allow_html=True)
+    st.write("## 医療機器 修理・点検完了報告書")
+    st.caption(f"提出先: 現場責任者 / 看護師長 殿　|　完了報告日: {repair_date}")
+    info_df = pd.DataFrame({
+        "項目": ["管理番号", "対象機種", "総合判定", "点検技術者"],
+        "内容": [
+            clean_data_str(target_me),
+            clean_data_str(job.get("機種", "")),
+            clean_data_str(repair_result),
+            clean_data_str(inspector),
+        ],
+    })
+    st.table(info_df.set_index("項目"))
+    content_df = pd.DataFrame({
+        "項目": ["不具合症状（依頼）", "点検内容"],
+        "内容": [
+            clean_data_str(job.get("症状", "")),
+            clean_data_str(inspection_content),
+        ],
+    })
+    st.table(content_df.set_index("項目"))
     if repair_memo and str(repair_memo).strip().lower() not in ("", "nan"):
         st.info(f"備考:\n{repair_memo}")
+    st.caption(
+        "施設側 収領・確認印: 確認日 ______ 年 ____ 月 ____ 日　　サイン / 職印欄 __________________"
+    )
+    st.caption("技術管理・保守責任: miratech 琉球 医療機器管理システム")
 
 def render_repair_fault_management(conn):
     """修理・故障対応管理（未対応故障報告の処理・報告書）"""
