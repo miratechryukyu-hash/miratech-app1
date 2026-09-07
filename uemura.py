@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-02a"
+APP_VERSION = "2026-09-07a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -620,6 +620,289 @@ def build_incu_i_report_sections(incu_i_checks, incu_i_measurements):
             },
         ],
     }
+
+# 日本光電 V-2100G 保育器 定期点検表
+V2100G_APPEARANCE_ITEMS = [
+    "本体・パネル・フード・開閉つまみに破損は無いか",
+    "キャスター・ストッパーはスムーズに動き、ロックが出来るか",
+    "手入れ窓・パッキン・つまみに破損は無いか",
+    "ホースアッセンブリの破損は無いか",
+    "フィルターが汚れていないか。交換期限は守られているか",
+    "電源コード・電源プラグ・アースピンの破損は無いか",
+    "各種センサーまたはセンサー接続部に破損・変形は無いか",
+]
+V2100G_OPERATION_ITEMS = [
+    "傾斜装置がスムーズに動くか",
+    "ファンは確実に作動し、破損は無いか",
+    "低水位と水槽外れ警報が点灯するか",
+    "パルスオキシメーター付機種でSpO2プローブを取り付け、表示するか",
+    "バッテリー駆動で確実に動作するか",
+]
+V2100G_TEMP_CONTROL_LABEL = "温度制御"
+V2100G_BODY_TEMP_LABEL = "体温制御"
+V2100G_HUMIDITY_LABEL = "湿度制御"
+V2100G_O2_LABEL = "酸素濃度制御"
+V2100G_OPTIONAL_TEST_LABELS = [
+    V2100G_TEMP_CONTROL_LABEL,
+    V2100G_BODY_TEMP_LABEL,
+    V2100G_HUMIDITY_LABEL,
+    V2100G_O2_LABEL,
+]
+
+def is_v2100g_incubator(device_category, device_model):
+    """日本光電 V-2100G 保育器"""
+    if clean_data_str(device_category) != "保育器":
+        return False
+    model = clean_data_str(device_model).upper().replace(" ", "").replace("－", "-")
+    compact = model.replace("-", "")
+    return "V-2100G" in model or "V2100G" in compact
+
+def default_v2100g_checks():
+    labels = V2100G_APPEARANCE_ITEMS + V2100G_OPERATION_ITEMS + V2100G_OPTIONAL_TEST_LABELS
+    return {label: "---" for label in labels}
+
+def default_v2100g_measurements():
+    return {
+        "温度制御(表示)": 36.0,
+        "温度制御(測定)": 36.0,
+        "体温制御(表示)": 36.0,
+        "体温制御(測定)": 36.0,
+        "湿度制御(表示)": 90.0,
+        "湿度制御(測定)": 90.0,
+        "酸素濃度制御(表示)": 40.0,
+        "酸素濃度制御(測定)": 40.0,
+        "接地漏れ電流(正常)": 0,
+        "接地漏れ電流(単一故障)": 0,
+        "外装漏れ電流(正常)": 0,
+        "外装漏れ電流(単一故障)": 0,
+        "接地線抵抗": 0.0,
+    }
+
+def _ensure_v2100g_form_state(checks, measurements):
+    for label, val in default_v2100g_checks().items():
+        checks.setdefault(label, val)
+    for key, val in default_v2100g_measurements().items():
+        measurements.setdefault(key, val)
+
+def render_v2100g_inspection_fields(v2100g_checks, v2100g_measurements):
+    """V-2100G 定期点検表の入力欄"""
+    _ensure_v2100g_form_state(v2100g_checks, v2100g_measurements)
+    opts = INSPECTION_CHECK_OPTIONS
+    st.caption(INSPECTION_CHECK_LEGEND)
+    st.caption("対象機種: V-2100G")
+
+    st.write("**1. 外観点検**")
+    c1, c2 = st.columns(2)
+    for idx, label in enumerate(V2100G_APPEARANCE_ITEMS):
+        with (c1 if idx % 2 == 0 else c2):
+            v2100g_checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"v2100g_app_{idx}",
+            )
+
+    st.write("**2. 作動点検**")
+    c3, c4 = st.columns(2)
+    for idx, label in enumerate(V2100G_OPERATION_ITEMS):
+        with (c3 if idx % 2 == 0 else c4):
+            v2100g_checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"v2100g_op_{idx}",
+            )
+
+    _render_incu_i_optional_test_block(
+        "**温度制御**",
+        "マニュアルコントロールで設定の36.0±1°Cで安定しているか",
+        V2100G_TEMP_CONTROL_LABEL,
+        v2100g_checks,
+        v2100g_measurements,
+        [
+            ("温度制御(表示)", "表示値 (℃)", 0.1),
+            ("温度制御(測定)", "測定値 (℃)", 0.1),
+        ],
+        "v2100g_temp",
+    )
+    _render_incu_i_optional_test_block(
+        "**体温制御**",
+        "サーボコントロールで設定の36.0±0.5°Cで安定しているか",
+        V2100G_BODY_TEMP_LABEL,
+        v2100g_checks,
+        v2100g_measurements,
+        [
+            ("体温制御(表示)", "表示値 (℃)", 0.1),
+            ("体温制御(測定)", "測定値 (℃)", 0.1),
+        ],
+        "v2100g_body",
+    )
+    _render_incu_i_optional_test_block(
+        "**湿度制御**",
+        "湿度コントロールで設定の90%±5%で安定しているか",
+        V2100G_HUMIDITY_LABEL,
+        v2100g_checks,
+        v2100g_measurements,
+        [
+            ("湿度制御(表示)", "表示値 (%)", 1.0),
+            ("湿度制御(測定)", "測定値 (%)", 1.0),
+        ],
+        "v2100g_hum",
+    )
+    _render_incu_i_optional_test_block(
+        "**酸素濃度制御**",
+        "酸素センサー校正が正確に行え、濃度設定の40%±2%で安定しているか",
+        V2100G_O2_LABEL,
+        v2100g_checks,
+        v2100g_measurements,
+        [
+            ("酸素濃度制御(表示)", "表示値 (%)", 1.0),
+            ("酸素濃度制御(測定)", "測定値 (%)", 1.0),
+        ],
+        "v2100g_o2",
+    )
+
+    st.write("**3. 漏れ電流**")
+    st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
+    e1, e2 = st.columns(2)
+    with e1:
+        v2100g_measurements["接地漏れ電流(正常)"] = _leakage_number_input(
+            "接地漏れ電流 正常 (μA)", v2100g_measurements["接地漏れ電流(正常)"], "v2100g_earth_n",
+        )
+    with e2:
+        v2100g_measurements["接地漏れ電流(単一故障)"] = _leakage_number_input(
+            "接地漏れ電流 単一故障 (μA)", v2100g_measurements["接地漏れ電流(単一故障)"], "v2100g_earth_f",
+        )
+    st.caption("外装漏れ電流: 正常100μA以下 / 単一故障500μA以下")
+    e3, e4 = st.columns(2)
+    with e3:
+        v2100g_measurements["外装漏れ電流(正常)"] = _leakage_number_input(
+            "外装漏れ電流 正常 (μA)", v2100g_measurements["外装漏れ電流(正常)"], "v2100g_enc_n",
+        )
+    with e4:
+        v2100g_measurements["外装漏れ電流(単一故障)"] = _leakage_number_input(
+            "外装漏れ電流 単一故障 (μA)", v2100g_measurements["外装漏れ電流(単一故障)"], "v2100g_enc_f",
+        )
+    st.caption("接地線抵抗")
+    v2100g_measurements["接地線抵抗"] = st.number_input(
+        "接地線抵抗値 (Ω)",
+        value=float(v2100g_measurements["接地線抵抗"]),
+        min_value=0.0,
+        step=0.01,
+        key="v2100g_ground_ohm",
+    )
+
+def _v2100g_operation_report_items(v2100g_checks, v2100g_measurements):
+    c = v2100g_checks
+    m = v2100g_measurements
+    items = [_check_item(l, c.get(l, "---")) for l in V2100G_OPERATION_ITEMS]
+    items.extend(_incu_i_optional_test_report_items(
+        V2100G_TEMP_CONTROL_LABEL, c, m,
+        [
+            {"name": "温度制御(表示)", "note": "36.0±1°C", "standard": "36±1℃",
+             "meas_key": "温度制御(表示)", "lo": 35.0, "hi": 37.0, "suffix": "℃"},
+            {"name": "温度制御(測定)", "note": "36.0±1°C", "standard": "36±1℃",
+             "meas_key": "温度制御(測定)", "lo": 35.0, "hi": 37.0, "suffix": "℃"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        V2100G_BODY_TEMP_LABEL, c, m,
+        [
+            {"name": "体温制御(表示)", "note": "36.0±0.5°C", "standard": "36±0.5℃",
+             "meas_key": "体温制御(表示)", "lo": 35.5, "hi": 36.5, "suffix": "℃"},
+            {"name": "体温制御(測定)", "note": "36.0±0.5°C", "standard": "36±0.5℃",
+             "meas_key": "体温制御(測定)", "lo": 35.5, "hi": 36.5, "suffix": "℃"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        V2100G_HUMIDITY_LABEL, c, m,
+        [
+            {"name": "湿度制御(表示)", "note": "90%±5%", "standard": "90±5%",
+             "meas_key": "湿度制御(表示)", "lo": 85, "hi": 95, "suffix": "%"},
+            {"name": "湿度制御(測定)", "note": "90%±5%", "standard": "90±5%",
+             "meas_key": "湿度制御(測定)", "lo": 85, "hi": 95, "suffix": "%"},
+        ],
+    ))
+    items.extend(_incu_i_optional_test_report_items(
+        V2100G_O2_LABEL, c, m,
+        [
+            {"name": "酸素濃度制御(表示)", "note": "40%±2%", "standard": "40±2%",
+             "meas_key": "酸素濃度制御(表示)", "lo": 38, "hi": 42, "suffix": "%"},
+            {"name": "酸素濃度制御(測定)", "note": "40%±2%", "standard": "40±2%",
+             "meas_key": "酸素濃度制御(測定)", "lo": 38, "hi": 42, "suffix": "%"},
+        ],
+    ))
+    return items
+
+def build_v2100g_report_sections(v2100g_checks, v2100g_measurements):
+    c = v2100g_checks
+    m = v2100g_measurements
+    return {
+        "form": "v2100g",
+        "title": "V-2100G 保育器 定期点検表",
+        "sections": [
+            {
+                "title": "1. 外観点検",
+                "kind": "check",
+                "items": [_check_item(l, c.get(l, "---")) for l in V2100G_APPEARANCE_ITEMS],
+            },
+            {
+                "title": "2. 作動点検",
+                "kind": "mixed",
+                "items": _v2100g_operation_report_items(c, m),
+            },
+            {
+                "title": "3. 漏れ電流",
+                "kind": "measure",
+                "items": [
+                    _measured_item("接地漏れ電流(正常)", "正常200μA以下", "≤200μA",
+                                   format_leakage_ua(m["接地漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(正常)"]) <= 200)),
+                    _measured_item("接地漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   format_leakage_ua(m["接地漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["接地漏れ電流(単一故障)"]) <= 500)),
+                    _measured_item("外装漏れ電流(正常)", "正常100μA以下", "≤100μA",
+                                   format_leakage_ua(m["外装漏れ電流(正常)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(正常)"]) <= 100)),
+                    _measured_item("外装漏れ電流(単一故障)", "単一故障500μA以下", "≤500μA",
+                                   format_leakage_ua(m["外装漏れ電流(単一故障)"]),
+                                   measure_judge(leakage_ua_int(m["外装漏れ電流(単一故障)"]) <= 500)),
+                    _measured_item("接地線抵抗", "記録", "-",
+                                   f"{m.get('接地線抵抗', 0)}Ω", "-"),
+                ],
+            },
+        ],
+    }
+
+def _validate_v2100g_measurements(measurements, ng_items, v2100g_checks=None):
+    m = measurements
+    checks = v2100g_checks or {}
+    optional_range_groups = [
+        (V2100G_TEMP_CONTROL_LABEL, [
+            ("温度制御(表示)", "温度制御(表示)", 35.0, 37.0, "℃"),
+            ("温度制御(測定)", "温度制御(測定)", 35.0, 37.0, "℃"),
+        ]),
+        (V2100G_BODY_TEMP_LABEL, [
+            ("体温制御(表示)", "体温制御(表示)", 35.5, 36.5, "℃"),
+            ("体温制御(測定)", "体温制御(測定)", 35.5, 36.5, "℃"),
+        ]),
+        (V2100G_HUMIDITY_LABEL, [
+            ("湿度制御(表示)", "湿度制御(表示)", 85, 95, "%"),
+            ("湿度制御(測定)", "湿度制御(測定)", 85, 95, "%"),
+        ]),
+        (V2100G_O2_LABEL, [
+            ("酸素濃度制御(表示)", "酸素濃度制御(表示)", 38, 42, "%"),
+            ("酸素濃度制御(測定)", "酸素濃度制御(測定)", 38, 42, "%"),
+        ]),
+    ]
+    for check_label, specs in optional_range_groups:
+        if _incu_i_optional_check_status(checks, check_label) == "〇":
+            for name, meas_key, lo, hi, unit in specs:
+                if not (lo <= m[meas_key] <= hi):
+                    ng_items.append(f"{name}（{m[meas_key]}{unit}）")
+    limits = [
+        ("接地漏れ電流(正常)", m["接地漏れ電流(正常)"], 200),
+        ("接地漏れ電流(単一故障)", m["接地漏れ電流(単一故障)"], 500),
+        ("外装漏れ電流(正常)", m["外装漏れ電流(正常)"], 100),
+        ("外装漏れ電流(単一故障)", m["外装漏れ電流(単一故障)"], 500),
+    ]
+    for name, val, limit in limits:
+        if leakage_ua_int(val) > limit:
+            ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
 
 # ベッドサイドモニタ（生体情報モニタ）定期点検表
 VSM_APPEARANCE_ITEMS = [
@@ -2194,6 +2477,11 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
             flow_unit, press_unit,
         )
+    if device_category == "保育器" and is_v2100g_incubator(device_category, device_model):
+        return build_v2100g_report_sections(
+            incu_i_checks or default_v2100g_checks(),
+            incu_i_measurements or default_v2100g_measurements(),
+        )
     if device_category == "保育器" and is_incu_i_incubator(device_category, device_model):
         return build_incu_i_report_sections(
             incu_i_checks or default_incu_i_checks(),
@@ -3642,7 +3930,19 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                     ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
 
     elif device_category == "保育器":
-        if is_incu_i_incubator(device_category, device_model):
+        if is_v2100g_incubator(device_category, device_model):
+            applicable_checks = {
+                label: (incu_i_checks or {}).get(label, "---")
+                for label in default_v2100g_checks()
+            }
+            _validate_check_dict(applicable_checks, ng_items, incomplete_items)
+            if result == "使用可":
+                _validate_v2100g_measurements(
+                    incu_i_measurements or default_v2100g_measurements(),
+                    ng_items,
+                    v2100g_checks=incu_i_checks,
+                )
+        elif is_incu_i_incubator(device_category, device_model):
             _validate_check_dict(
                 incu_i_checks or default_incu_i_checks(), ng_items, incomplete_items,
             )
@@ -6242,7 +6542,9 @@ with tabs[1]:
                     occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
 
             elif device_category == "保育器":
-                if is_incu_i_incubator(device_category, device_model):
+                if is_v2100g_incubator(device_category, device_model):
+                    render_v2100g_inspection_fields(incu_i_checks, incu_i_measurements)
+                elif is_incu_i_incubator(device_category, device_model):
                     render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements)
                 else:
                     st.write("**2. 各種警報機能**")
