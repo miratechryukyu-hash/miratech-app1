@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-07a"
+APP_VERSION = "2026-09-09a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2739,13 +2739,211 @@ def _render_history_report_from_row(report_row, target_me, default_model="", dev
         report_sections=payload["report_sections"],
     )
 
-def render_device_inspection_history_reports(hist_df, target_me, default_model="", device_category="", key_prefix="hist"):
+def _history_row_signature(row):
+    """履歴行の同一性確認用（訂正前のスナップショット）"""
+    return (
+        clean_data_str(row.get("点検日")),
+        clean_data_str(row.get("管理番号")),
+        clean_data_str(row.get("実施者")),
+        get_history_detail_raw(row),
+    )
+
+def _parse_history_date_value(val):
+    try:
+        return pd.to_datetime(val).date()
+    except (TypeError, ValueError):
+        return date.today()
+
+def _deep_copy_report_sections(report_sections):
+    if not report_sections:
+        return None
+    return json.loads(json.dumps(report_sections, ensure_ascii=False))
+
+def _render_report_sections_editor(report_sections, key_suffix):
+    """保存済みセクション構成を編集可能なフォームとして表示"""
+    sections = _deep_copy_report_sections(report_sections)
+    if not sections:
+        return None
+    check_opts = INSPECTION_CHECK_OPTIONS
+    judge_opts = ["〇", "×", "-"]
+    for s_idx, section in enumerate(sections.get("sections", [])):
+        st.markdown(f"**{section.get('title', '点検項目')}**")
+        for i_idx, item in enumerate(section.get("items", [])):
+            base_key = f"{key_suffix}_sec{s_idx}_item{i_idx}"
+            if item.get("sub_items"):
+                st.markdown(f"_{item.get('name', '')}_")
+                for j_idx, sub in enumerate(item["sub_items"]):
+                    sk = f"{base_key}_sub{j_idx}"
+                    sub["result"] = st.text_input(
+                        sub.get("name", ""),
+                        value=clean_data_str(sub.get("result", "")),
+                        key=f"{sk}_result",
+                    )
+                    cur_j = clean_data_str(sub.get("judge", "-")) or "-"
+                    jopts = judge_opts if cur_j in judge_opts else [cur_j] + judge_opts
+                    sub["judge"] = st.selectbox(
+                        f"{sub.get('name', '')} 判定",
+                        jopts,
+                        index=jopts.index(cur_j),
+                        key=f"{sk}_judge",
+                    )
+            elif "standard" in item:
+                item["result"] = st.text_input(
+                    item.get("name", ""),
+                    value=clean_data_str(item.get("result", "")),
+                    key=f"{base_key}_result",
+                )
+                cur_j = clean_data_str(item.get("judge", "-")) or "-"
+                jopts = judge_opts if cur_j in judge_opts else [cur_j] + judge_opts
+                item["judge"] = st.selectbox(
+                    f"{item.get('name', '')} 判定",
+                    jopts,
+                    index=jopts.index(cur_j),
+                    key=f"{base_key}_judge",
+                )
+            else:
+                cur = normalize_check_symbol(item.get("result", "")) or "---"
+                copts = check_opts if cur in check_opts else [cur] + check_opts
+                val = st.selectbox(
+                    item.get("name", ""),
+                    copts,
+                    index=copts.index(cur),
+                    key=f"{base_key}_check",
+                )
+                sym = normalize_check_symbol(val) or "---"
+                item["result"] = sym
+                item["judge"] = sym
+    return sections
+
+def _refresh_master_last_inspection(conn, me_no):
+    """機器マスターの最終点検情報を、当該機器の最新履歴に合わせて更新"""
+    me_no = clean_data_str(me_no)
+    if not me_no:
+        return
+    df_hist = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS)
+    device_hist = filter_history_for_device(df_hist, me_no)
+    if device_hist.empty:
+        return
+    tmp = device_hist.copy()
+    tmp["_sort_date"] = pd.to_datetime(tmp["点検日"], errors="coerce")
+    latest = tmp.sort_values("_sort_date", ascending=False).iloc[0]
+    df_master = safe_read_worksheet(
+        conn, "機器マスター", ["管理番号", "最終点検日", "最終判定", "最終実施者"],
+    )
+    if df_master.empty or "管理番号" not in df_master.columns:
+        return
+    for col in ["最終点検日", "最終判定", "最終実施者"]:
+        if col not in df_master.columns:
+            df_master[col] = ""
+    mask = clean_series(df_master["管理番号"]) == me_no
+    if not mask.any():
+        return
+    df_master.loc[mask, "最終点検日"] = clean_data_str(latest.get("点検日"))
+    df_master.loc[mask, "最終判定"] = clean_data_str(latest.get("判定"))
+    df_master.loc[mask, "最終実施者"] = clean_data_str(latest.get("実施者"))
+    conn.update(worksheet="機器マスター", data=_sanitize_dataframe(df_master))
+
+def update_inspection_history_record(conn, row_idx, original_signature, updates):
+    """点検履歴の1行を訂正して保存"""
+    df = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
+    if row_idx not in df.index:
+        raise ValueError("訂正対象の履歴が見つかりません。画面を更新してください。")
+    if _history_row_signature(df.loc[row_idx]) != original_signature:
+        raise ValueError(
+            "他の操作で履歴が更新された可能性があります。画面を更新してから再度お試しください。"
+        )
+    for col, val in updates.items():
+        if col in df.columns:
+            df.loc[row_idx, col] = val
+    df = sync_history_me_columns(df)
+    conn.update(worksheet="点検履歴", data=_sanitize_dataframe(df))
+    _refresh_master_last_inspection(conn, clean_data_str(df.loc[row_idx, "管理番号"]))
+
+def render_inspection_history_edit_form(conn, row, row_idx, key_suffix):
+    """点検履歴1件の訂正フォーム"""
+    signature = _history_row_signature(row)
+    raw_detail = get_history_detail_raw(row)
+    detail_text, _item_rows, check_type, report_sections = parse_stored_inspection_detail(raw_detail)
+    saved_result = clean_data_str(row.get("判定", "使用可")) or "使用可"
+    result_options = ["使用可", "メーカー修理", "廃棄", "メーカー修理依頼", "廃棄手続き"]
+    if saved_result not in result_options:
+        result_options = [saved_result] + result_options
+
+    with st.form(f"hist_edit_form_{key_suffix}"):
+        st.caption("点検日・実施者・総合評価・備考、および各点検項目を訂正できます。")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_date = st.date_input(
+                "点検日",
+                value=_parse_history_date_value(row.get("点検日")),
+            )
+            new_inspector = st.text_input(
+                "実施者",
+                value=clean_data_str(row.get("実施者", "")),
+            )
+        with c2:
+            new_result = st.selectbox(
+                "総合評価",
+                result_options,
+                index=result_options.index(saved_result),
+            )
+        new_memo = st.text_area("備考", value=clean_data_str(row.get("備考", "")))
+
+        edited_sections = None
+        new_detail_text = detail_text
+        if report_sections and report_sections.get("sections"):
+            st.markdown("**点検項目の訂正**")
+            edited_sections = _render_report_sections_editor(
+                report_sections, f"edit_{key_suffix}",
+            )
+        elif raw_detail:
+            new_detail_text = st.text_area(
+                "詳細データ",
+                value=detail_text or raw_detail,
+                height=120,
+            )
+
+        if st.form_submit_button("訂正を保存", type="primary"):
+            if not new_inspector.strip():
+                st.warning("実施者を入力してください。")
+                return
+            updates = {
+                "点検日": str(new_date),
+                "実施者": new_inspector.strip(),
+                "判定": new_result,
+                "備考": new_memo,
+            }
+            if edited_sections:
+                flat_items = flatten_report_sections(edited_sections)
+                updates["詳細データ"] = serialize_inspection_detail(
+                    detail_text,
+                    flat_items,
+                    check_type=check_type,
+                    report_sections=edited_sections,
+                )
+            elif raw_detail and not (report_sections and report_sections.get("sections")):
+                updates["詳細データ"] = new_detail_text
+            try:
+                update_inspection_history_record(conn, row_idx, signature, updates)
+                write_log(
+                    st.session_state.get("current_user_name", "管理者"),
+                    f"{clean_data_str(row.get('管理番号', ''))} の点検履歴を訂正 ({new_date})",
+                )
+                st.cache_data.clear()
+                st.success("点検結果を訂正しました。")
+                st.rerun()
+            except Exception as e:
+                st.error(f"訂正の保存に失敗しました: {e}")
+
+def render_device_inspection_history_reports(
+    conn, hist_df, target_me, default_model="", device_category="", key_prefix="hist",
+):
     """機器別点検履歴：各行にチェック・PDFボタン"""
     if hist_df is None or hist_df.empty:
         st.info("この機器の点検履歴はありません。")
         return
 
-    st.caption("☑ で点検結果表を表示、または「PDF」ボタンでその場ダウンロードできます。")
+    st.caption("☑ で点検結果表を表示・訂正、または「PDF」ボタンでその場ダウンロードできます。")
 
     for list_index, (row_idx, row) in enumerate(hist_df.iterrows()):
         row_me = clean_data_str(row.get("管理番号", target_me)) or target_me
@@ -2802,6 +3000,8 @@ def render_device_inspection_history_reports(hist_df, target_me, default_model="
                 _render_history_report_from_row(
                     row, row_me, row_model, row_category, key_suffix=row_key,
                 )
+                with st.expander("この点検結果を訂正する", expanded=False):
+                    render_inspection_history_edit_form(conn, row, row_idx, row_key)
 
 def _section_item_reference(item):
     parts = []
@@ -3177,7 +3377,10 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
 def render_inspection_history_viewer(conn, df_master, df_history):
     """点検表履歴の一覧表示・報告書印刷（定期点検 / 修理・故障対応）"""
     st.markdown("#### 点検表履歴・印刷")
-    st.caption("定期点検および修理・故障対応点検の報告書を、過去の履歴から表示・PDF保存できます。保存以降の点検は項目データも履歴に残り、後日印刷できます。")
+    st.caption(
+        "定期点検および修理・故障対応点検の報告書を、過去の履歴から表示・PDF保存できます。"
+        "保存以降の点検は項目データも履歴に残り、後日印刷できます。訂正が必要な場合は各履歴の「表示」から訂正できます。"
+    )
 
     if st.button("履歴データを最新にする", key="hist_view_refresh"):
         st.cache_data.clear()
@@ -3253,6 +3456,7 @@ def render_inspection_history_viewer(conn, df_master, df_history):
         )
         hist_device_category = clean_data_str(master_row.get("カテゴリ", ""))
     render_device_inspection_history_reports(
+        conn,
         working,
         hist_target_me,
         hist_default_model,
@@ -6750,6 +6954,7 @@ with tabs[2]:
                                 f"**{len(device_hist)} 件** の点検履歴"
                             )
                             render_device_inspection_history_reports(
+                                conn,
                                 device_hist,
                                 target_me_hist,
                                 hist_model,
@@ -6979,6 +7184,7 @@ with tabs[3]:
                         st.markdown("---")
                         st.write("#### 点検結果履歴（報告書表示・印刷）")
                         render_device_inspection_history_reports(
+                            conn,
                             hist_df,
                             target_me,
                             device_model,
