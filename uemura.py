@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-09a"
+APP_VERSION = "2026-09-10a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2139,6 +2139,165 @@ def find_device_row(df_master, keyword):
 
     return None, None
 
+DEVICE_IMAGE_COLUMN = "機器画像URL"
+
+def extract_drive_file_id(text):
+    ref = clean_data_str(text)
+    if not ref:
+        return ""
+    if ref.startswith("photo:") or ref.startswith("drive:"):
+        return ref.split(":", 1)[1]
+    match = re.search(r"drive\.google\.com/file/d/([a-zA-Z0-9_-]+)", ref)
+    if match:
+        return match.group(1)
+    match = re.search(r"[?&]id=([a-zA-Z0-9_-]+)", ref)
+    if match:
+        return match.group(1)
+    return ""
+
+def resolve_device_image_display_url(image_ref):
+    ref = clean_data_str(image_ref)
+    if not ref:
+        return ""
+    if ref.startswith(("http://", "https://")):
+        file_id = extract_drive_file_id(ref)
+        if file_id:
+            return f"https://drive.google.com/uc?id={file_id}"
+        return ref
+    file_id = extract_drive_file_id(ref)
+    if file_id:
+        return f"https://drive.google.com/uc?id={file_id}"
+    return ""
+
+def lookup_device_image_url(df_master, target_me):
+    if df_master is None or df_master.empty or not target_me:
+        return ""
+    row, _ = find_device_row(df_master, target_me)
+    if row is None:
+        return ""
+    for col in (DEVICE_IMAGE_COLUMN, "機器画像", "外観写真URL", "写真URL"):
+        if col in row.index:
+            value = clean_data_str(row.get(col, ""))
+            if value:
+                return value
+    return ""
+
+def fetch_device_image_bytes(image_ref):
+    url = resolve_device_image_display_url(image_ref)
+    if not url:
+        return None
+    response = requests.get(url, timeout=20)
+    response.raise_for_status()
+    return response.content
+
+def append_device_image_to_pdf_story(story, image_ref, font_name):
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Image as RLImage, Spacer
+
+    try:
+        img_bytes = fetch_device_image_bytes(image_ref)
+        if not img_bytes:
+            return
+        img_buf = BytesIO(img_bytes)
+        rl_img = RLImage(img_buf, width=80 * mm, height=60 * mm, kind="proportional")
+        story.extend([
+            _daily_monthly_pdf_paragraph("対象機器（参考画像）", font_name, 10),
+            rl_img,
+            Spacer(1, 3 * mm),
+        ])
+    except Exception:
+        pass
+
+def render_device_image_block(image_ref, target_me, model_name=""):
+    url = resolve_device_image_display_url(image_ref)
+    if not url:
+        return False
+    caption = f"対象機器: {target_me}"
+    if model_name:
+        caption += f"（{model_name}）"
+    try:
+        st.image(url, caption=caption, use_container_width=True)
+        return True
+    except Exception:
+        st.link_button("機器画像を開く", url, use_container_width=True)
+        return True
+
+def upload_device_image_to_drive(file_obj, me_no):
+    """機器の参考写真を Google Drive に保存し、photo:FILE_ID 形式で返す"""
+    try:
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseUpload
+    except ImportError as error:
+        raise RuntimeError(
+            "写真アップロードには google-api-python-client が必要です。"
+        ) from error
+
+    _, config, service_email = _load_gsheets_settings()
+    folder_id = ""
+    try:
+        folder_id = clean_data_str(st.secrets.get("app", {}).get("device_image_folder_id", ""))
+    except Exception:
+        pass
+
+    creds = Credentials.from_service_account_info(
+        config,
+        scopes=[
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive",
+        ],
+    )
+    drive_service = build("drive", "v3", credentials=creds)
+
+    file_bytes = file_obj.getvalue()
+    if not file_bytes:
+        raise ValueError("ファイルが空です。")
+
+    mime_type = file_obj.type or "image/jpeg"
+    safe_me = re.sub(r"[^\w\-]+", "_", clean_data_str(me_no)) or "device"
+    file_name = f"device_{safe_me}_{format_jst(fmt='%Y%m%d%H%M%S')}.jpg"
+
+    file_metadata = {"name": file_name}
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
+    media = MediaIoBaseUpload(BytesIO(file_bytes), mimetype=mime_type, resumable=False)
+    try:
+        created = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        file_id = created.get("id")
+        drive_service.permissions().create(
+            fileId=file_id,
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as error:
+        message = str(error)
+        if "storageQuotaExceeded" in message or "Service Accounts do not have storage quota" in message:
+            raise RuntimeError(
+                "Google Drive へのアップロード権限がありません。"
+                f"アップロード先フォルダを {service_email} と「編集者」で共有してください。"
+            ) from error
+        raise
+
+    return f"photo:{file_id}"
+
+def save_device_image_url(conn, target_me, image_ref):
+    df_master = safe_read_worksheet(conn, "機器マスター")
+    if df_master.empty or "管理番号" not in df_master.columns:
+        raise ValueError("機器マスターが読み込めません。")
+    if DEVICE_IMAGE_COLUMN not in df_master.columns:
+        df_master[DEVICE_IMAGE_COLUMN] = ""
+    mask = clean_series(df_master["管理番号"]) == clean_data_str(target_me)
+    if not mask.any():
+        raise ValueError(f"管理番号「{target_me}」が機器マスターに見つかりません。")
+    df_master.loc[mask, DEVICE_IMAGE_COLUMN] = clean_data_str(image_ref)
+    conn.update(worksheet="機器マスター", data=df_master)
+
 def lookup_device_for_sticker(df_master, me_no):
     row, match_type = find_device_row(df_master, me_no)
     if row is None:
@@ -3748,7 +3907,8 @@ def build_repair_report_plain_text(target_me, job_data, repair_date, inspection_
     return "\n".join(lines)
 
 def build_repair_report_pdf_bytes(target_me, job_data, repair_date, inspection_content,
-                                  repair_result, inspector, repair_memo=""):
+                                  repair_result, inspector, repair_memo="",
+                                  device_image_url=""):
     """修理・点検完了報告書 PDF"""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -3783,6 +3943,9 @@ def build_repair_report_pdf_bytes(target_me, job_data, repair_date, inspection_c
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     story.extend([info_table, Spacer(1, 4 * mm)])
+
+    if device_image_url:
+        append_device_image_to_pdf_story(story, device_image_url, font_name)
 
     story.append(_daily_monthly_pdf_paragraph("点検内容一覧", font_name, 11))
     story.append(Spacer(1, 2 * mm))
@@ -3821,7 +3984,8 @@ def build_repair_report_pdf_bytes(target_me, job_data, repair_date, inspection_c
     return buf.getvalue()
 
 def render_repair_report(target_me, job_data, repair_date, inspection_content,
-                         repair_result, inspector, repair_memo="", unique_key_suffix=""):
+                         repair_result, inspector, repair_memo="", unique_key_suffix="",
+                         device_image_url=""):
     """修理点検報告書の表示・PDF/テキストダウンロード"""
     if isinstance(job_data, dict):
         job = job_data
@@ -3843,6 +4007,7 @@ def render_repair_report(target_me, job_data, repair_date, inspection_content,
     pdf_bytes = build_repair_report_pdf_bytes(
         target_me, job, repair_date, inspection_content,
         repair_result, inspector, repair_memo,
+        device_image_url=device_image_url,
     )
     plain_text = build_repair_report_plain_text(
         target_me, job, repair_date, inspection_content,
@@ -3886,16 +4051,29 @@ def render_repair_report(target_me, job_data, repair_date, inspection_content,
     st.subheader("提出用 報告書プレビュー")
     st.write("## 医療機器 修理・点検完了報告書")
     st.caption(f"提出先: 現場責任者 / 看護師長 殿　|　完了報告日: {repair_date}")
-    info_df = pd.DataFrame({
-        "項目": ["管理番号", "対象機種", "総合判定", "点検技術者"],
-        "内容": [
-            clean_data_str(target_me),
-            clean_data_str(job.get("機種", "")),
-            clean_data_str(repair_result),
-            clean_data_str(inspector),
-        ],
-    })
-    st.table(info_df.set_index("項目"))
+
+    preview_col_img, preview_col_info = st.columns([1, 2])
+    with preview_col_img:
+        if device_image_url:
+            render_device_image_block(
+                device_image_url,
+                target_me,
+                clean_data_str(job.get("機種", "")),
+            )
+        else:
+            st.caption("機器画像は未登録です。マスター編集から参考写真を登録できます。")
+    with preview_col_info:
+        info_df = pd.DataFrame({
+            "項目": ["管理番号", "対象機種", "総合判定", "点検技術者"],
+            "内容": [
+                clean_data_str(target_me),
+                clean_data_str(job.get("機種", "")),
+                clean_data_str(repair_result),
+                clean_data_str(inspector),
+            ],
+        })
+        st.table(info_df.set_index("項目"))
+
     content_df = pd.DataFrame({
         "項目": ["不具合症状（依頼）", "点検内容"],
         "内容": [
@@ -3930,6 +4108,7 @@ def render_repair_fault_management(conn):
             report.get("inspector", ""),
             repair_memo=report.get("repair_memo", ""),
             unique_key_suffix="saved",
+            device_image_url=report.get("device_image_url", ""),
         )
         if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
             st.session_state.pop("repair_saved_report", None)
@@ -3939,6 +4118,7 @@ def render_repair_fault_management(conn):
 
     try:
         df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
+        df_master_repair = safe_read_worksheet(conn, "機器マスター")
 
         col_refresh, col_view = st.columns([1, 2])
         with col_refresh:
@@ -3982,6 +4162,12 @@ def render_repair_fault_management(conn):
 
                 selected_row = df_failed.loc[selected_idx]
                 fault_symptom = clean_data_str(selected_row.get("症状", ""))
+                model_name = clean_data_str(selected_row.get("機種", ""))
+                device_image_url = lookup_device_image_url(df_master_repair, target_me)
+
+                if device_image_url:
+                    st.markdown("#### 対象機器（参考画像）")
+                    render_device_image_block(device_image_url, target_me, model_name)
 
                 with st.form("repair_form"):
                     st.info(f"対象機器: {target_me} の修理対応・点検結果を入力します。")
@@ -4023,6 +4209,7 @@ def render_repair_fault_management(conn):
                                 "repair_result": repair_result,
                                 "repair_memo": repair_memo,
                                 "inspector": inspector,
+                                "device_image_url": lookup_device_image_url(df_master_repair, saved_me),
                             }
                             st.cache_data.clear()
                             st.rerun()
@@ -7039,6 +7226,12 @@ with tabs[2]:
                         st.caption(
                             f"経過年数（本日 {format_jst(fmt='%Y-%m-%d')} 時点）: **{elapsed_label}**"
                         )
+                        new_image_url = st.text_input(
+                            "機器画像URL（報告書に表示）",
+                            value=clean_data_str(target_row.get(DEVICE_IMAGE_COLUMN, "")),
+                            placeholder="Google Drive リンク、または photo:FILE_ID",
+                            help="修理・点検完了報告書に表示する参考写真です。",
+                        )
 
                         if st.form_submit_button("変更を上書き保存する", type="primary"):
                             safe_new_sn = protect_zeros(new_sn)
@@ -7056,6 +7249,9 @@ with tabs[2]:
                             if "旧番号" not in df_master_edit.columns:
                                 df_master_edit["旧番号"] = ""
                             df_master_edit.loc[mask_m, "旧番号"] = clean_data_str(new_legacy)
+                            if DEVICE_IMAGE_COLUMN not in df_master_edit.columns:
+                                df_master_edit[DEVICE_IMAGE_COLUMN] = ""
+                            df_master_edit.loc[mask_m, DEVICE_IMAGE_COLUMN] = clean_data_str(new_image_url)
                             conn.update(worksheet="機器マスター", data=df_master_edit)
 
                             try:
@@ -7082,6 +7278,32 @@ with tabs[2]:
                             st.cache_data.clear() 
                             st.success(f"{clean_edit_me_no} のデータを最新に修正し、過去の履歴にも完全に同期しました！")
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{clean_edit_me_no} のデータを修正・同期")
+
+                    current_image_url = clean_data_str(target_row.get(DEVICE_IMAGE_COLUMN, ""))
+                    if current_image_url:
+                        st.markdown("**登録済みの参考画像**")
+                        render_device_image_block(current_image_url, clean_edit_me_no, normalize_stored_model(
+                            target_row.get("カテゴリ", ""), target_row.get("機種", ""),
+                        ))
+
+                    uploaded_device_image = st.file_uploader(
+                        "機器の参考写真をアップロード",
+                        type=["jpg", "jpeg", "png", "webp"],
+                        key=f"master_device_image_{clean_edit_me_no}",
+                    )
+                    if uploaded_device_image is not None:
+                        if st.button(
+                            "参考写真を保存して報告書に使う",
+                            key=f"save_master_device_image_{clean_edit_me_no}",
+                        ):
+                            try:
+                                image_ref = upload_device_image_to_drive(uploaded_device_image, clean_edit_me_no)
+                                save_device_image_url(conn, clean_edit_me_no, image_ref)
+                                st.success("機器画像を保存しました。報告書に表示されます。")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"画像保存エラー: {e}")
                 else:
                     st.warning("指定された管理番号・旧番号は登録されていません。")
             except Exception as e:
@@ -7150,6 +7372,10 @@ with tabs[3]:
 
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
+
+                    device_image_url = lookup_device_image_url(df_master, target_me)
+                    if device_image_url:
+                        render_device_image_block(device_image_url, target_me, device_model)
 
                     hist_df = filter_history_for_device(df_history, target_me, master_row)
                     fault_df = filter_fault_reports_for_device(df_fault_reports, target_me, master_row)
@@ -7422,6 +7648,24 @@ with tabs[5]:
             s["model_name"], s["me_no"], s["serial_no"], s["delivery_date"],
             button_key="tepra_after_reg",
         )
+        st.markdown("#### 報告書用の参考写真（任意）")
+        st.caption("修理・点検完了報告書に載せる機器の写真を登録できます。")
+        reg_device_image = st.file_uploader(
+            "機器の参考写真",
+            type=["jpg", "jpeg", "png", "webp"],
+            key=f"reg_device_image_{s['me_no']}",
+        )
+        if reg_device_image is not None and st.button(
+            "参考写真を保存",
+            key=f"save_reg_device_image_{s['me_no']}",
+        ):
+            try:
+                image_ref = upload_device_image_to_drive(reg_device_image, s["me_no"])
+                save_device_image_url(conn, s["me_no"], image_ref)
+                st.success("参考写真を保存しました。報告書に表示されます。")
+                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"画像保存エラー: {e}")
         if st.button("シール表示を閉じる", key="close_reg_sticker"):
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
