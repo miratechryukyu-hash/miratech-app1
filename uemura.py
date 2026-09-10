@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-10a"
+APP_VERSION = "2026-09-11a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -4590,6 +4590,353 @@ def sync_pending_check_save_for_device(me_no):
     pending = st.session_state.get("pending_check_saves", {}).get(me_no)
     st.session_state["pending_check_save"] = pending
 
+INSPECTION_DRAFT_COLUMNS = ["管理番号", "更新日時", "実施者", "データ"]
+
+def ensure_inspection_draft_worksheet():
+    """点検下書きシートを確保"""
+    client, spreadsheet_id = _get_sheet_client()
+    sh = client.open_by_key(spreadsheet_id)
+    try:
+        ws = sh.worksheet("点検下書き")
+        header = [h for h in ws.row_values(1) if h]
+        missing = [c for c in INSPECTION_DRAFT_COLUMNS if c not in header]
+        if missing:
+            ws.update([header + missing], "A1")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="点検下書き", rows=500, cols=len(INSPECTION_DRAFT_COLUMNS))
+        ws.update([INSPECTION_DRAFT_COLUMNS], "A1")
+
+def _serialize_inspection_draft(payload):
+    """点検下書きを JSON 化（date 等を文字列に）"""
+    skip = _pending_check_payload_keys() | {"item_rows", "report_sections", "detail_text"}
+    out = {}
+    for key, val in payload.items():
+        if key in skip:
+            continue
+        if isinstance(val, date):
+            out[key] = val.isoformat()
+        elif isinstance(val, dict):
+            out[key] = {str(k): v for k, v in val.items()}
+        else:
+            out[key] = val
+    return out
+
+def _deserialize_inspection_draft(raw_json):
+    data = json.loads(raw_json)
+    if not isinstance(data, dict):
+        return None
+    if data.get("check_date"):
+        data["check_date"] = _parse_history_date_value(data["check_date"])
+    for dict_key in (
+        "inc_o_checks", "incu_i_checks", "incu_i_measurements",
+        "vsm_checks", "vsm_measurements", "vsm_meta",
+        "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
+        "infusion_pump_checks",
+    ):
+        if dict_key in data and isinstance(data[dict_key], dict):
+            restored = {}
+            for k, v in data[dict_key].items():
+                if isinstance(v, (int, float)) or (isinstance(v, str) and v.replace(".", "", 1).isdigit()):
+                    try:
+                        restored[k] = float(v) if "." in str(v) else int(float(v))
+                        continue
+                    except (TypeError, ValueError):
+                        pass
+                restored[k] = v
+            data[dict_key] = restored
+    for num_key in ("flow_acc", "occ_press", "bubble_ad_water", "bubble_ad_dry",
+                    "min_flow", "max_flow", "min_press", "max_press"):
+        if num_key in data:
+            try:
+                data[num_key] = float(data[num_key])
+            except (TypeError, ValueError):
+                pass
+    return data
+
+def inspection_draft_has_content(payload):
+    """下書きとして保存する価値がある入力か"""
+    if not clean_data_str(payload.get("final_me_no")):
+        return False
+    if clean_data_str(payload.get("memo", "")):
+        return True
+    for val in [payload.get(f"chk_e{i}") for i in range(1, 8)]:
+        if val not in (None, "", "--", "---"):
+            return True
+    for dict_key in (
+        "inc_o_checks", "incu_i_checks", "vsm_checks", "infusion_pump_checks",
+        "ecg_checks", "ox370_checks",
+    ):
+        for v in (payload.get(dict_key) or {}).values():
+            if v not in (None, "", "--", "---"):
+                return True
+    for dict_key in ("incu_i_measurements", "vsm_measurements", "ecg_measurements", "ox370_measurements"):
+        m = payload.get(dict_key) or {}
+        defaults = {
+            "incu_i_measurements": default_incu_i_measurements(),
+            "vsm_measurements": default_vsm_measurements(),
+            "ecg_measurements": default_ecg_measurements(),
+            "ox370_measurements": default_ox370_measurements(),
+        }.get(dict_key, {})
+        for k, v in m.items():
+            if k in defaults and v == defaults[k]:
+                continue
+            if v not in (None, "", 0, 0.0):
+                return True
+    if payload.get("flow_acc") not in (None, 0, 0.0):
+        return True
+    if payload.get("occ_press") not in (None, 0, 0.0):
+        return True
+    return False
+
+def fetch_inspection_draft(conn, me_no):
+    me_no = clean_data_str(me_no)
+    if not me_no:
+        return None
+    try:
+        df = safe_read_worksheet(conn, "点検下書き", INSPECTION_DRAFT_COLUMNS)
+    except Exception:
+        return None
+    if df.empty or "管理番号" not in df.columns:
+        return None
+    rows = df[clean_series(df["管理番号"]) == me_no]
+    if rows.empty:
+        return None
+    raw = rows.iloc[-1].get("データ", "")
+    if not raw or str(raw).strip().lower() in ("", "nan"):
+        return None
+    try:
+        return _deserialize_inspection_draft(str(raw))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+def upsert_inspection_draft(conn, payload):
+    me_no = clean_data_str(payload.get("final_me_no"))
+    if not me_no:
+        return
+    ensure_inspection_draft_worksheet()
+    df = safe_read_worksheet(conn, "点検下書き", INSPECTION_DRAFT_COLUMNS)
+    serialized = json.dumps(_serialize_inspection_draft(payload), ensure_ascii=False)
+    new_row = {
+        "管理番号": me_no,
+        "更新日時": format_jst(),
+        "実施者": clean_data_str(payload.get("inspector", "")),
+        "データ": serialized,
+    }
+    if df.empty:
+        updated = pd.DataFrame([new_row])
+    else:
+        mask = clean_series(df["管理番号"]) == me_no
+        if mask.any():
+            idx = df[mask].index[-1]
+            for col, val in new_row.items():
+                df.loc[idx, col] = val
+            updated = df
+        else:
+            updated = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    conn.update(worksheet="点検下書き", data=_sanitize_dataframe(updated))
+
+def delete_inspection_draft(conn, me_no):
+    me_no = clean_data_str(me_no)
+    if not me_no:
+        return
+    try:
+        df = safe_read_worksheet(conn, "点検下書き", INSPECTION_DRAFT_COLUMNS)
+    except Exception:
+        return
+    if df.empty:
+        return
+    mask = clean_series(df["管理番号"]) == me_no
+    if not mask.any():
+        return
+    updated = df[~mask].reset_index(drop=True)
+    conn.update(worksheet="点検下書き", data=_sanitize_dataframe(updated))
+    st.session_state.get("inspection_draft_cache", {}).pop(me_no, None)
+
+def maybe_auto_save_inspection_draft(conn, payload):
+    """入力内容をスプレッドシート下書きへ自動保存（セッション切断対策）"""
+    if not inspection_draft_has_content(payload):
+        return
+    me_no = clean_data_str(payload.get("final_me_no"))
+    serialized = json.dumps(_serialize_inspection_draft(payload), ensure_ascii=False, sort_keys=True)
+    digest = hashlib.sha256(serialized.encode()).hexdigest()
+    cache = st.session_state.setdefault("inspection_draft_cache", {})
+    prev = cache.get(me_no)
+    now = time.time()
+    if prev and prev.get("digest") == digest and now - prev.get("saved_at", 0) < 30:
+        return
+    try:
+        upsert_inspection_draft(conn, payload)
+        cache[me_no] = {"digest": digest, "saved_at": now}
+    except Exception:
+        pass
+
+def _radio_index_from_value(val):
+    if val in (None, "", "--"):
+        return None
+    sym = normalize_check_symbol(val) or "---"
+    if sym in INSPECTION_CHECK_OPTIONS:
+        return INSPECTION_CHECK_OPTIONS.index(sym)
+    return None
+
+def render_inspection_draft_restore_banner(conn, me_no):
+    """未保存下書きがあれば復元バナーを表示。復元時は下書き dict を返す"""
+    me_no = clean_data_str(me_no)
+    if not me_no:
+        return None
+    if st.session_state.get(f"inspection_draft_applied_{me_no}"):
+        return None
+    pending = st.session_state.get("pending_check_save")
+    if pending and clean_data_str(pending.get("final_me_no")) == me_no:
+        return None
+    draft = fetch_inspection_draft(conn, me_no)
+    if not draft:
+        return None
+    updated = clean_data_str(draft.get("_draft_updated", ""))
+    if not updated:
+        try:
+            df = safe_read_worksheet(conn, "点検下書き", INSPECTION_DRAFT_COLUMNS)
+            row = df[clean_series(df["管理番号"]) == me_no]
+            if not row.empty:
+                updated = clean_data_str(row.iloc[-1].get("更新日時", ""))
+        except Exception:
+            updated = ""
+    st.warning(
+        f"**{me_no}** の未保存下書きがあります"
+        + (f"（最終保存: {updated}）" if updated else "")
+        + "。15分程度の中断で入力が消える場合があります。"
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("下書きを復元", type="primary", key=f"restore_draft_{me_no}", use_container_width=True):
+            st.session_state[f"inspection_draft_applied_{me_no}"] = True
+            return draft
+    with c2:
+        if st.button("下書きを破棄", key=f"discard_draft_{me_no}", use_container_width=True):
+            delete_inspection_draft(conn, me_no)
+            st.info("下書きを破棄しました。")
+            st.rerun()
+    return None
+
+def apply_inspection_draft_to_state(draft):
+    """下書き dict から点検入力変数群を復元"""
+    if not draft:
+        return {}
+    out = {}
+    for key in (
+        "final_sn", "device_category", "device_model", "scan_year_val",
+        "check_type", "inspector", "result", "memo",
+        "chk_e1", "chk_e2", "chk_e3", "chk_e4", "chk_e5", "chk_e6", "chk_e7",
+        "flow_acc", "occ_press", "bubble_ad_water", "bubble_ad_dry",
+        "min_flow", "max_flow", "min_press", "max_press", "flow_unit", "press_unit",
+    ):
+        if key in draft:
+            out[key] = draft[key]
+    if draft.get("check_date"):
+        out["check_date"] = draft["check_date"]
+    for dict_key in (
+        "inc_o_checks", "incu_i_checks", "incu_i_measurements",
+        "vsm_checks", "vsm_measurements", "vsm_meta",
+        "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
+        "infusion_pump_checks",
+    ):
+        if dict_key in draft and isinstance(draft[dict_key], dict):
+            out[dict_key] = dict(draft[dict_key])
+    return out
+
+def _choice_index(options, value):
+    if value in options:
+        return options.index(value)
+    return None
+
+def _set_radio_session_key(key, val):
+    sym = normalize_check_symbol(val) if val not in (None, "", "--") else None
+    if sym in INSPECTION_CHECK_OPTIONS:
+        st.session_state[key] = sym
+
+def prime_inspection_widgets_from_draft(draft, device_category, device_model):
+    """下書き復元時に radio 系 widget の session_state を事前セット"""
+    if not draft:
+        return
+    checks = draft.get("incu_i_checks") or {}
+    if device_category == "輸液ポンプ":
+        pump = draft.get("infusion_pump_checks") or {}
+        for label in INFUSION_PUMP_ALARM_ITEMS:
+            _set_radio_session_key(f"inp_alarm_{label}", pump.get(label))
+        for label in INFUSION_PUMP_FUNCTION_ITEMS:
+            _set_radio_session_key(f"inp_func_{label}", pump.get(label))
+    elif device_category == "保育器":
+        if is_v2100g_incubator(device_category, device_model):
+            for idx, label in enumerate(V2100G_APPEARANCE_ITEMS):
+                _set_radio_session_key(f"v2100g_app_{idx}", checks.get(label))
+            for idx, label in enumerate(V2100G_OPERATION_ITEMS):
+                _set_radio_session_key(f"v2100g_op_{idx}", checks.get(label))
+            for prefix, label in (
+                ("v2100g_temp", V2100G_TEMP_CONTROL_LABEL),
+                ("v2100g_body", V2100G_BODY_TEMP_LABEL),
+                ("v2100g_hum", V2100G_HUMIDITY_LABEL),
+                ("v2100g_o2", V2100G_O2_LABEL),
+            ):
+                _set_radio_session_key(f"{prefix}_check", checks.get(label))
+        elif is_incu_i_incubator(device_category, device_model):
+            for idx, label in enumerate(INCU_I_APPEARANCE_ITEMS):
+                _set_radio_session_key(f"incu_i_app_{idx}", checks.get(label))
+            for idx, label in enumerate(INCU_I_FUNCTION_ITEMS):
+                _set_radio_session_key(f"incu_i_func_{idx}", checks.get(label))
+            if len(INCU_I_OPERATION_CHECK_ITEMS) > 0:
+                _set_radio_session_key(
+                    "incu_i_op_tank", checks.get(INCU_I_OPERATION_CHECK_ITEMS[0]),
+                )
+            if len(INCU_I_OPERATION_CHECK_ITEMS) > 1:
+                _set_radio_session_key(
+                    "incu_i_o2_cal", checks.get(INCU_I_OPERATION_CHECK_ITEMS[1]),
+                )
+            for prefix, label in (
+                ("incu_i_weight", INCU_I_WEIGHT_CHECK_LABEL),
+                ("incu_i_hum", INCU_I_HUMIDITY_CHECK_LABEL),
+                ("incu_i_man", INCU_I_MANUAL_CHECK_LABEL),
+                ("incu_i_srv", INCU_I_SERVO_CHECK_LABEL),
+                ("incu_i_o2", INCU_I_O2_CONTROL_CHECK_LABEL),
+                ("incu_i_o2_port", INCU_I_O2_PORT_CHECK_LABEL),
+            ):
+                _set_radio_session_key(f"{prefix}_check", checks.get(label))
+    elif device_category == "生体情報モニタ":
+        vsm = draft.get("vsm_checks") or {}
+        meta = draft.get("vsm_meta") or {}
+        if meta.get("設置病棟") is not None:
+            st.session_state["vsm_ward"] = meta.get("設置病棟", "")
+        if meta.get("チャンネル番号") is not None:
+            st.session_state["vsm_channel"] = meta.get("チャンネル番号", "")
+        for prefix, items in (
+            ("vsm_app", vsm_appearance_items(device_model)),
+            ("vsm_func", VSM_FUNCTION_ITEMS),
+            ("vsm_bat", VSM_BATTERY_CHECK_ITEMS),
+            ("vsm_tx", vsm_transmitter_items(device_model)),
+            ("vsm_ecg", VSM_ECG_RESP_ITEMS),
+            ("vsm_spo2", VSM_SPO2_ITEMS),
+            ("vsm_nibp", VSM_NIBP_ITEMS),
+            ("vsm_ibp", vsm_ibp_items(device_model)),
+        ):
+            for idx, label in enumerate(items):
+                _set_radio_session_key(f"{prefix}_{idx}", vsm.get(label))
+    elif device_category == "心電計":
+        ecg = draft.get("ecg_checks") or {}
+        for prefix, items in (
+            ("ecg_app", ECG_APPEARANCE_ITEMS),
+            ("ecg_pwr", ECG_POWER_CORD_ITEMS),
+            ("ecg_func", ECG_FUNCTION_ITEMS),
+        ):
+            for idx, label in enumerate(items):
+                _set_radio_session_key(f"{prefix}_{idx}", ecg.get(label))
+    elif is_ox370_blender(device_category, device_model):
+        ox = draft.get("ox370_checks") or {}
+        for prefix, items in (
+            ("ox370_app", OX370_APPEARANCE_ITEMS),
+            ("ox370_air", OX370_AIRTIGHTNESS_ITEMS),
+            ("ox370_alarm", OX370_ALARM_VALVE_ITEMS),
+        ):
+            for idx, label in enumerate(items):
+                _set_radio_session_key(f"{prefix}_{idx}", ox.get(label))
+
 def attempt_inspection_save(conn, save_payload):
     """点検をスプレッドシートへ保存。失敗しても payload を保持"""
     me_no = clean_data_str(save_payload.get("final_me_no", ""))
@@ -4600,6 +4947,8 @@ def attempt_inspection_save(conn, save_payload):
         with st.spinner("スプレッドシートに保存しています..."):
             saved_report = execute_inspection_save(conn, **clean_payload)
         clear_pending_check_save(me_no)
+        delete_inspection_draft(conn, me_no)
+        st.session_state.pop(f"inspection_draft_applied_{me_no}", None)
         st.session_state["inspection_saved_report"] = saved_report
         st.rerun()
     except Exception as e:
@@ -6853,9 +7202,70 @@ with tabs[1]:
         if "last_check_date" not in st.session_state:
             st.session_state["last_check_date"] = date.today()
 
-        check_type = st.radio("点検区分", ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"], horizontal=True)
-        check_date = st.date_input("作業日", value=st.session_state["last_check_date"])
-        inspector = st.text_input("実施者", value=st.session_state.get("current_user_name", ""))
+        applied_draft = None
+        restored_draft = render_inspection_draft_restore_banner(conn, final_me_no)
+        if restored_draft:
+            applied_draft = apply_inspection_draft_to_state(restored_draft)
+            prime_inspection_widgets_from_draft(applied_draft, device_category, device_model)
+            chk_e1 = applied_draft.get("chk_e1", chk_e1)
+            chk_e2 = applied_draft.get("chk_e2", chk_e2)
+            chk_e3 = applied_draft.get("chk_e3", chk_e3)
+            chk_e4 = applied_draft.get("chk_e4", chk_e4)
+            chk_e5 = applied_draft.get("chk_e5", chk_e5)
+            chk_e6 = applied_draft.get("chk_e6", chk_e6)
+            chk_e7 = applied_draft.get("chk_e7", chk_e7)
+            memo = applied_draft.get("memo", memo)
+            result = applied_draft.get("result", result)
+            inspector = applied_draft.get("inspector", inspector) or inspector
+            flow_acc = float(applied_draft.get("flow_acc", flow_acc) or 0.0)
+            occ_press = float(applied_draft.get("occ_press", occ_press) or 0.0)
+            bubble_ad_water = float(applied_draft.get("bubble_ad_water", bubble_ad_water))
+            bubble_ad_dry = float(applied_draft.get("bubble_ad_dry", bubble_ad_dry))
+            if applied_draft.get("min_flow") is not None:
+                min_flow = float(applied_draft["min_flow"])
+            if applied_draft.get("max_flow") is not None:
+                max_flow = float(applied_draft["max_flow"])
+            if applied_draft.get("min_press") is not None:
+                min_press = float(applied_draft["min_press"])
+            if applied_draft.get("max_press") is not None:
+                max_press = float(applied_draft["max_press"])
+            flow_unit = applied_draft.get("flow_unit", flow_unit)
+            press_unit = applied_draft.get("press_unit", press_unit)
+            inc_o_checks = {**inc_o_checks, **applied_draft.get("inc_o_checks", {})}
+            incu_i_checks = {**default_incu_i_checks(), **applied_draft.get("incu_i_checks", {})}
+            incu_i_measurements = {**default_incu_i_measurements(), **applied_draft.get("incu_i_measurements", {})}
+            vsm_checks = {**default_vsm_checks(), **applied_draft.get("vsm_checks", {})}
+            vsm_measurements = {**default_vsm_measurements(), **applied_draft.get("vsm_measurements", {})}
+            vsm_meta = {**default_vsm_meta(), **applied_draft.get("vsm_meta", {})}
+            ecg_checks = {**default_ecg_checks(), **applied_draft.get("ecg_checks", {})}
+            ecg_measurements = {**default_ecg_measurements(), **applied_draft.get("ecg_measurements", {})}
+            ox370_checks = {**default_ox370_checks(), **applied_draft.get("ox370_checks", {})}
+            ox370_measurements = {**default_ox370_measurements(), **applied_draft.get("ox370_measurements", {})}
+            infusion_pump_checks = {**default_infusion_pump_checks(), **applied_draft.get("infusion_pump_checks", {})}
+            if applied_draft.get("check_date"):
+                st.session_state["last_check_date"] = applied_draft["check_date"]
+            st.success("下書きを復元しました。内容を確認して保存してください。")
+
+        use_draft_idx = bool(applied_draft) or st.session_state.get(f"inspection_draft_applied_{final_me_no}")
+
+        def _didx(val):
+            return _radio_index_from_value(val) if use_draft_idx else None
+
+        check_type_options = ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"]
+        check_type_idx = _choice_index(check_type_options, applied_draft.get("check_type")) if applied_draft else None
+        check_type = st.radio(
+            "点検区分", check_type_options, horizontal=True,
+            index=check_type_idx if check_type_idx is not None else 0,
+        )
+        check_date = st.date_input(
+            "作業日",
+            value=applied_draft.get("check_date", st.session_state["last_check_date"]) if applied_draft else st.session_state["last_check_date"],
+        )
+        inspector = st.text_input(
+            "実施者",
+            value=inspector or st.session_state.get("current_user_name", ""),
+        )
+        st.caption("入力内容は自動で下書き保存されます（約15分の中断後も「下書きを復元」から続きを再開できます）")
 
         if check_type == "院内点検(miratech)":
             st.caption(INSPECTION_CHECK_LEGEND)
@@ -6863,14 +7273,14 @@ with tabs[1]:
                 st.write("**1. 外観・作動点検**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e1))
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e2))
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e3))
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e4))
                 with col2:
-                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e5))
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e6))
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e7))
 
                 st.write("**2. 警報・作動点検**")
                 alarm_col1, alarm_col2 = st.columns(2)
@@ -6897,40 +7307,52 @@ with tabs[1]:
                 with col_num1:
                     st.caption("流量精度 ※流量120ml/hr・10min・予定量20ml・許容範囲18～22ml")
                     st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
-                    flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=20.0, step=0.1)
+                    flow_acc = st.number_input(
+                        f"流量精度 ({flow_unit})",
+                        value=float(flow_acc or 20.0), step=0.1,
+                    )
                 with col_num2:
                     st.caption("閉塞検出 ※流量120ml/h・「M」30～90kPa")
                     st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
-                    occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=60.0, step=1.0)
+                    occ_press = st.number_input(
+                        f"閉塞検出 ({press_unit})",
+                        value=float(occ_press or 60.0), step=1.0,
+                    )
 
                 st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
                 bubble_col1, bubble_col2 = st.columns(2)
                 with bubble_col1:
-                    bubble_ad_water = st.number_input("水入り", min_value=0.0, value=100.0, step=1.0)
+                    bubble_ad_water = st.number_input("水入り", min_value=0.0, value=float(bubble_ad_water), step=1.0)
                 with bubble_col2:
-                    bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=10.0, step=1.0)
+                    bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=float(bubble_ad_dry), step=1.0)
 
             elif device_category == "シリンジポンプ":
                 st.write("**1. 外観・作動点検**")
                 col1, col2 = st.columns(2)
                 with col1:
-                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e1))
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e2))
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e3))
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e4))
                 with col2:
-                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e5))
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e6))
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e7))
 
                 st.write("**2. 数値・精度チェック**")
                 col_num1, col_num2 = st.columns(2)
                 with col_num1:
                     st.info(f"基準値：{min_flow} ～ {max_flow} {flow_unit}")
-                    flow_acc = st.number_input(f"流量精度 ({flow_unit})", value=float(max_flow + min_flow) / 2, step=0.1)
+                    flow_acc = st.number_input(
+                        f"流量精度 ({flow_unit})",
+                        value=float(flow_acc or (max_flow + min_flow) / 2), step=0.1,
+                    )
                 with col_num2:
                     st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
-                    occ_press = st.number_input(f"閉塞検出 ({press_unit})", value=float(max_press + min_press) / 2, step=1.0)
+                    occ_press = st.number_input(
+                        f"閉塞検出 ({press_unit})",
+                        value=float(occ_press or (max_press + min_press) / 2), step=1.0,
+                    )
 
             elif device_category == "保育器":
                 if is_v2100g_incubator(device_category, device_model):
@@ -6941,24 +7363,24 @@ with tabs[1]:
                     st.write("**2. 各種警報機能**")
                     o3, o4 = st.columns(2)
                     with o3:
-                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("チェックスイッチ")))
+                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("設定温度警報(マニュアル)")))
+                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("設定温度警報(皮膚温)")))
                     with o4:
-                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("プローブ警報")))
+                        inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("停電警報")))
+                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("キャノピ傾斜")))
 
                     st.write("**3. 蘇生装置・酸素・外装**")
                     o5, o6 = st.columns(2)
                     with o5:
-                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("蘇生装置")))
+                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("酸素ブレンダ作動")))
+                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("供給ガス警報")))
                     with o6:
-                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
-                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None)
+                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("吸引・流量計")))
+                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("外装・キャノピ・ネジ類")))
+                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("電源・ジャック・ガード")))
 
             elif device_category == "生体情報モニタ":
                 render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta, device_model)
@@ -6973,8 +7395,13 @@ with tabs[1]:
                 st.info("外部対応のため数値測定はスキップされます。")
 
         st.markdown("---")
-        result = st.radio("総合評価", ["使用可", "メーカー修理", "廃棄"], horizontal=True)
-        memo = st.text_area("備考・報告欄", placeholder="特記事項があれば記入してください")
+        result_options = ["使用可", "メーカー修理", "廃棄"]
+        result_idx = _choice_index(result_options, result) if use_draft_idx and result in result_options else None
+        result = st.radio(
+            "総合評価", result_options, horizontal=True,
+            index=result_idx if result_idx is not None else 0,
+        )
+        memo = st.text_area("備考・報告欄", value=memo, placeholder="特記事項があれば記入してください")
 
         render_inspection_live_preview(
             check_type, check_date, final_me_no, device_model, device_category,
@@ -7068,6 +7495,33 @@ with tabs[1]:
                         if check_type == "院内点検(miratech)" and result != "使用可":
                             st.info("総合評価が「使用可」以外のため、問題項目があっても保存します。")
                     attempt_inspection_save(conn, save_payload)
+
+        draft_payload = {
+            "final_me_no": final_me_no,
+            "final_sn": final_sn,
+            "device_category": device_category,
+            "device_model": device_model,
+            "scan_year_val": scan_year_val,
+            "check_date": check_date,
+            "check_type": check_type,
+            "inspector": inspector,
+            "result": result,
+            "memo": memo,
+            "inc_o_checks": inc_o_checks,
+            "chk_e1": chk_e1, "chk_e2": chk_e2, "chk_e3": chk_e3,
+            "chk_e4": chk_e4, "chk_e5": chk_e5, "chk_e6": chk_e6, "chk_e7": chk_e7,
+            "flow_acc": flow_acc, "occ_press": occ_press,
+            "min_flow": min_flow, "max_flow": max_flow,
+            "min_press": min_press, "max_press": max_press,
+            "flow_unit": flow_unit, "press_unit": press_unit,
+            "bubble_ad_water": bubble_ad_water, "bubble_ad_dry": bubble_ad_dry,
+            "infusion_pump_checks": infusion_pump_checks,
+            "incu_i_checks": incu_i_checks, "incu_i_measurements": incu_i_measurements,
+            "vsm_checks": vsm_checks, "vsm_measurements": vsm_measurements, "vsm_meta": vsm_meta,
+            "ecg_checks": ecg_checks, "ecg_measurements": ecg_measurements,
+            "ox370_checks": ox370_checks, "ox370_measurements": ox370_measurements,
+        }
+        maybe_auto_save_inspection_draft(conn, draft_payload)
 
     render_pending_check_save_recovery(conn)
 
