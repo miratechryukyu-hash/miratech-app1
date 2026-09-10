@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-11a"
+APP_VERSION = "2026-09-11b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -903,6 +903,265 @@ def _validate_v2100g_measurements(measurements, ng_items, v2100g_checks=None):
     for name, val, limit in limits:
         if leakage_ua_int(val) > limit:
             ng_items.append(f"{name}（{leakage_ua_int(val)}μA）")
+
+# レサシフロー 定期点検表（判定記号は INSPECTION_CHECK_OPTIONS 共通）
+RESUSCIFLOW_PART_JUDGMENT_OPTIONS = ["継続使用", "要交換"]
+RESUSCIFLOW_INSPECTION_SUBTYPES = ["定期点検(6ヶ月/1年)", "修理後点検"]
+
+RESUSCIFLOW_APPEARANCE_SPECS = [
+    ("1.1 本体・外観構造", "本体および同梱品に破損、変形、亀裂、ねじ緩みがないこと。固定台に確実に固定されていること。"),
+    ("1.2 ガス接続部", "配管コネクタ・ホースにキズ、変形、劣化、異物侵入がないこと。"),
+    ("1.3 ツマミ・作動部", "本体各部および患者回路の各種ツマミ（PIP、PEEP等）がスムーズに動くこと。"),
+    ("1.4 内圧計ゼロ点", "無加圧時、本体回路内圧計の針が正確に 0 cmH₂O (0 kPa) を指していること。"),
+    ("1.5 銘板・表示類", "注意シール・警告ラベルの剥がれがないこと。取扱説明書・添付文書が所定位置にあること。"),
+]
+RESUSCIFLOW_SIMPLE_FUNCTION_SPECS = [
+    ("2.1 ガス吐出確認", "流量計を開状態にする接続口よりガスが正常に吐出されること"),
+    ("2.2 気密性（リーク）確認", "回路閉塞時、急激な圧力降下がないこと"),
+    ("2.7 PMAX 報知音作動", "PMAX作動時に報知音が明確に鳴ること"),
+]
+RESUSCIFLOW_MEASUREMENT_SPECS = [
+    {
+        "label": "2.3 本体内圧計 指示精度",
+        "key": "本体内圧指示値",
+        "caption": "標準圧力計と同時測定（20 cmH₂O 印加時）。±10%以内（または ±2 cmH₂O）",
+        "input_label": "本体指示値 (cmH₂O)",
+        "min": 18.0, "max": 22.0, "default": 20.0, "step": 0.1,
+        "standard": "18～22 cmH₂O",
+    },
+    {
+        "label": "2.4 PEEP 制御精度",
+        "key": "PEEP測定値",
+        "caption": "流量 5〜10 L/min / 切替孔開放 / PEEPダイヤル設定値 5 cmH₂O",
+        "input_label": "PEEP 測定値 (cmH₂O)",
+        "min": 4.0, "max": 6.0, "default": 5.0, "step": 0.1,
+        "standard": "4～6 cmH₂O",
+    },
+    {
+        "label": "2.5 PIP 制御精度",
+        "key": "PIP測定値",
+        "caption": "流量 5〜10 L/min / 切替孔閉塞 / PIPツマミ設定値 20 cmH₂O",
+        "input_label": "PIP 測定値 (cmH₂O)",
+        "min": 18.0, "max": 22.0, "default": 20.0, "step": 0.1,
+        "standard": "18～22 cmH₂O",
+    },
+    {
+        "label": "2.6 最高気道圧力制限(PMAX)",
+        "key": "PMAX作動圧",
+        "caption": "流量 15 L/min / PIP全閉 / 切替孔閉塞。規定リリーフ圧（40 ± 5 cmH₂O 程度）",
+        "input_label": "PMAX 作動圧 (cmH₂O)",
+        "min": 35.0, "max": 45.0, "default": 40.0, "step": 0.1,
+        "standard": "35～45 cmH₂O",
+    },
+]
+RESUSCIFLOW_PART_SPECS = [
+    {"name": "PIPバルブ", "cycle_years": 3},
+    {"name": "PMAXバルブ", "cycle_years": 3},
+    {"name": "患者回路接続口", "cycle_years": 3},
+    {"name": "回路内圧計", "cycle_years": 5},
+]
+
+def is_resusciflow(device_category, device_model):
+    """レサシフロー（Resusci-Flow）"""
+    if clean_data_str(device_category) == "レサシフロー":
+        return True
+    text = clean_data_str(device_model) + clean_data_str(device_category)
+    compact = text.upper().replace(" ", "").replace("-", "").replace("－", "")
+    return "RESUSCI" in compact or "レサシ" in text
+
+def _resusciflow_all_check_labels():
+    labels = [label for label, _ in RESUSCIFLOW_APPEARANCE_SPECS]
+    labels.extend(label for label, _ in RESUSCIFLOW_SIMPLE_FUNCTION_SPECS)
+    return labels
+
+def default_resusciflow_checks():
+    return {label: "---" for label in _resusciflow_all_check_labels()}
+
+def default_resusciflow_measurements():
+    return {spec["key"]: spec["default"] for spec in RESUSCIFLOW_MEASUREMENT_SPECS}
+
+def default_resusciflow_meta():
+    return {
+        "点検種別": RESUSCIFLOW_INSPECTION_SUBTYPES[0],
+        "標準圧力計S/N": "",
+        "標準圧力計校正期限": "",
+    }
+
+def default_resusciflow_parts():
+    return {
+        spec["name"]: {"前回交換日": None, "判定": "継続使用"}
+        for spec in RESUSCIFLOW_PART_SPECS
+    }
+
+def _ensure_resusciflow_form_state(checks, measurements, meta, parts):
+    for label, val in default_resusciflow_checks().items():
+        checks.setdefault(label, val)
+    for key, val in default_resusciflow_measurements().items():
+        measurements.setdefault(key, val)
+    for key, val in default_resusciflow_meta().items():
+        meta.setdefault(key, val)
+    for name, val in default_resusciflow_parts().items():
+        parts.setdefault(name, dict(val))
+
+def _validate_resusciflow_measurements(measurements, ng_items):
+    for spec in RESUSCIFLOW_MEASUREMENT_SPECS:
+        val = float(measurements.get(spec["key"], spec["default"]))
+        if not (spec["min"] <= val <= spec["max"]):
+            ng_items.append(f"{spec['label']}（{val} cmH₂O）")
+
+def _validate_resusciflow_parts(parts, ng_items):
+    for spec in RESUSCIFLOW_PART_SPECS:
+        part = parts.get(spec["name"], {})
+        if clean_data_str(part.get("判定", "")) == "要交換":
+            ng_items.append(f"{spec['name']}（要交換）")
+
+def render_resusciflow_inspection_fields(checks, measurements, meta, parts):
+    """レサシフロー 定期点検表の入力欄"""
+    _ensure_resusciflow_form_state(checks, measurements, meta, parts)
+    opts = INSPECTION_CHECK_OPTIONS
+    st.caption(INSPECTION_CHECK_LEGEND)
+    st.caption("対象機種: レサシフロー (Resusci-Flow)")
+
+    subtype_opts = RESUSCIFLOW_INSPECTION_SUBTYPES
+    cur_subtype = clean_data_str(meta.get("点検種別", subtype_opts[0])) or subtype_opts[0]
+    subtype_idx = subtype_opts.index(cur_subtype) if cur_subtype in subtype_opts else 0
+    meta["点検種別"] = st.radio(
+        "点検種別", subtype_opts, horizontal=True, index=subtype_idx, key="rf_inspection_subtype",
+    )
+
+    st.write("**使用測定器**")
+    st.caption("標準圧力計")
+    m1, m2 = st.columns(2)
+    with m1:
+        meta["標準圧力計S/N"] = st.text_input(
+            "S/N", value=clean_data_str(meta.get("標準圧力計S/N", "")), key="rf_calibrator_sn",
+        )
+    with m2:
+        meta["標準圧力計校正期限"] = st.text_input(
+            "校正期限 (YYYY/MM)",
+            value=clean_data_str(meta.get("標準圧力計校正期限", "")),
+            placeholder="例: 2027/03",
+            key="rf_calibrator_cal",
+        )
+
+    st.write("**1. 外観・構造点検（ガス接続前）**")
+    c1, c2 = st.columns(2)
+    for idx, (label, caption) in enumerate(RESUSCIFLOW_APPEARANCE_SPECS):
+        with (c1 if idx % 2 == 0 else c2):
+            st.caption(caption)
+            checks[label] = st.radio(
+                label, opts, horizontal=True, index=None, key=f"rf_app_{idx}",
+            )
+
+    st.write("**2. 定量精度・動作機能点検（ガス接続後）**")
+    st.caption("供給圧 0.35〜0.5MPa / 規定流量時")
+    for idx, (label, caption) in enumerate(RESUSCIFLOW_SIMPLE_FUNCTION_SPECS):
+        st.caption(caption)
+        checks[label] = st.radio(
+            label, opts, horizontal=True, index=None, key=f"rf_func_{idx}",
+        )
+
+    for idx, spec in enumerate(RESUSCIFLOW_MEASUREMENT_SPECS):
+        st.markdown(f"**{spec['label']}**")
+        st.caption(spec["caption"])
+        st.caption(f"管理基準値: {spec['standard']}")
+        measurements[spec["key"]] = st.number_input(
+            spec["input_label"],
+            value=float(measurements.get(spec["key"], spec["default"])),
+            step=spec["step"],
+            key=f"rf_meas_{idx}",
+        )
+
+    st.write("**3. 定期交換部品・パーツ管理状況**")
+    for idx, spec in enumerate(RESUSCIFLOW_PART_SPECS):
+        part = parts.setdefault(spec["name"], {"前回交換日": None, "判定": "継続使用"})
+        st.markdown(f"**{spec['name']}**（推奨交換周期: {spec['cycle_years']}年）")
+        p1, p2 = st.columns(2)
+        with p1:
+            prev_date = part.get("前回交換日")
+            if prev_date and not isinstance(prev_date, date):
+                prev_date = _parse_history_date_value(prev_date)
+            part["前回交換日"] = st.date_input(
+                "前回交換年月日",
+                value=prev_date or date.today(),
+                key=f"rf_part_date_{idx}",
+            )
+        with p2:
+            cur_j = clean_data_str(part.get("判定", "継続使用")) or "継続使用"
+            jopts = RESUSCIFLOW_PART_JUDGMENT_OPTIONS
+            part["判定"] = st.radio(
+                "判定",
+                jopts,
+                horizontal=True,
+                index=jopts.index(cur_j) if cur_j in jopts else 0,
+                key=f"rf_part_judge_{idx}",
+            )
+
+def build_resusciflow_report_sections(checks, measurements, meta, parts):
+    c = checks or default_resusciflow_checks()
+    m = measurements or default_resusciflow_measurements()
+    meta = meta or default_resusciflow_meta()
+    parts = parts or default_resusciflow_parts()
+    calibrator = clean_data_str(meta.get("標準圧力計S/N", ""))
+    cal_exp = clean_data_str(meta.get("標準圧力計校正期限", ""))
+    cal_note = f"S/N: {calibrator or '—'}"
+    if cal_exp:
+        cal_note += f" / 校正期限: {cal_exp}"
+    return {
+        "form": "resusciflow",
+        "title": "レサシフロー 定期点検表",
+        "sections": [
+            {
+                "title": "点検情報",
+                "kind": "check",
+                "items": [
+                    {"name": "点検種別", "result": clean_data_str(meta.get("点検種別", "")), "judge": "-"},
+                    {"name": "使用測定器（標準圧力計）", "result": cal_note, "judge": "-"},
+                ],
+            },
+            {
+                "title": "1. 外観・構造点検（ガス接続前）",
+                "kind": "check",
+                "items": [
+                    _check_item(label, c.get(label, "---"))
+                    for label, _ in RESUSCIFLOW_APPEARANCE_SPECS
+                ],
+            },
+            {
+                "title": "2. 定量精度・動作機能点検（ガス接続後）",
+                "kind": "mixed",
+                "items": [
+                    _check_item(label, c.get(label, "---"))
+                    for label, _ in RESUSCIFLOW_SIMPLE_FUNCTION_SPECS
+                ] + [
+                    _measured_item(
+                        spec["label"],
+                        spec["caption"],
+                        spec["standard"],
+                        f"{float(m.get(spec['key'], spec['default'])):.1f} cmH₂O",
+                        measure_judge(
+                            spec["min"] <= float(m.get(spec["key"], spec["default"])) <= spec["max"]
+                        ),
+                    )
+                    for spec in RESUSCIFLOW_MEASUREMENT_SPECS
+                ],
+            },
+            {
+                "title": "3. 定期交換部品・パーツ管理状況",
+                "kind": "mixed",
+                "items": [
+                    _measured_item(
+                        spec["name"],
+                        f"推奨交換周期 {spec['cycle_years']}年",
+                        "前回交換年月日",
+                        str((parts.get(spec["name"], {}) or {}).get("前回交換日", "") or "—"),
+                        clean_data_str((parts.get(spec["name"], {}) or {}).get("判定", "")) or "—",
+                    )
+                    for spec in RESUSCIFLOW_PART_SPECS
+                ],
+            },
+        ],
+    }
 
 # ベッドサイドモニタ（生体情報モニタ）定期点検表
 VSM_APPEARANCE_ITEMS = [
@@ -2461,7 +2720,11 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      ecg_checks=None,
                                      ecg_measurements=None,
                                      ox370_checks=None,
-                                     ox370_measurements=None):
+                                     ox370_measurements=None,
+                                     resusciflow_checks=None,
+                                     resusciflow_measurements=None,
+                                     resusciflow_meta=None,
+                                     resusciflow_parts=None):
     if check_type != "院内点検(miratech)":
         return None
     if device_category == "輸液ポンプ":
@@ -2512,6 +2775,13 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
         return build_ox370_report_sections(
             ox370_checks or default_ox370_checks(),
             ox370_measurements or default_ox370_measurements(),
+        )
+    if is_resusciflow(device_category, device_model):
+        return build_resusciflow_report_sections(
+            resusciflow_checks or default_resusciflow_checks(),
+            resusciflow_measurements or default_resusciflow_measurements(),
+            resusciflow_meta or default_resusciflow_meta(),
+            resusciflow_parts or default_resusciflow_parts(),
         )
     return None
 
@@ -3067,7 +3337,9 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
                                    incu_i_checks=None, incu_i_measurements=None,
                                    vsm_checks=None, vsm_measurements=None, vsm_meta=None,
                                    ecg_checks=None, ecg_measurements=None,
-                                   ox370_checks=None, ox370_measurements=None):
+                                   ox370_checks=None, ox370_measurements=None,
+                                   resusciflow_checks=None, resusciflow_measurements=None,
+                                   resusciflow_meta=None, resusciflow_parts=None):
     """入力中の点検内容を結果表としてプレビュー表示"""
     if not final_me_no:
         return
@@ -3089,6 +3361,10 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
         ecg_measurements=ecg_measurements,
         ox370_checks=ox370_checks,
         ox370_measurements=ox370_measurements,
+        resusciflow_checks=resusciflow_checks,
+        resusciflow_measurements=resusciflow_measurements,
+        resusciflow_meta=resusciflow_meta,
+        resusciflow_parts=resusciflow_parts,
     )
     st.markdown("---")
     st.subheader("点検結果表（プレビュー）")
@@ -4105,7 +4381,11 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                                  ecg_checks=None,
                                  ecg_measurements=None,
                                  ox370_checks=None,
-                                 ox370_measurements=None):
+                                 ox370_measurements=None,
+                                 resusciflow_checks=None,
+                                 resusciflow_measurements=None,
+                                 resusciflow_meta=None,
+                                 resusciflow_parts=None):
     """点検項目のNG・未入力を検出する。戻り値: (ng_items, incomplete_items)"""
     ng_items = []
     incomplete_items = []
@@ -4186,6 +4466,20 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
         if result == "使用可":
             _validate_ox370_measurements(
                 ox370_measurements or default_ox370_measurements(), ng_items,
+            )
+
+    elif is_resusciflow(device_category, device_model):
+        applicable_checks = {
+            label: (resusciflow_checks or {}).get(label, "")
+            for label in _resusciflow_all_check_labels()
+        }
+        _validate_check_dict(applicable_checks, ng_items, incomplete_items)
+        if result == "使用可":
+            _validate_resusciflow_measurements(
+                resusciflow_measurements or default_resusciflow_measurements(), ng_items,
+            )
+            _validate_resusciflow_parts(
+                resusciflow_parts or default_resusciflow_parts(), ng_items,
             )
 
     return ng_items, incomplete_items
@@ -4277,7 +4571,11 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  ecg_checks=None,
                                  ecg_measurements=None,
                                  ox370_checks=None,
-                                 ox370_measurements=None):
+                                 ox370_measurements=None,
+                                 resusciflow_checks=None,
+                                 resusciflow_measurements=None,
+                                 resusciflow_meta=None,
+                                 resusciflow_parts=None):
     """保存・印刷用に詳細データ・項目行・セクション構成をまとめて生成"""
     report_sections = build_inspection_report_sections(
         check_type, device_category, inc_o_checks,
@@ -4297,6 +4595,10 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         ecg_measurements=ecg_measurements,
         ox370_checks=ox370_checks,
         ox370_measurements=ox370_measurements,
+        resusciflow_checks=resusciflow_checks,
+        resusciflow_measurements=resusciflow_measurements,
+        resusciflow_meta=resusciflow_meta,
+        resusciflow_parts=resusciflow_parts,
     )
     item_rows = flatten_report_sections(report_sections) if report_sections else build_inspection_item_rows(
         check_type, device_category, result, inc_o_checks,
@@ -4429,7 +4731,16 @@ def _serialize_inspection_draft(payload):
         if isinstance(val, date):
             out[key] = val.isoformat()
         elif isinstance(val, dict):
-            out[key] = {str(k): v for k, v in val.items()}
+            if key == "resusciflow_parts":
+                serialized_parts = {}
+                for pname, part in val.items():
+                    p = dict(part) if isinstance(part, dict) else part
+                    if isinstance(p, dict) and isinstance(p.get("前回交換日"), date):
+                        p = {**p, "前回交換日": p["前回交換日"].isoformat()}
+                    serialized_parts[str(pname)] = p
+                out[key] = serialized_parts
+            else:
+                out[key] = {str(k): v for k, v in val.items()}
         else:
             out[key] = val
     return out
@@ -4444,7 +4755,8 @@ def _deserialize_inspection_draft(raw_json):
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
         "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
-        "infusion_pump_checks",
+        "infusion_pump_checks", "resusciflow_checks", "resusciflow_measurements",
+        "resusciflow_meta", "resusciflow_parts",
     ):
         if dict_key in data and isinstance(data[dict_key], dict):
             restored = {}
@@ -4477,11 +4789,15 @@ def inspection_draft_has_content(payload):
             return True
     for dict_key in (
         "inc_o_checks", "incu_i_checks", "vsm_checks", "infusion_pump_checks",
-        "ecg_checks", "ox370_checks",
+        "ecg_checks", "ox370_checks", "resusciflow_checks",
     ):
         for v in (payload.get(dict_key) or {}).values():
             if v not in (None, "", "--", "---"):
                 return True
+    rf_parts = payload.get("resusciflow_parts") or {}
+    for part in rf_parts.values():
+        if isinstance(part, dict) and clean_data_str(part.get("判定", "")) == "要交換":
+            return True
     for dict_key in ("incu_i_measurements", "vsm_measurements", "ecg_measurements", "ox370_measurements"):
         m = payload.get(dict_key) or {}
         defaults = {
@@ -4650,10 +4966,21 @@ def apply_inspection_draft_to_state(draft):
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
         "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
-        "infusion_pump_checks",
+        "infusion_pump_checks", "resusciflow_checks", "resusciflow_measurements",
+        "resusciflow_meta", "resusciflow_parts",
     ):
         if dict_key in draft and isinstance(draft[dict_key], dict):
             out[dict_key] = dict(draft[dict_key])
+    if draft.get("resusciflow_parts") and isinstance(draft["resusciflow_parts"], dict):
+        restored_parts = {}
+        for name, part in draft["resusciflow_parts"].items():
+            if not isinstance(part, dict):
+                continue
+            restored = dict(part)
+            if restored.get("前回交換日"):
+                restored["前回交換日"] = _parse_history_date_value(restored["前回交換日"])
+            restored_parts[name] = restored
+        out["resusciflow_parts"] = restored_parts
     return out
 
 def _choice_index(options, value):
@@ -4749,6 +5076,19 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
         ):
             for idx, label in enumerate(items):
                 _set_radio_session_key(f"{prefix}_{idx}", ox.get(label))
+    elif is_resusciflow(device_category, device_model):
+        rf = draft.get("resusciflow_checks") or {}
+        for idx, (label, _) in enumerate(RESUSCIFLOW_APPEARANCE_SPECS):
+            _set_radio_session_key(f"rf_app_{idx}", rf.get(label))
+        for idx, (label, _) in enumerate(RESUSCIFLOW_SIMPLE_FUNCTION_SPECS):
+            _set_radio_session_key(f"rf_func_{idx}", rf.get(label))
+        meta = draft.get("resusciflow_meta") or {}
+        if meta.get("点検種別") in RESUSCIFLOW_INSPECTION_SUBTYPES:
+            st.session_state["rf_inspection_subtype"] = meta["点検種別"]
+        if meta.get("標準圧力計S/N") is not None:
+            st.session_state["rf_calibrator_sn"] = meta.get("標準圧力計S/N", "")
+        if meta.get("標準圧力計校正期限") is not None:
+            st.session_state["rf_calibrator_cal"] = meta.get("標準圧力計校正期限", "")
 
 def attempt_inspection_save(conn, save_payload):
     """点検をスプレッドシートへ保存。失敗しても payload を保持"""
@@ -6907,6 +7247,10 @@ with tabs[1]:
     ecg_measurements = default_ecg_measurements()
     ox370_checks = default_ox370_checks()
     ox370_measurements = default_ox370_measurements()
+    resusciflow_checks = default_resusciflow_checks()
+    resusciflow_measurements = default_resusciflow_measurements()
+    resusciflow_meta = default_resusciflow_meta()
+    resusciflow_parts = default_resusciflow_parts()
     flow_acc = 0.0
     occ_press = 0.0
     bubble_ad_water = 100.0
@@ -7054,6 +7398,10 @@ with tabs[1]:
             ecg_measurements = {**default_ecg_measurements(), **applied_draft.get("ecg_measurements", {})}
             ox370_checks = {**default_ox370_checks(), **applied_draft.get("ox370_checks", {})}
             ox370_measurements = {**default_ox370_measurements(), **applied_draft.get("ox370_measurements", {})}
+            resusciflow_checks = {**default_resusciflow_checks(), **applied_draft.get("resusciflow_checks", {})}
+            resusciflow_measurements = {**default_resusciflow_measurements(), **applied_draft.get("resusciflow_measurements", {})}
+            resusciflow_meta = {**default_resusciflow_meta(), **applied_draft.get("resusciflow_meta", {})}
+            resusciflow_parts = {**default_resusciflow_parts(), **applied_draft.get("resusciflow_parts", {})}
             infusion_pump_checks = {**default_infusion_pump_checks(), **applied_draft.get("infusion_pump_checks", {})}
             if applied_draft.get("check_date"):
                 st.session_state["last_check_date"] = applied_draft["check_date"]
@@ -7204,6 +7552,11 @@ with tabs[1]:
             elif is_ox370_blender(device_category, device_model):
                 render_ox370_inspection_fields(ox370_checks, ox370_measurements)
 
+            elif is_resusciflow(device_category, device_model):
+                render_resusciflow_inspection_fields(
+                    resusciflow_checks, resusciflow_measurements, resusciflow_meta, resusciflow_parts,
+                )
+
             else:
                 st.info("外部対応のため数値測定はスキップされます。")
 
@@ -7228,6 +7581,10 @@ with tabs[1]:
             vsm_checks=vsm_checks, vsm_measurements=vsm_measurements, vsm_meta=vsm_meta,
             ecg_checks=ecg_checks, ecg_measurements=ecg_measurements,
             ox370_checks=ox370_checks, ox370_measurements=ox370_measurements,
+            resusciflow_checks=resusciflow_checks,
+            resusciflow_measurements=resusciflow_measurements,
+            resusciflow_meta=resusciflow_meta,
+            resusciflow_parts=resusciflow_parts,
         )
         submitted = st.button("保存・決定", type="primary", use_container_width=True, key="check_save_btn")
 
@@ -7255,6 +7612,10 @@ with tabs[1]:
                     ecg_measurements=ecg_measurements,
                     ox370_checks=ox370_checks,
                     ox370_measurements=ox370_measurements,
+                    resusciflow_checks=resusciflow_checks,
+                    resusciflow_measurements=resusciflow_measurements,
+                    resusciflow_meta=resusciflow_meta,
+                    resusciflow_parts=resusciflow_parts,
                 )
                 detail_text, item_rows, report_sections = build_inspection_save_bundle(
                     check_type, device_category, result, inc_o_checks,
@@ -7274,6 +7635,10 @@ with tabs[1]:
                     ecg_measurements=ecg_measurements,
                     ox370_checks=ox370_checks,
                     ox370_measurements=ox370_measurements,
+                    resusciflow_checks=resusciflow_checks,
+                    resusciflow_measurements=resusciflow_measurements,
+                    resusciflow_meta=resusciflow_meta,
+                    resusciflow_parts=resusciflow_parts,
                 )
                 save_payload = {
                     "final_me_no": final_me_no,
@@ -7297,16 +7662,9 @@ with tabs[1]:
                     st.error(f"未選択の項目があります。{INSPECTION_CHECK_LEGEND.replace('判定: ', '')} のいずれかを選択してください。")
                     st.warning("未設定の項目: " + "、".join(incomplete_items))
                     store_pending_check_save(save_payload, reason="incomplete")
-                elif ng_items and check_type == "院内点検(miratech)" and result == "使用可":
-                    st.error("不合格(×)・修理検討(△)または基準外の測定値があります。")
-                    st.warning("該当項目: " + "、".join(ng_items))
-                    store_pending_check_save(save_payload, reason="validation")
-                    st.error("総合評価が「使用可」のため保存できません。数値・項目を修正するか、総合評価を【メーカー修理】等に変更してください。")
                 else:
                     if ng_items:
                         st.warning("問題項目: " + "、".join(ng_items))
-                        if check_type == "院内点検(miratech)" and result != "使用可":
-                            st.info("総合評価が「使用可」以外のため、問題項目があっても保存します。")
                     attempt_inspection_save(conn, save_payload)
 
         draft_payload = {
@@ -7333,6 +7691,10 @@ with tabs[1]:
             "vsm_checks": vsm_checks, "vsm_measurements": vsm_measurements, "vsm_meta": vsm_meta,
             "ecg_checks": ecg_checks, "ecg_measurements": ecg_measurements,
             "ox370_checks": ox370_checks, "ox370_measurements": ox370_measurements,
+            "resusciflow_checks": resusciflow_checks,
+            "resusciflow_measurements": resusciflow_measurements,
+            "resusciflow_meta": resusciflow_meta,
+            "resusciflow_parts": resusciflow_parts,
         }
         maybe_auto_save_inspection_draft(conn, draft_payload)
 
