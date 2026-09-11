@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-11b"
+APP_VERSION = "2026-09-11c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -6015,6 +6015,48 @@ def enrich_master_with_elapsed_years(df, reference_date=None):
         cols.append("経過年数")
     return enriched[cols]
 
+def format_master_device_list_df(df):
+    """機器マスター一覧表示用に主要列を整形"""
+    if df is None or df.empty:
+        return df
+    enriched = enrich_master_with_elapsed_years(df)
+    preferred = [
+        "管理番号", "カテゴリ", "機種", "シリアルNo", "旧番号", "設置場所",
+        "納入日", "経過年数", "最終点検日", "最終判定", "最終実施者",
+    ]
+    cols = [c for c in preferred if c in enriched.columns]
+    if not cols:
+        return enriched
+    extra = [c for c in enriched.columns if c not in cols]
+    return enriched[cols + extra]
+
+def render_master_category_device_list(df_master):
+    """カテゴリー選択で機器マスター一覧を表示"""
+    if df_master is None or df_master.empty or "カテゴリ" not in df_master.columns:
+        return
+    categories = sorted({
+        clean_data_str(c) for c in df_master["カテゴリ"] if clean_data_str(c)
+    })
+    if not categories:
+        return
+    st.markdown("#### カテゴリー別 機器一覧")
+    st.caption("調べたい機器がある場合、カテゴリーを選んで一覧から確認できます。")
+    selected_cat = st.selectbox(
+        "カテゴリーを選択",
+        ["（選択してください）"] + categories,
+        key="master_cat_device_filter",
+    )
+    if selected_cat == "（選択してください）":
+        return
+    mask = clean_series(df_master["カテゴリ"]) == selected_cat
+    filtered = df_master[mask].copy()
+    st.markdown(f"**{selected_cat}** — **{len(filtered)} 台**")
+    display_dataframe(
+        format_master_device_list_df(filtered),
+        hide_index=True,
+        use_container_width=True,
+    )
+
 def list_daily_inspection_devices(df_master):
     if df_master is None or df_master.empty or "カテゴリ" not in df_master.columns:
         return []
@@ -7724,6 +7766,8 @@ with tabs[2]:
                     st.dataframe(_sanitize_dataframe(cat_counts), hide_index=True, use_container_width=True)
                 with col_stat2:
                     st.bar_chart(cat_counts, x="機器カテゴリー", y="保有台数（台）", color="#ff9f43")
+                st.markdown("---")
+                render_master_category_device_list(df_m_stats)
                 st.markdown("---")
                 
         except Exception as e:
