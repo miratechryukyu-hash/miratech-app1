@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-11c"
+APP_VERSION = "2026-09-15b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2556,6 +2556,53 @@ def save_device_image_url(conn, target_me, image_ref):
         raise ValueError(f"管理番号「{target_me}」が機器マスターに見つかりません。")
     df_master.loc[mask, DEVICE_IMAGE_COLUMN] = clean_data_str(image_ref)
     conn.update(worksheet="機器マスター", data=df_master)
+
+def render_device_image_upload_section(conn, target_me, df_master=None, *, context_key="master", model_name=""):
+    """報告書用の参考写真を1枚だけ表示し、必要なときだけ差し替えアップロードを出す"""
+    target_me = clean_data_str(target_me)
+    if not target_me:
+        return
+
+    if df_master is None:
+        df_master = safe_read_worksheet(conn, "機器マスター")
+
+    flash_key = f"device_image_flash_{context_key}_{target_me}"
+    if st.session_state.pop(flash_key, None):
+        st.success("参考写真を保存しました。報告書に表示されます。")
+
+    live_url = lookup_device_image_url(df_master, target_me)
+    if live_url:
+        render_device_image_block(live_url, target_me, model_name)
+        replace_image = st.checkbox(
+            "参考写真を差し替える",
+            key=f"replace_device_image_{context_key}_{target_me}",
+        )
+        if not replace_image:
+            return
+
+    nonce = st.session_state.get(f"device_image_nonce_{context_key}_{target_me}", 0)
+    uploaded_device_image = st.file_uploader(
+        "機器の参考写真をアップロード",
+        type=["jpg", "jpeg", "png", "webp"],
+        key=f"device_image_upload_{context_key}_{target_me}_{nonce}",
+    )
+    if uploaded_device_image is None:
+        return
+
+    if st.button(
+        "参考写真を保存して報告書に使う",
+        key=f"save_device_image_{context_key}_{target_me}_{nonce}",
+    ):
+        try:
+            image_ref = upload_device_image_to_drive(uploaded_device_image, target_me)
+            save_device_image_url(conn, target_me, image_ref)
+            st.session_state[flash_key] = True
+            st.session_state[f"device_image_nonce_{context_key}_{target_me}"] = nonce + 1
+            st.session_state[f"replace_device_image_{context_key}_{target_me}"] = False
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"画像保存エラー: {e}")
 
 def lookup_device_for_sticker(df_master, me_no):
     row, match_type = find_device_row(df_master, me_no)
@@ -8139,31 +8186,16 @@ with tabs[2]:
                             st.success(f"{clean_edit_me_no} のデータを最新に修正し、過去の履歴にも完全に同期しました！")
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{clean_edit_me_no} のデータを修正・同期")
 
-                    current_image_url = clean_data_str(target_row.get(DEVICE_IMAGE_COLUMN, ""))
-                    if current_image_url:
-                        st.markdown("**登録済みの参考画像**")
-                        render_device_image_block(current_image_url, clean_edit_me_no, normalize_stored_model(
+                    st.markdown("**報告書用の参考写真**")
+                    render_device_image_upload_section(
+                        conn,
+                        clean_edit_me_no,
+                        df_master_edit,
+                        context_key="master",
+                        model_name=normalize_stored_model(
                             target_row.get("カテゴリ", ""), target_row.get("機種", ""),
-                        ))
-
-                    uploaded_device_image = st.file_uploader(
-                        "機器の参考写真をアップロード",
-                        type=["jpg", "jpeg", "png", "webp"],
-                        key=f"master_device_image_{clean_edit_me_no}",
+                        ),
                     )
-                    if uploaded_device_image is not None:
-                        if st.button(
-                            "参考写真を保存して報告書に使う",
-                            key=f"save_master_device_image_{clean_edit_me_no}",
-                        ):
-                            try:
-                                image_ref = upload_device_image_to_drive(uploaded_device_image, clean_edit_me_no)
-                                save_device_image_url(conn, clean_edit_me_no, image_ref)
-                                st.success("機器画像を保存しました。報告書に表示されます。")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"画像保存エラー: {e}")
                 else:
                     st.warning("指定された管理番号・旧番号は登録されていません。")
             except Exception as e:
@@ -8510,22 +8542,12 @@ with tabs[5]:
         )
         st.markdown("#### 報告書用の参考写真（任意）")
         st.caption("修理・点検完了報告書に載せる機器の写真を登録できます。")
-        reg_device_image = st.file_uploader(
-            "機器の参考写真",
-            type=["jpg", "jpeg", "png", "webp"],
-            key=f"reg_device_image_{s['me_no']}",
+        render_device_image_upload_section(
+            conn,
+            s["me_no"],
+            context_key="reg",
+            model_name=s.get("model_name", ""),
         )
-        if reg_device_image is not None and st.button(
-            "参考写真を保存",
-            key=f"save_reg_device_image_{s['me_no']}",
-        ):
-            try:
-                image_ref = upload_device_image_to_drive(reg_device_image, s["me_no"])
-                save_device_image_url(conn, s["me_no"], image_ref)
-                st.success("参考写真を保存しました。報告書に表示されます。")
-                st.cache_data.clear()
-            except Exception as e:
-                st.error(f"画像保存エラー: {e}")
         if st.button("シール表示を閉じる", key="close_reg_sticker"):
             st.session_state.pop("last_registered_sticker", None)
             st.rerun()
