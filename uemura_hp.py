@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-17d"
+APP_VERSION = "2026-09-17e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3960,7 +3960,7 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     conn.update(worksheet="点検履歴", data=_sanitize_dataframe(updated_history))
 
 # ==========================================
-# LINE通知（故障報告・修理依頼）
+# LINE通知（故障報告）
 # secrets.toml 例:
 # [line]
 # enabled = true
@@ -4020,31 +4020,9 @@ def build_fault_report_line_message(report_date, occur_date, me_no, model_name, 
         f"管理画面: {APP_URL}",
     ])
 
-def build_inspection_repair_line_message(me_no, model_name, category, check_date, inspector, check_type, result, memo=""):
-    lines = [
-        "【医療機器 修理依頼（点検結果）】",
-        f"管理番号: {me_no}",
-        f"機種: {model_name or '不明'}",
-        f"カテゴリ: {category}",
-        f"点検日: {check_date}",
-        f"実施者: {inspector}",
-        f"点検区分: {check_type}",
-        f"総合評価: {result}",
-    ]
-    if clean_data_str(memo):
-        lines.append(f"備考: {memo}")
-    lines.extend(["", f"管理画面: {APP_URL}"])
-    return "\n".join(lines)
-
 def notify_fault_report_line(report_date, occur_date, me_no, model_name, reporter, dept, symptom):
     msg = build_fault_report_line_message(
         report_date, occur_date, me_no, model_name, reporter, dept, symptom,
-    )
-    return send_line_text_message(msg)
-
-def notify_inspection_repair_line(me_no, model_name, category, check_date, inspector, check_type, result, memo=""):
-    msg = build_inspection_repair_line_message(
-        me_no, model_name, category, check_date, inspector, check_type, result, memo,
     )
     return send_line_text_message(msg)
 
@@ -4809,21 +4787,6 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
         scan_year_val, check_date, check_type, inspector, result,
         memo, detail_text, item_rows=item_rows, report_sections=report_sections,
     )
-    if result == "メーカー修理":
-        line_ok, line_err = notify_inspection_repair_line(
-            final_me_no,
-            model_for_spreadsheet(device_model),
-            device_category,
-            check_date,
-            inspector,
-            check_type,
-            result,
-            memo,
-        )
-        if line_ok:
-            write_log("LINE", f"修理依頼通知送信: {final_me_no}")
-        else:
-            write_log("LINE", f"修理依頼通知未送信: {line_err}")
     write_log(inspector, f"{final_me_no} の点検を登録")
     st.session_state["last_check_date"] = check_date
     st.session_state["check_registered_msg"] = f"{final_me_no} の点検データを登録しました。"
