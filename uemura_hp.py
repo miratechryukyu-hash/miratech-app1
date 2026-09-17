@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-17c"
+APP_VERSION = "2026-09-17d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -89,11 +89,16 @@ INCU_I_CHECK_OPTIONS = INSPECTION_CHECK_OPTIONS
 
 def render_all_ok_button(session_keys, key, label="この区分をすべて〇にする"):
     """チェック項目をまとめて 〇 にする"""
+    pending_key = f"{key}__pending"
+    if st.session_state.pop(pending_key, False):
+        for sk in session_keys:
+            st.session_state[sk] = "〇"
     if not session_keys:
         return
     if st.button(label, key=key):
         for sk in session_keys:
             st.session_state[sk] = "〇"
+        st.session_state[pending_key] = True
         st.rerun()
 
 def normalize_check_symbol(val):
@@ -7667,9 +7672,6 @@ with tabs[1]:
             if device_category == "輸液ポンプ":
                 st.write("**1. 外観・作動点検**")
                 app_keys = [f"inp_app_{idx}" for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS))]
-                if use_draft_idx:
-                    for key, val in zip(app_keys, [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]):
-                        _set_radio_session_key(key, val)
                 render_all_ok_button(app_keys, "inp_app_all_ok", "外観・作動点検をすべて〇にする")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -7746,9 +7748,6 @@ with tabs[1]:
             elif device_category == "シリンジポンプ":
                 st.write("**1. 外観・作動点検**")
                 app_keys = [f"inp_app_{idx}" for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS))]
-                if use_draft_idx:
-                    for key, val in zip(app_keys, [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]):
-                        _set_radio_session_key(key, val)
                 render_all_ok_button(app_keys, "syr_app_all_ok", "外観・作動点検をすべて〇にする")
                 col1, col2 = st.columns(2)
                 with col1:
