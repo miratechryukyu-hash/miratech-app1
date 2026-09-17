@@ -80,12 +80,21 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-15b"
+APP_VERSION = "2026-09-17b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
 INSPECTION_CHECK_LEGEND = "判定: 〇=良好 / △=修理検討 / ×=不合格 / ---=機能なし"
 INCU_I_CHECK_OPTIONS = INSPECTION_CHECK_OPTIONS
+
+def render_all_ok_button(session_keys, key, label="この区分をすべて〇にする"):
+    """チェック項目をまとめて 〇 にする"""
+    if not session_keys:
+        return
+    if st.button(label, key=key):
+        for sk in session_keys:
+            st.session_state[sk] = "〇"
+        st.rerun()
 
 def normalize_check_symbol(val):
     v = clean_data_str(val)
@@ -352,19 +361,23 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     st.caption(INSPECTION_CHECK_LEGEND)
 
     st.write("**1. 外観点検**")
+    app_keys = [f"incu_i_app_{idx}" for idx in range(len(INCU_I_APPEARANCE_ITEMS))]
+    render_all_ok_button(app_keys, "incu_i_app_all_ok", "外観点検をすべて〇にする")
     c1, c2 = st.columns(2)
     for idx, label in enumerate(INCU_I_APPEARANCE_ITEMS):
         with (c1 if idx % 2 == 0 else c2):
             incu_i_checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"incu_i_app_{idx}",
+                label, opts, horizontal=True, index=None, key=app_keys[idx],
             )
 
     st.write("**2. 機能点検**")
+    func_keys = [f"incu_i_func_{idx}" for idx in range(len(INCU_I_FUNCTION_ITEMS))]
+    render_all_ok_button(func_keys, "incu_i_func_all_ok", "機能点検をすべて〇にする")
     c1, c2 = st.columns(2)
     for idx, label in enumerate(INCU_I_FUNCTION_ITEMS):
         with (c1 if idx % 2 == 0 else c2):
             incu_i_checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"incu_i_func_{idx}",
+                label, opts, horizontal=True, index=None, key=func_keys[idx],
             )
 
     st.write("**体重モニタテスト**")
@@ -460,11 +473,13 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
     )
 
     st.write("**4. 警報**")
+    alarm_keys = [f"incu_i_alarm_{idx}" for idx in range(len(INCU_I_ALARM_ITEMS))]
+    render_all_ok_button(alarm_keys, "incu_i_alarm_all_ok", "警報点検をすべて〇にする")
     c1, c2 = st.columns(2)
     for idx, label in enumerate(INCU_I_ALARM_ITEMS):
         with (c1 if idx % 2 == 0 else c2):
             incu_i_checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"incu_i_alarm_{idx}",
+                label, opts, horizontal=True, index=None, key=alarm_keys[idx],
             )
 
     st.write("**5. 電気的安全性**")
@@ -715,19 +730,23 @@ def render_v2100g_inspection_fields(v2100g_checks, v2100g_measurements):
     st.caption("対象機種: V-2100G")
 
     st.write("**1. 外観点検**")
+    v2100g_app_keys = [f"v2100g_app_{idx}" for idx in range(len(V2100G_APPEARANCE_ITEMS))]
+    render_all_ok_button(v2100g_app_keys, "v2100g_app_all_ok", "外観点検をすべて〇にする")
     c1, c2 = st.columns(2)
     for idx, label in enumerate(V2100G_APPEARANCE_ITEMS):
         with (c1 if idx % 2 == 0 else c2):
             v2100g_checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"v2100g_app_{idx}",
+                label, opts, horizontal=True, index=None, key=v2100g_app_keys[idx],
             )
 
     st.write("**2. 作動点検**")
+    v2100g_op_keys = [f"v2100g_op_{idx}" for idx in range(len(V2100G_OPERATION_ITEMS))]
+    render_all_ok_button(v2100g_op_keys, "v2100g_op_all_ok", "作動点検をすべて〇にする")
     c3, c4 = st.columns(2)
     for idx, label in enumerate(V2100G_OPERATION_ITEMS):
         with (c3 if idx % 2 == 0 else c4):
             v2100g_checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"v2100g_op_{idx}",
+                label, opts, horizontal=True, index=None, key=v2100g_op_keys[idx],
             )
 
     _render_incu_i_optional_test_block(
@@ -1068,20 +1087,24 @@ def render_resusciflow_inspection_fields(checks, measurements, meta, parts):
         )
 
     st.write("**1. 外観・構造点検（ガス接続前）**")
+    rf_app_keys = [f"rf_app_{idx}" for idx in range(len(RESUSCIFLOW_APPEARANCE_SPECS))]
+    render_all_ok_button(rf_app_keys, "rf_app_all_ok", "外観・構造点検をすべて〇にする")
     c1, c2 = st.columns(2)
     for idx, (label, caption) in enumerate(RESUSCIFLOW_APPEARANCE_SPECS):
         with (c1 if idx % 2 == 0 else c2):
             st.caption(caption)
             checks[label] = st.radio(
-                label, opts, horizontal=True, index=None, key=f"rf_app_{idx}",
+                label, opts, horizontal=True, index=None, key=rf_app_keys[idx],
             )
 
     st.write("**2. 定量精度・動作機能点検（ガス接続後）**")
     st.caption("供給圧 0.35〜0.5MPa / 規定流量時")
+    rf_func_keys = [f"rf_func_{idx}" for idx in range(len(RESUSCIFLOW_SIMPLE_FUNCTION_SPECS))]
+    render_all_ok_button(rf_func_keys, "rf_func_all_ok", "動作機能点検をすべて〇にする")
     for idx, (label, caption) in enumerate(RESUSCIFLOW_SIMPLE_FUNCTION_SPECS):
         st.caption(caption)
         checks[label] = st.radio(
-            label, opts, horizontal=True, index=None, key=f"rf_func_{idx}",
+            label, opts, horizontal=True, index=None, key=rf_func_keys[idx],
         )
 
     for idx, spec in enumerate(RESUSCIFLOW_MEASUREMENT_SPECS):
@@ -1290,14 +1313,16 @@ def default_vsm_measurements():
 def default_vsm_meta():
     return {"設置病棟": "", "チャンネル番号": ""}
 
-def _render_inspection_check_grid(items, checks, key_prefix):
+def _render_inspection_check_grid(items, checks, key_prefix, all_ok_label="この区分をすべて〇にする"):
     opts = INSPECTION_CHECK_OPTIONS
+    keys = [f"{key_prefix}_{idx}" for idx in range(len(items))]
+    render_all_ok_button(keys, f"{key_prefix}_all_ok", all_ok_label)
     c1, c2 = st.columns(2)
     for idx, label in enumerate(items):
         with (c1 if idx % 2 == 0 else c2):
             checks[label] = st.radio(
                 label, opts, horizontal=True, index=None,
-                key=f"{key_prefix}_{idx}",
+                key=keys[idx],
             )
 
 def _validate_leakage_currents(measurements, ng_items):
@@ -1911,14 +1936,63 @@ def _validate_spreadsheet_id(spreadsheet_id):
 class SheetReadError(Exception):
     """スプレッドシート読み込み失敗"""
 
+SHEET_READ_TTL_SEC = 300
+
+
+def _is_sheets_rate_limit_error(err):
+    text = str(err)
+    lowered = text.lower()
+    return (
+        "429" in text
+        or "RATE_LIMIT_EXCEEDED" in text
+        or "quota exceeded" in lowered
+        or "rate limit" in lowered
+    )
+
+
+_SHEET_LAST_OK = {}
+
+
+def _sheet_cache_bust_map():
+    return st.session_state.setdefault("_sheet_cache_bust", {})
+
+
+def _sheet_last_ok_map():
+    return _SHEET_LAST_OK
+
+
+def _reject_incomplete_sheet_write(worksheet_name, new_df):
+    """読み取り失敗で空に近いデータを上書きしない"""
+    prev = _SHEET_LAST_OK.get(worksheet_name)
+    if prev is None or getattr(prev, "empty", True):
+        return
+    new_len = 0 if new_df is None else len(new_df)
+    if new_len + 5 < len(prev):
+        raise ValueError(
+            f"「{worksheet_name}」の読み込みが不足しているため保存を中止しました。"
+            "少し待ってから再度保存してください。"
+        )
+
+
+def invalidate_sheet_read_cache(worksheet_name=None):
+    """シート読み取りキャッシュを無効化（失敗時は全キャッシュを消さない）"""
+    busts = _sheet_cache_bust_map()
+    if worksheet_name:
+        busts[worksheet_name] = int(busts.get(worksheet_name, 0)) + 1
+        return
+    _cached_sheet_read.clear()
+    for name in list(busts.keys()):
+        busts[name] = int(busts.get(name, 0)) + 1
+
+
 @st.cache_resource
 def _get_sheet_client():
     spreadsheet_id, config, _ = _load_gsheets_settings()
     client = gspread.service_account_from_dict(config)
     return client, spreadsheet_id
 
-@st.cache_data(ttl=15, show_spinner=False)
-def _cached_sheet_read(worksheet_name):
+@st.cache_data(ttl=SHEET_READ_TTL_SEC, show_spinner=False)
+def _cached_sheet_read(worksheet_name, bust):
     client, spreadsheet_id = _get_sheet_client()
     _validate_spreadsheet_id(spreadsheet_id)
     sh = client.open_by_key(spreadsheet_id)
@@ -1929,11 +2003,15 @@ class SheetConn:
     """gspread 直結（duckdb 不使用・Cloud segfault 回避）"""
 
     def read(self, worksheet=None, ttl=15, **kwargs):
-        df = _cached_sheet_read(worksheet)
+        name = worksheet
+        bust = int(_sheet_cache_bust_map().get(name, 0))
+        df = _cached_sheet_read(name, bust)
+        if df is not None:
+            _sheet_last_ok_map()[name] = df.copy()
+            st.session_state.pop("_rate_limit_warned", None)
         return df if df is not None else pd.DataFrame()
 
     def update(self, worksheet=None, data=None, **kwargs):
-        st.cache_data.clear()
         client, spreadsheet_id = _get_sheet_client()
         ws = client.open_by_key(spreadsheet_id).worksheet(worksheet)
         write_df = data.fillna("") if data is not None else pd.DataFrame()
@@ -1941,6 +2019,9 @@ class SheetConn:
             ws, write_df,
             include_index=False, include_column_header=True, resize=True,
         )
+        invalidate_sheet_read_cache(worksheet)
+        if data is not None:
+            _sheet_last_ok_map()[worksheet] = data.copy()
 
 @st.cache_resource
 def get_sheet_conn():
@@ -2223,16 +2304,35 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
     last_error = None
     for i in range(3):
         try:
-            df = conn.read(worksheet=worksheet_name, ttl=15)
+            df = conn.read(worksheet=worksheet_name)
             if df is not None:
                 return _sanitize_dataframe(df.dropna(how="all").fillna(""))
         except Exception as e:
             last_error = e
+            if _is_sheets_rate_limit_error(e):
+                break
             if i < 2:
-                time.sleep(1)
+                time.sleep(1 * (i + 1))
+
+    fallback = _sheet_last_ok_map().get(worksheet_name)
+    if fallback is not None:
+        if _is_sheets_rate_limit_error(last_error) and not st.session_state.get("_rate_limit_warned"):
+            st.warning(
+                "Googleスプレッドシートの一時的な読み取り上限です。"
+                "直近のデータを表示しているので入力は続けられます。"
+                "1分ほど待ってから「最新のデータを読み込む」を押してください。"
+            )
+            st.session_state["_rate_limit_warned"] = True
+        return _sanitize_dataframe(fallback.dropna(how="all").fillna(""))
+
     err_msg = str(last_error) if last_error else "不明なエラー"
     spreadsheet_id, _, service_email = _load_gsheets_settings()
-    if "PEM" in err_msg or "private_key" in err_msg.lower():
+    if _is_sheets_rate_limit_error(last_error):
+        hint = (
+            "Googleの読み取り回数上限（1分あたり60回）に達しています。"
+            "1分待ってから再読み込みしてください。連続操作や画面の連打は避けてください。"
+        )
+    elif "PEM" in err_msg or "private_key" in err_msg.lower():
         hint = "Secrets の private_key が壊れています。Google Cloud から JSON を再ダウンロードして貼り直してください。"
     elif "404" in err_msg or "SpreadsheetNotFound" in err_msg:
         hint = (
@@ -2250,8 +2350,6 @@ def safe_read_worksheet(conn, worksheet_name, default_columns=None, raise_on_fai
     st.error(f"スプレッドシート（{worksheet_name}）の読み込みに失敗しました。{hint}")
     st.caption(f"詳細: {err_msg}")
     st.caption(f"接続先 ID: {spreadsheet_id} / アカウント: {service_email}")
-    st.cache_data.clear()
-    st.cache_resource.clear()
     if raise_on_fail:
         raise SheetReadError(err_msg)
     return pd.DataFrame(columns=default_columns) if default_columns else pd.DataFrame()
@@ -3239,7 +3337,7 @@ def render_inspection_history_edit_form(conn, row, row_idx, key_suffix):
                     st.session_state.get("current_user_name", "管理者"),
                     f"{clean_data_str(row.get('管理番号', ''))} の点検履歴を訂正 ({new_date})",
                 )
-                st.cache_data.clear()
+                invalidate_sheet_read_cache()
                 st.success("点検結果を訂正しました。")
                 st.rerun()
             except Exception as e:
@@ -3701,7 +3799,7 @@ def render_inspection_history_viewer(conn, df_master, df_history):
     )
 
     if st.button("履歴データを最新にする", key="hist_view_refresh"):
-        st.cache_data.clear()
+        invalidate_sheet_read_cache()
         st.rerun()
 
     col_search, col_filter = st.columns([2, 1])
@@ -3795,15 +3893,16 @@ def ensure_inspection_history_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="点検履歴", rows=2000, cols=len(INSPECTION_HISTORY_COLUMNS))
         ws.update([INSPECTION_HISTORY_COLUMNS], "A1")
-    st.cache_data.clear()
+    invalidate_sheet_read_cache("点検履歴")
 
 def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, device_model,
                               scan_year_val, check_date, check_type, inspector, result,
                               memo, detail_text, item_rows=None, report_sections=None):
     """点検結果を機器マスター・点検履歴シートへ保存する"""
-    df_master = safe_read_worksheet(conn, "機器マスター", ["管理番号", "最終点検日", "最終判定", "最終実施者"])
+    df_master = safe_read_worksheet(conn, "機器マスター", ["管理番号", "最終点検日", "最終判定", "最終実施者"], raise_on_fail=True)
     if df_master.empty or "管理番号" not in df_master.columns:
         raise ValueError("機器マスターの読み込みに失敗しました。通信環境を確認してください。")
+    _reject_incomplete_sheet_write("機器マスター", df_master)
 
     for col in ["最終点検日", "最終判定", "最終実施者"]:
         if col not in df_master.columns:
@@ -3821,7 +3920,8 @@ def save_inspection_to_sheets(conn, final_me_no, final_sn, device_category, devi
     df_master.loc[mask, "最終実施者"] = inspector
     conn.update(worksheet="機器マスター", data=df_master)
 
-    existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS)
+    existing_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS, raise_on_fail=True)
+    _reject_incomplete_sheet_write("点検履歴", existing_history)
     stored_detail = serialize_inspection_detail(
         detail_text, item_rows, check_type=check_type, report_sections=report_sections,
     )
@@ -3953,7 +4053,7 @@ def _fault_report_label(row):
 def save_repair_completion(conn, selected_idx, repair_date, inspection_content,
                            repair_result, repair_memo, inspector):
     """故障報告の対応完了・点検履歴・機器マスターを更新"""
-    st.cache_data.clear()
+    invalidate_sheet_read_cache("故障報告")
     df_failed = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS, raise_on_fail=True)
     if "対応状況" not in df_failed.columns:
         df_failed["対応状況"] = "未対応"
@@ -4251,7 +4351,7 @@ def render_repair_fault_management(conn):
         )
         if st.button("次の対応入力をする", type="primary", key="repair_done_refresh"):
             st.session_state.pop("repair_saved_report", None)
-            st.cache_data.clear()
+            invalidate_sheet_read_cache()
             st.rerun()
         return
 
@@ -4261,7 +4361,7 @@ def render_repair_fault_management(conn):
         col_refresh, col_view = st.columns([1, 2])
         with col_refresh:
             if st.button("故障報告データを更新", key="repair_refresh_fault"):
-                st.cache_data.clear()
+                invalidate_sheet_read_cache()
                 st.rerun()
         with col_view:
             st.caption("故障報告シートの一覧は下段で確認できます。")
@@ -4342,7 +4442,7 @@ def render_repair_fault_management(conn):
                                 "repair_memo": repair_memo,
                                 "inspector": inspector,
                             }
-                            st.cache_data.clear()
+                            invalidate_sheet_read_cache()
                             st.rerun()
                         except SheetReadError as e:
                             st.error(f"スプレッドシート読み込みエラー: {e}")
@@ -5064,6 +5164,12 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
     if not draft:
         return
     checks = draft.get("incu_i_checks") or {}
+    if device_category in ("輸液ポンプ", "シリンジポンプ"):
+        for idx, val in enumerate([
+            draft.get("chk_e1"), draft.get("chk_e2"), draft.get("chk_e3"), draft.get("chk_e4"),
+            draft.get("chk_e5"), draft.get("chk_e6"), draft.get("chk_e7"),
+        ]):
+            _set_radio_session_key(f"inp_app_{idx}", val)
     if device_category == "輸液ポンプ":
         pump = draft.get("infusion_pump_checks") or {}
         for label in INFUSION_PUMP_ALARM_ITEMS:
@@ -5665,7 +5771,7 @@ def render_annual_overdue_inspection_tab(conn, df_master=None):
     st.markdown("#### 1年以上点検していない機器")
     st.caption("最終点検日から1年以上経過している機器、または点検記録がない機器を表示します。")
     if st.button("最新のデータを読み込む", key="refresh_overdue_tab"):
-        st.cache_data.clear()
+        invalidate_sheet_read_cache()
         st.rerun()
     if df_master is None or df_master.empty:
         df_master = safe_read_worksheet(conn, "機器マスター")
@@ -5747,7 +5853,7 @@ def ensure_daily_history_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="日常点検履歴", rows=1000, cols=len(DAILY_HISTORY_COLUMNS))
         ws.update([DAILY_HISTORY_COLUMNS], "A1")
-    st.cache_data.clear()
+    invalidate_sheet_read_cache()
 
 def validate_daily_checks(checks):
     ng_items = []
@@ -5911,6 +6017,8 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
     st.markdown("---")
     st.write("**日常点検項目**")
     st.caption(INSPECTION_CHECK_LEGEND)
+    daily_keys = [f"{form_key_prefix}_chk_{idx}" for idx in range(len(check_labels))]
+    render_all_ok_button(daily_keys, f"{form_key_prefix}_all_ok", "日常点検をすべて〇にする")
 
     if "last_daily_check_date" not in st.session_state:
         st.session_state["last_daily_check_date"] = date.today()
@@ -6455,7 +6563,7 @@ def ensure_daily_report_worksheet():
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title="日報", rows=2000, cols=len(DAILY_REPORT_COLUMNS))
         ws.update([DAILY_REPORT_COLUMNS], "A1")
-    st.cache_data.clear()
+    invalidate_sheet_read_cache()
 
 def save_daily_report_to_sheets(conn, report_date, reporter, visit_place, visit_content,
                               work_content, time_rows):
@@ -6704,7 +6812,7 @@ def render_daily_report_tab(conn, facility_name):
     with history_tab:
         st.markdown("#### 日報履歴")
         if st.button("最新のデータを読み込む", key="refresh_daily_report_history"):
-            st.cache_data.clear()
+            invalidate_sheet_read_cache()
             st.rerun()
         df_reports = safe_read_worksheet(conn, "日報", DAILY_REPORT_COLUMNS)
         if df_reports.empty:
@@ -7380,6 +7488,12 @@ with tabs[1]:
     if resolved_me != st.session_state.get("check_last_device_me", ""):
         st.session_state["check_last_device_me"] = resolved_me
         sync_pending_check_save_for_device(resolved_me)
+        for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS)):
+            st.session_state.pop(f"inp_app_{idx}", None)
+        for label in INFUSION_PUMP_ALARM_ITEMS:
+            st.session_state.pop(f"inp_alarm_{label}", None)
+        for label in INFUSION_PUMP_FUNCTION_ITEMS:
+            st.session_state.pop(f"inp_func_{label}", None)
 
     if st.session_state.get("inspection_saved_report"):
         saved_inspection = st.session_state["inspection_saved_report"]
@@ -7542,18 +7656,25 @@ with tabs[1]:
             st.caption(INSPECTION_CHECK_LEGEND)
             if device_category == "輸液ポンプ":
                 st.write("**1. 外観・作動点検**")
+                app_keys = [f"inp_app_{idx}" for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS))]
+                if use_draft_idx:
+                    for key, val in zip(app_keys, [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]):
+                        _set_radio_session_key(key, val)
+                render_all_ok_button(app_keys, "inp_app_all_ok", "外観・作動点検をすべて〇にする")
                 col1, col2 = st.columns(2)
                 with col1:
-                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e1))
-                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e2))
-                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e3))
-                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e4))
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[0])
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[1])
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[2])
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[3])
                 with col2:
-                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e5))
-                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e6))
-                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e7))
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[4])
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[5])
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[6])
 
                 st.write("**2. 警報・作動点検**")
+                alarm_keys = [f"inp_alarm_{label}" for label in INFUSION_PUMP_ALARM_ITEMS]
+                render_all_ok_button(alarm_keys, "inp_alarm_all_ok", "警報・作動点検をすべて〇にする")
                 alarm_col1, alarm_col2 = st.columns(2)
                 for idx, label in enumerate(INFUSION_PUMP_ALARM_ITEMS):
                     target_col = alarm_col1 if idx % 2 == 0 else alarm_col2
@@ -7564,6 +7685,8 @@ with tabs[1]:
                         )
 
                 st.write("**3. 機能・設定点検**")
+                func_keys = [f"inp_func_{label}" for label in INFUSION_PUMP_FUNCTION_ITEMS]
+                render_all_ok_button(func_keys, "inp_func_all_ok", "機能・設定点検をすべて〇にする")
                 func_col1, func_col2 = st.columns(2)
                 for idx, label in enumerate(INFUSION_PUMP_FUNCTION_ITEMS):
                     target_col = func_col1 if idx % 2 == 0 else func_col2
@@ -7611,16 +7734,21 @@ with tabs[1]:
 
             elif device_category == "シリンジポンプ":
                 st.write("**1. 外観・作動点検**")
+                app_keys = [f"inp_app_{idx}" for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS))]
+                if use_draft_idx:
+                    for key, val in zip(app_keys, [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]):
+                        _set_radio_session_key(key, val)
+                render_all_ok_button(app_keys, "syr_app_all_ok", "外観・作動点検をすべて〇にする")
                 col1, col2 = st.columns(2)
                 with col1:
-                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e1))
-                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e2))
-                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e3))
-                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e4))
+                    chk_e1 = st.radio("本体の汚れ・破損なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[0])
+                    chk_e2 = st.radio("ポールクランプ用ネジ穴", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[1])
+                    chk_e3 = st.radio("チューブクランプ動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[2])
+                    chk_e4 = st.radio("フィンガー部動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[3])
                 with col2:
-                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e5))
-                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e6))
-                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(chk_e7))
+                    chk_e5 = st.radio("AC・DC切り替え", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[4])
+                    chk_e6 = st.radio("セルフチェック機能", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[5])
+                    chk_e7 = st.radio("表示部LED", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key=app_keys[6])
 
                 st.write("**2. 数値・精度チェック**")
                 col_num1, col_num2 = st.columns(2)
@@ -7644,26 +7772,36 @@ with tabs[1]:
                     render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements)
                 else:
                     st.write("**2. 各種警報機能**")
+                    inc_o_alarm_keys = [
+                        "inc_o_check", "inc_o_temp_man", "inc_o_temp_skin",
+                        "inc_o_probe", "inc_o_power", "inc_o_canopy",
+                    ]
+                    render_all_ok_button(inc_o_alarm_keys, "inc_o_alarm_all_ok", "各種警報機能をすべて〇にする")
                     o3, o4 = st.columns(2)
                     with o3:
-                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("チェックスイッチ")))
-                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("設定温度警報(マニュアル)")))
-                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("設定温度警報(皮膚温)")))
+                        inc_o_checks["チェックスイッチ"] = st.radio("チェックスイッチ作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_check")
+                        inc_o_checks["設定温度警報(マニュアル)"] = st.radio("設定温度警報(マニュアル)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_temp_man")
+                        inc_o_checks["設定温度警報(皮膚温)"] = st.radio("設定温度警報(皮膚温)", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_temp_skin")
                     with o4:
-                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("プローブ警報")))
-                        inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("停電警報")))
-                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("キャノピ傾斜")))
+                        inc_o_checks["プローブ警報"] = st.radio("プローブ警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_probe")
+                        inc_o_checks["停電警報"] = st.radio("停電警報作動", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_power")
+                        inc_o_checks["キャノピ傾斜"] = st.radio("キャノピ傾斜動作", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_canopy")
 
                     st.write("**3. 蘇生装置・酸素・外装**")
+                    inc_o_ext_keys = [
+                        "inc_o_resus", "inc_o_blend", "inc_o_gas",
+                        "inc_o_suction", "inc_o_body", "inc_o_powerjack",
+                    ]
+                    render_all_ok_button(inc_o_ext_keys, "inc_o_ext_all_ok", "蘇生装置・酸素・外装をすべて〇にする")
                     o5, o6 = st.columns(2)
                     with o5:
-                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("蘇生装置")))
-                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("酸素ブレンダ作動")))
-                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("供給ガス警報")))
+                        inc_o_checks["蘇生装置"] = st.radio("蘇生装置の機能点検・異常なし", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_resus")
+                        inc_o_checks["酸素ブレンダ作動"] = st.radio("酸素ブレンダ作動確認", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_blend")
+                        inc_o_checks["供給ガス警報"] = st.radio("供給ガスが発生するか", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_gas")
                     with o6:
-                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("吸引・流量計")))
-                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("外装・キャノピ・ネジ類")))
-                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=_didx(inc_o_checks.get("電源・ジャック・ガード")))
+                        inc_o_checks["吸引・流量計"] = st.radio("吸引ユニット・酸素流量計正常", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_suction")
+                        inc_o_checks["外装・キャノピ・ネジ類"] = st.radio("支柱・キャノピ・反射板・ネジ等", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_body")
+                        inc_o_checks["電源・ジャック・ガード"] = st.radio("電源コード・各種ジャック・ガード", INSPECTION_CHECK_OPTIONS, horizontal=True, index=None, key="inc_o_powerjack")
 
             elif device_category == "生体情報モニタ":
                 render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta, device_model)
@@ -7833,7 +7971,7 @@ with tabs[2]:
 
     with sub_m1:
         try:
-            df_m_stats = safe_read_worksheet(conn, "機器マスター")
+            df_m_stats = df_master_global
                 
             if not df_m_stats.empty and "カテゴリ" in df_m_stats.columns:
                 st.markdown("#### 現在の院内保有台数サマリー")
@@ -7859,14 +7997,14 @@ with tabs[2]:
         st.markdown("#### 各種シートの詳細表示")
         view_cat_master = st.selectbox("表示するシートを切り替え", ["機器マスター", "点検履歴", "故障報告"], key="master_cat")
         if st.button("台帳データを最新にする"):
-            st.cache_data.clear()
+            invalidate_sheet_read_cache()
             
         try:
             df = safe_read_worksheet(conn, view_cat_master)
             if df.empty:
                 st.info(f"「{view_cat_master}」シートにはまだデータがありません。")
             elif view_cat_master == "点検履歴":
-                df_master_for_hist = safe_read_worksheet(conn, "機器マスター")
+                df_master_for_hist = df_master_global
                 st.markdown("##### 機器別 点検結果表（表示・PDF）")
                 hist_search = st.text_input(
                     "管理番号・旧番号 または シリアルNo",
@@ -8022,7 +8160,7 @@ with tabs[2]:
                             except Exception:
                                 pass 
                             
-                            st.cache_data.clear() 
+                            invalidate_sheet_read_cache() 
                             st.success(f"{clean_edit_me_no} のデータを最新に修正し、過去の履歴にも完全に同期しました！")
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{clean_edit_me_no} のデータを修正・同期")
                 else:
@@ -8035,10 +8173,11 @@ with tabs[3]:
     st.subheader("機器カルテ照合 ＆ 日次実績")
     
     if st.button("最新のデータを読み込む", key="refresh_history_tab"):
-        st.cache_data.clear()
-        
+        invalidate_sheet_read_cache()
+        st.rerun()
+
     try:
-        df_master = safe_read_worksheet(conn, "機器マスター")
+        df_master = df_master_global
         df_history = safe_read_worksheet(conn, "点検履歴", INSPECTION_HISTORY_COLUMNS)
         df_fault_reports = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
 
@@ -8187,7 +8326,7 @@ with tabs[4]:
     st.subheader("管理番号シール ＆ QRコード")
     st.write("管理番号を入力すると、テプラ用の管理番号シールを作成できます。")
 
-    df_m_qr = safe_read_worksheet(conn, "機器マスター")
+    df_m_qr = df_master_global
     for field_key in ("sticker_model", "sticker_serial", "sticker_me_display", "sticker_delivery"):
         st.session_state.setdefault(field_key, "")
 
