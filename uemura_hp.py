@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-17f"
+APP_VERSION = "2026-09-18a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2583,6 +2583,9 @@ def find_device_row(df_master, keyword):
 
     return None, None
 
+def alert_device_not_registered():
+    st.error("この番号は登録されていません")
+
 def lookup_device_for_sticker(df_master, me_no):
     row, match_type = find_device_row(df_master, me_no)
     if row is None:
@@ -3909,7 +3912,7 @@ def render_inspection_history_viewer(conn, df_master, df_history):
             return
         master_row, match_type = find_device_row(df_master, keyword)
         if master_row is None:
-            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+            alert_device_not_registered()
             return
         target_me = clean_data_str(master_row.get("管理番号", ""))
         if match_type == "旧番号":
@@ -6049,7 +6052,7 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
 
     if master_row is None:
         if input_keyword:
-            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+            alert_device_not_registered()
         else:
             st.info("日常点検は「超音波診断装置」と「保育器」のみ対象です。管理番号等を入力して検索してください。")
         return
@@ -8049,6 +8052,8 @@ with tabs[1]:
             "resusciflow_parts": resusciflow_parts,
         }
         maybe_auto_save_inspection_draft(conn, draft_payload)
+    elif input_keyword:
+        alert_device_not_registered()
 
     render_pending_check_save_recovery(conn)
 
@@ -8106,7 +8111,7 @@ with tabs[2]:
                     else:
                         master_row_hist, match_type_hist = find_device_row(df_master_for_hist, hist_search)
                         if master_row_hist is None:
-                            st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+                            alert_device_not_registered()
                         else:
                             target_me_hist = clean_data_str(master_row_hist.get("管理番号", ""))
                             if match_type_hist == "旧番号":
@@ -8253,7 +8258,7 @@ with tabs[2]:
                             st.success(f"{clean_edit_me_no} のデータを最新に修正し、過去の履歴にも完全に同期しました！")
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{clean_edit_me_no} のデータを修正・同期")
                 else:
-                    st.warning("指定された管理番号・旧番号は登録されていません。")
+                    alert_device_not_registered()
             except Exception as e:
                 st.error(f"データ取得エラー: {e}")
 
@@ -8365,7 +8370,7 @@ with tabs[3]:
                     elif not has_fault:
                         st.info("この機器の点検・修理履歴はありません。")
                 elif karte_keyword:
-                    st.warning("該当する機器が見つかりません。管理番号・旧番号・シリアルNo を確認してください。")
+                    alert_device_not_registered()
             else:
                 st.info("機器マスターにまだデータがありません。")
 
