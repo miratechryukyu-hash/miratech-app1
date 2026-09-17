@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-17b"
+APP_VERSION = "2026-09-17c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -173,6 +173,14 @@ TE131_OCC_TIME_MAX = 10.0
 
 def is_te131_pump(device_model):
     return "TE-131" in str(device_model or "")
+
+def is_terumo_infusion_pump(device_model):
+    """テルモ輸液ポンプ（TE-131 / TE-171 / TE-331 / TE-LM830 など）"""
+    model = str(device_model or "").upper().replace(" ", "")
+    return bool(re.search(r"TE-?(LM)?\d", model))
+
+def infusion_pump_uses_bubble_ad(device_model):
+    return not is_terumo_infusion_pump(device_model)
 
 def occlusion_item_spec(device_model, min_press, max_press, press_unit):
     """閉塞圧点検の表示名・注記・入力ラベル"""
@@ -2726,8 +2734,6 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
     appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
     flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
     press_judge = measure_judge(min_press <= occ_press <= max_press)
-    water_judge = measure_judge(bubble_ad_water >= 100)
-    dry_judge = measure_judge(bubble_ad_dry <= 10)
     occ_spec = occlusion_item_spec(device_model, min_press, max_press, press_unit)
     measure_items = [
         _measured_item(
@@ -2757,14 +2763,17 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
                 time_judge,
             )
         )
-    measure_items.append({
-        "name": "気泡センサーAD値",
-        "note": "※水入り輸液セット100以上・水無し輸液セット10以下",
-        "sub_items": [
-            _measured_item("水入り", "", "100以上", str(bubble_ad_water), water_judge),
-            _measured_item("水無し", "", "10以下", str(bubble_ad_dry), dry_judge),
-        ],
-    })
+    if infusion_pump_uses_bubble_ad(device_model):
+        water_judge = measure_judge(bubble_ad_water >= 100)
+        dry_judge = measure_judge(bubble_ad_dry <= 10)
+        measure_items.append({
+            "name": "気泡センサーAD値",
+            "note": "※水入り輸液セット100以上・水無し輸液セット10以下",
+            "sub_items": [
+                _measured_item("水入り", "", "100以上", str(bubble_ad_water), water_judge),
+                _measured_item("水無し", "", "10以下", str(bubble_ad_dry), dry_judge),
+            ],
+        })
 
     return {
         "form": "infusion_pump",
@@ -4555,10 +4564,11 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                 if is_te131_pump(device_model) and not (TE131_OCC_TIME_MIN <= occ_time <= TE131_OCC_TIME_MAX):
                     time_name = te131_occlusion_time_spec()["name"]
                     ng_items.append(f"{time_name}（{occ_time} 秒）")
-                if bubble_ad_water < 100:
-                    ng_items.append(f"気泡センサーAD値(水入り)（{bubble_ad_water}）")
-                if bubble_ad_dry > 10:
-                    ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
+                if infusion_pump_uses_bubble_ad(device_model):
+                    if bubble_ad_water < 100:
+                        ng_items.append(f"気泡センサーAD値(水入り)（{bubble_ad_water}）")
+                    if bubble_ad_dry > 10:
+                        ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
 
     elif device_category == "保育器":
         if is_v2100g_incubator(device_category, device_model):
@@ -4665,7 +4675,7 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                 time_spec = te131_occlusion_time_spec()
                 time_judge = measure_judge(TE131_OCC_TIME_MIN <= occ_time <= TE131_OCC_TIME_MAX)
                 rows.append((time_spec["name"], f"{occ_time} 秒", time_judge))
-            if device_category == "輸液ポンプ":
+            if device_category == "輸液ポンプ" and infusion_pump_uses_bubble_ad(device_model):
                 water_judge = measure_judge(bubble_ad_water >= 100)
                 dry_judge = measure_judge(bubble_ad_dry <= 10)
                 rows.append(("気泡センサーAD値(水入り)", str(bubble_ad_water), water_judge))
@@ -7725,12 +7735,13 @@ with tabs[1]:
                         step=0.1,
                     )
 
-                st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
-                bubble_col1, bubble_col2 = st.columns(2)
-                with bubble_col1:
-                    bubble_ad_water = st.number_input("水入り", min_value=0.0, value=float(bubble_ad_water), step=1.0)
-                with bubble_col2:
-                    bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=float(bubble_ad_dry), step=1.0)
+                if infusion_pump_uses_bubble_ad(device_model):
+                    st.caption("気泡センサーAD値 ※水入り輸液セット100以上・水無し輸液セット10以下")
+                    bubble_col1, bubble_col2 = st.columns(2)
+                    with bubble_col1:
+                        bubble_ad_water = st.number_input("水入り", min_value=0.0, value=float(bubble_ad_water), step=1.0)
+                    with bubble_col2:
+                        bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=float(bubble_ad_dry), step=1.0)
 
             elif device_category == "シリンジポンプ":
                 st.write("**1. 外観・作動点検**")
