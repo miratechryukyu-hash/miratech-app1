@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18a"
+APP_VERSION = "2026-09-18b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -2617,7 +2617,28 @@ def apply_sticker_master_lookup(me_no, master_info):
     else:
         st.session_state["sticker_me_display"] = lookup_key
 
-def sync_device_display_fields(prefix, me_no, category, serial, model):
+def get_master_device_note(row):
+    if row is None:
+        return ""
+    return clean_data_str(row.get("備考", ""))
+
+def ensure_master_device_note_column(df):
+    if df is None:
+        return df
+    if "備考" not in df.columns:
+        df["備考"] = ""
+    return df
+
+def render_device_detail_note(note, key, disabled=True):
+    st.text_area(
+        "備考",
+        value=clean_data_str(note),
+        disabled=disabled,
+        key=key,
+        placeholder="特記事項（付属品・注意点など）",
+    )
+
+def sync_device_display_fields(prefix, me_no, category, serial, model, note=""):
     """機器検索結果が変わったら、表示用 text_input の session_state を更新"""
     lookup_key = clean_data_str(me_no)
     track_key = f"_{prefix}_lookup_me"
@@ -2631,6 +2652,7 @@ def sync_device_display_fields(prefix, me_no, category, serial, model):
     st.session_state[f"{prefix}_disp_cat"] = clean_data_str(category)
     st.session_state[f"{prefix}_disp_sn"] = clean_data_str(serial)
     st.session_state[f"{prefix}_disp_model"] = clean_data_str(model)
+    st.session_state[f"{prefix}_disp_note"] = clean_data_str(note)
 
 def render_management_sticker(model_name, me_no, serial_no, delivery_date, qr_url=None):
     if not qr_url:
@@ -6070,7 +6092,10 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
     elif not locked_keyword:
         st.success("登録済みの機器が見つかりました。")
 
-    sync_device_display_fields(form_key_prefix, final_me_no, device_category, final_sn, device_model)
+    sync_device_display_fields(
+        form_key_prefix, final_me_no, device_category, final_sn, device_model,
+        get_master_device_note(master_row),
+    )
 
     if device_category not in DAILY_INSPECTION_CATEGORIES:
         st.error(
@@ -6086,6 +6111,10 @@ def render_daily_inspection_form(conn, df_master, initial_keyword="", form_key_p
     with col_m2:
         st.text_input("シリアルNo", value=final_sn, disabled=True, key=f"{form_key_prefix}_disp_sn")
         st.text_input("型式", value=device_model, disabled=True, key=f"{form_key_prefix}_disp_model")
+    render_device_detail_note(
+        get_master_device_note(master_row),
+        key=f"{form_key_prefix}_disp_note",
+    )
 
     check_labels = DAILY_CHECK_ITEMS[device_category]
     daily_checks = {label: "---" for label in check_labels}
@@ -6271,7 +6300,7 @@ def format_master_device_list_df(df):
         return df
     enriched = enrich_master_with_elapsed_years(df)
     preferred = [
-        "管理番号", "カテゴリ", "機種", "シリアルNo", "旧番号", "設置場所",
+        "管理番号", "カテゴリ", "機種", "シリアルNo", "旧番号", "設置場所", "備考",
         "納入日", "経過年数", "最終点検日", "最終判定", "最終実施者",
     ]
     cols = [c for c in preferred if c in enriched.columns]
@@ -7622,7 +7651,10 @@ with tabs[1]:
             master_row.get("製造年月日", "") or master_row.get("製造年", "")
         )
 
-        sync_device_display_fields("check", final_me_no, device_category, final_sn, device_model)
+        sync_device_display_fields(
+            "check", final_me_no, device_category, final_sn, device_model,
+            get_master_device_note(master_row),
+        )
 
         col_m1, col_m2 = st.columns(2)
         with col_m1:
@@ -7631,6 +7663,10 @@ with tabs[1]:
         with col_m2:
             st.text_input("シリアルNo", value=final_sn, disabled=True, key="check_disp_sn")
             st.text_input("型式", value=device_model, disabled=True, key="check_disp_model")
+        render_device_detail_note(
+            get_master_device_note(master_row),
+            key="check_disp_note",
+        )
 
         # 型式別の基準値を自動セット
         min_flow, max_flow = 18.0, 22.0
@@ -8214,6 +8250,11 @@ with tabs[2]:
                         st.caption(
                             f"経過年数（本日 {format_jst(fmt='%Y-%m-%d')} 時点）: **{elapsed_label}**"
                         )
+                        new_note = st.text_area(
+                            "備考",
+                            value=get_master_device_note(target_row),
+                            placeholder="特記事項（付属品・注意点など）",
+                        )
 
                         if st.form_submit_button("変更を上書き保存する", type="primary"):
                             safe_new_sn = protect_zeros(new_sn)
@@ -8228,6 +8269,8 @@ with tabs[2]:
                             df_master_edit.loc[mask_m, "導入形態"] = new_acq_type
                             df_master_edit.loc[mask_m, "購入金額"] = new_price
                             df_master_edit.loc[mask_m, "納入日"] = str(new_delivery)
+                            df_master_edit = ensure_master_device_note_column(df_master_edit)
+                            df_master_edit.loc[mask_m, "備考"] = clean_data_str(new_note)
                             if "旧番号" not in df_master_edit.columns:
                                 df_master_edit["旧番号"] = ""
                             df_master_edit.loc[mask_m, "旧番号"] = clean_data_str(new_legacy)
@@ -8314,6 +8357,7 @@ with tabs[3]:
                         device_category,
                         master_row.get("シリアルNo", ""),
                         device_model,
+                        get_master_device_note(master_row),
                     )
 
                     col_k1, col_k2 = st.columns(2)
@@ -8323,6 +8367,10 @@ with tabs[3]:
                     with col_k2:
                         st.text_input("シリアルNo", value=clean_data_str(master_row.get("シリアルNo", "")), disabled=True, key="karte_disp_sn")
                         st.text_input("型式", value=device_model, disabled=True, key="karte_disp_model")
+                    render_device_detail_note(
+                        get_master_device_note(master_row),
+                        key="karte_disp_note",
+                    )
 
                     st.markdown("---")
                     st.markdown(f"### {model_name} (管理番号: {target_me}) のカルテ")
@@ -8539,6 +8587,7 @@ with tabs[5]:
             man_acq_type = st.selectbox("10. 導入形態", ["購入", "リース", "レンタル", "その他"])
             man_price = st.text_input("11. 購入金額", placeholder="例: 1500000")
             man_delivery = st.date_input("12. 購入日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+            man_note = st.text_area("13. 備考", placeholder="特記事項（付属品・注意点など）")
             
             if st.form_submit_button("機器マスターに登録する", type="primary"):
                 final_cat = txt_cat if txt_cat.strip() != "" else sel_cat
@@ -8571,9 +8620,13 @@ with tabs[5]:
                                 "導入形態": man_acq_type,
                                 "購入金額": man_price,
                                 "納入日": str(man_delivery),
+                                "備考": clean_data_str(man_note),
                                 "最終点検日": "", "最終判定": "", "最終実施者": ""
                             }])
-                            updated_master_reg = pd.concat([df_m_reg, new_master_row], ignore_index=True)
+                            updated_master_reg = pd.concat(
+                                [ensure_master_device_note_column(df_m_reg), new_master_row],
+                                ignore_index=True,
+                            )
                             conn.update(worksheet="機器マスター", data=updated_master_reg)
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
