@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-17e"
+APP_VERSION = "2026-09-17f"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -175,6 +175,27 @@ def default_infusion_pump_checks():
 
 TE131_OCC_TIME_MIN = 3.0
 TE131_OCC_TIME_MAX = 10.0
+TE131_OCC_LEVEL_DEFAULT = 5
+TE131_OCC_LEVEL_SPECS = {
+    0: {
+        "min": 30.0,
+        "max": 90.0,
+        "option_label": "0（30～90 kPa）",
+        "result_label": "0",
+    },
+    5: {
+        "min": 60.0,
+        "max": 120.0,
+        "option_label": "5（60～120 kPa・出荷時）",
+        "result_label": "5（出荷時）",
+    },
+    9: {
+        "min": 80.0,
+        "max": 140.0,
+        "option_label": "9（80～140 kPa）",
+        "result_label": "9",
+    },
+}
 
 def is_te131_pump(device_model):
     return "TE-131" in str(device_model or "")
@@ -187,8 +208,38 @@ def is_terumo_infusion_pump(device_model):
 def infusion_pump_uses_bubble_ad(device_model):
     return not is_terumo_infusion_pump(device_model)
 
-def occlusion_item_spec(device_model, min_press, max_press, press_unit):
+def parse_te131_occ_level(val):
+    try:
+        level = int(float(val))
+    except (TypeError, ValueError):
+        return TE131_OCC_LEVEL_DEFAULT
+    if level in TE131_OCC_LEVEL_SPECS:
+        return level
+    return TE131_OCC_LEVEL_DEFAULT
+
+def te131_occ_level_spec(level):
+    return TE131_OCC_LEVEL_SPECS[parse_te131_occ_level(level)]
+
+def te131_occ_press_range(level):
+    spec = te131_occ_level_spec(level)
+    return spec["min"], spec["max"]
+
+def resolve_infusion_occ_press_range(device_model, min_press, max_press, occ_level=None):
+    if is_te131_pump(device_model):
+        return te131_occ_press_range(occ_level)
+    return min_press, max_press
+
+def occlusion_item_spec(device_model, min_press, max_press, press_unit, occ_level=None):
     """閉塞圧点検の表示名・注記・入力ラベル"""
+    if is_te131_pump(device_model):
+        level = parse_te131_occ_level(occ_level)
+        min_press, max_press = te131_occ_press_range(level)
+        return {
+            "name": "閉塞検出圧",
+            "note": f"※テルモ汎用／ポンプ専用輸液セット レベル{level} {min_press:.0f}～{max_press:.0f} kPa",
+            "caption": "閉塞検出圧 ※流量120ml/h・テルモ汎用／ポンプ専用輸液セット",
+            "input_label": f"閉塞検出圧 ({press_unit})",
+        }
     return {
         "name": "閉塞検出",
         "note": "※流量120ml/h・「M」30～90kPa",
@@ -2733,13 +2784,16 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
                                         infusion_pump_checks, flow_acc, occ_press,
                                         min_flow, max_flow, min_press, max_press,
                                         flow_unit, press_unit, bubble_ad_water, bubble_ad_dry,
-                                        device_model="", occ_time=0.0):
+                                        device_model="", occ_time=0.0, occ_level=None):
     """輸液ポンプ点検フォームと同一構成の印刷用セクションデータ"""
     infusion_pump_checks = infusion_pump_checks or {}
     appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
+    min_press, max_press = resolve_infusion_occ_press_range(
+        device_model, min_press, max_press, occ_level,
+    )
     flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
     press_judge = measure_judge(min_press <= occ_press <= max_press)
-    occ_spec = occlusion_item_spec(device_model, min_press, max_press, press_unit)
+    occ_spec = occlusion_item_spec(device_model, min_press, max_press, press_unit, occ_level)
     measure_items = [
         _measured_item(
             "流量精度",
@@ -2748,6 +2802,19 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
             f"{flow_acc} {flow_unit}",
             flow_judge,
         ),
+    ]
+    if is_te131_pump(device_model):
+        level_spec = te131_occ_level_spec(occ_level)
+        measure_items.append(
+            _measured_item(
+                "閉塞圧レベル",
+                "※テルモ汎用／ポンプ専用輸液セット 代表設定値 0・5（出荷時）・9",
+                "0 / 5（出荷時） / 9",
+                level_spec["option_label"],
+                "〇",
+            )
+        )
+    measure_items.append(
         _measured_item(
             occ_spec["name"],
             occ_spec["note"],
@@ -2755,7 +2822,7 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
             f"{occ_press} {press_unit}",
             press_judge,
         ),
-    ]
+    )
     if is_te131_pump(device_model):
         time_spec = te131_occlusion_time_spec()
         time_judge = measure_judge(TE131_OCC_TIME_MIN <= occ_time <= TE131_OCC_TIME_MAX)
@@ -2863,6 +2930,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                      device_model="",
                                      occ_time=0.0,
+                                     occ_level=None,
                                      incu_i_checks=None,
                                      incu_i_measurements=None,
                                      vsm_checks=None,
@@ -2884,7 +2952,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             infusion_pump_checks, flow_acc, occ_press,
             min_flow, max_flow, min_press, max_press,
             flow_unit, press_unit, bubble_ad_water, bubble_ad_dry,
-            device_model=device_model, occ_time=occ_time,
+            device_model=device_model, occ_time=occ_time, occ_level=occ_level,
         )
     if device_category == "シリンジポンプ":
         return build_syringe_pump_report_sections(
@@ -3487,6 +3555,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
                                    infusion_pump_checks=None,
                                    bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                    occ_time=0.0,
+                                   occ_level=None,
                                    incu_i_checks=None, incu_i_measurements=None,
                                    vsm_checks=None, vsm_measurements=None, vsm_meta=None,
                                    ecg_checks=None, ecg_measurements=None,
@@ -3506,6 +3575,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
         occ_time=occ_time,
+        occ_level=occ_level,
         incu_i_checks=incu_i_checks,
         incu_i_measurements=incu_i_measurements,
         vsm_checks=vsm_checks,
@@ -4508,6 +4578,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               bubble_ad_water=0.0, bubble_ad_dry=0.0,
                               device_model="",
                               occ_time=0.0,
+                              occ_level=None,
                               incu_i_checks=None,
                               incu_i_measurements=None,
                               vsm_checks=None,
@@ -4538,10 +4609,15 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             _validate_check_dict(infusion_pump_checks, ng_items, incomplete_items)
 
         if result == "使用可":
+            min_press, max_press = resolve_infusion_occ_press_range(
+                device_model, min_press, max_press, occ_level,
+            )
             if not (min_flow <= flow_acc <= max_flow):
                 ng_items.append(f"流量精度（{flow_acc} {flow_unit}）")
             if not (min_press <= occ_press <= max_press):
-                occ_name = occlusion_item_spec(device_model, min_press, max_press, press_unit)["name"]
+                occ_name = occlusion_item_spec(
+                    device_model, min_press, max_press, press_unit, occ_level,
+                )["name"]
                 ng_items.append(f"{occ_name}（{occ_press} {press_unit}）")
             if device_category == "輸液ポンプ":
                 if is_te131_pump(device_model) and not (TE131_OCC_TIME_MIN <= occ_time <= TE131_OCC_TIME_MAX):
@@ -4634,7 +4710,7 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                                flow_unit, press_unit,
                                infusion_pump_checks=None,
                                bubble_ad_water=0.0, bubble_ad_dry=0.0,
-                               device_model="", occ_time=0.0):
+                               device_model="", occ_time=0.0, occ_level=None):
     """点検報告書用の項目行 [(項目名, 結果, 判定), ...] を生成"""
     rows = []
     infusion_pump_checks = infusion_pump_checks or {}
@@ -4649,10 +4725,18 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                 for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
                     val_s = normalize_check_symbol(infusion_pump_checks.get(label, "---")) or "---"
                     rows.append((label, val_s, val_s))
+            min_press, max_press = resolve_infusion_occ_press_range(
+                device_model, min_press, max_press, occ_level,
+            )
             flow_judge = measure_judge(min_flow <= flow_acc <= max_flow)
             press_judge = measure_judge(min_press <= occ_press <= max_press)
-            occ_name = occlusion_item_spec(device_model, min_press, max_press, press_unit)["name"]
+            occ_name = occlusion_item_spec(
+                device_model, min_press, max_press, press_unit, occ_level,
+            )["name"]
             rows.append(("流量精度", f"{flow_acc} {flow_unit}", flow_judge))
+            if device_category == "輸液ポンプ" and is_te131_pump(device_model):
+                level_spec = te131_occ_level_spec(occ_level)
+                rows.append(("閉塞圧レベル", level_spec["option_label"], "〇"))
             rows.append((occ_name, f"{occ_press} {press_unit}", press_judge))
             if device_category == "輸液ポンプ" and is_te131_pump(device_model):
                 time_spec = te131_occlusion_time_spec()
@@ -4676,7 +4760,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
                                  flow_unit, press_unit,
                                  infusion_pump_checks=None,
                                  bubble_ad_water=0.0, bubble_ad_dry=0.0,
-                                 device_model="", occ_time=0.0):
+                                 device_model="", occ_time=0.0, occ_level=None):
     rows = build_inspection_item_rows(
         check_type, device_category, result, inc_o_checks,
         chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
@@ -4687,6 +4771,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
         occ_time=occ_time,
+        occ_level=occ_level,
     )
     parts_list = []
     for name, result_val, judge in rows:
@@ -4696,11 +4781,15 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
             parts_list.append(f"{name}:{result_val}")
 
     if check_type == "院内点検(miratech)" and device_category in ["輸液ポンプ", "シリンジポンプ"]:
+        min_press, max_press = resolve_infusion_occ_press_range(
+            device_model, min_press, max_press, occ_level,
+        )
         parts_list.extend([
             f"基準流量:{min_flow}～{max_flow}",
             f"基準閉塞:{min_press}～{max_press} {press_unit}",
         ])
         if device_category == "輸液ポンプ" and is_te131_pump(device_model):
+            parts_list.append(f"閉塞圧レベル:{parse_te131_occ_level(occ_level)}")
             parts_list.append(f"基準閉塞時間:{TE131_OCC_TIME_MIN}～{TE131_OCC_TIME_MAX} 秒")
 
     detail_text = " | ".join(parts_list)
@@ -4715,6 +4804,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                  device_model="",
                                  occ_time=0.0,
+                                 occ_level=None,
                                  incu_i_checks=None,
                                  incu_i_measurements=None,
                                  vsm_checks=None,
@@ -4739,6 +4829,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
         occ_time=occ_time,
+        occ_level=occ_level,
         incu_i_checks=incu_i_checks,
         incu_i_measurements=incu_i_measurements,
         vsm_checks=vsm_checks,
@@ -4763,6 +4854,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
         occ_time=occ_time,
+        occ_level=occ_level,
     )
     if not item_rows:
         item_rows = [("点検区分", check_type, check_type)]
@@ -4776,6 +4868,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
         occ_time=occ_time,
+        occ_level=occ_level,
     )
     return detail_text, item_rows, report_sections
 
@@ -4911,7 +5004,7 @@ def _deserialize_inspection_draft(raw_json):
                         pass
                 restored[k] = v
             data[dict_key] = restored
-    for num_key in ("flow_acc", "occ_press", "occ_time", "bubble_ad_water", "bubble_ad_dry",
+    for num_key in ("flow_acc", "occ_press", "occ_time", "occ_level", "bubble_ad_water", "bubble_ad_dry",
                     "min_flow", "max_flow", "min_press", "max_press"):
         if num_key in data:
             try:
@@ -5099,7 +5192,7 @@ def apply_inspection_draft_to_state(draft):
         "final_sn", "device_category", "device_model", "scan_year_val",
         "check_type", "inspector", "result", "memo",
         "chk_e1", "chk_e2", "chk_e3", "chk_e4", "chk_e5", "chk_e6", "chk_e7",
-        "flow_acc", "occ_press", "occ_time", "bubble_ad_water", "bubble_ad_dry",
+        "flow_acc", "occ_press", "occ_time", "occ_level", "bubble_ad_water", "bubble_ad_dry",
         "min_flow", "max_flow", "min_press", "max_press", "flow_unit", "press_unit",
     ):
         if key in draft:
@@ -5154,6 +5247,8 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
             _set_radio_session_key(f"inp_alarm_{label}", pump.get(label))
         for label in INFUSION_PUMP_FUNCTION_ITEMS:
             _set_radio_session_key(f"inp_func_{label}", pump.get(label))
+        if is_te131_pump(device_model) and draft.get("occ_level") is not None:
+            st.session_state["inp_occ_level"] = parse_te131_occ_level(draft.get("occ_level"))
     elif device_category == "保育器":
         if is_v2100g_incubator(device_category, device_model):
             for idx, label in enumerate(V2100G_APPEARANCE_ITEMS):
@@ -7448,6 +7543,7 @@ with tabs[1]:
     flow_acc = 0.0
     occ_press = 0.0
     occ_time = 0.0
+    occ_level = TE131_OCC_LEVEL_DEFAULT
     bubble_ad_water = 100.0
     bubble_ad_dry = 10.0
     infusion_pump_checks = default_infusion_pump_checks()
@@ -7472,6 +7568,7 @@ with tabs[1]:
             st.session_state.pop(f"inp_alarm_{label}", None)
         for label in INFUSION_PUMP_FUNCTION_ITEMS:
             st.session_state.pop(f"inp_func_{label}", None)
+        st.session_state.pop("inp_occ_level", None)
 
     if st.session_state.get("inspection_saved_report"):
         saved_inspection = st.session_state["inspection_saved_report"]
@@ -7578,6 +7675,8 @@ with tabs[1]:
             flow_acc = float(applied_draft.get("flow_acc", flow_acc) or 0.0)
             occ_press = float(applied_draft.get("occ_press", occ_press) or 0.0)
             occ_time = float(applied_draft.get("occ_time", occ_time) or 0.0)
+            if applied_draft.get("occ_level") is not None:
+                occ_level = parse_te131_occ_level(applied_draft.get("occ_level"))
             bubble_ad_water = float(applied_draft.get("bubble_ad_water", bubble_ad_water))
             bubble_ad_dry = float(applied_draft.get("bubble_ad_dry", bubble_ad_dry))
             if applied_draft.get("min_flow") is not None:
@@ -7681,8 +7780,21 @@ with tabs[1]:
                         value=float(flow_acc or 20.0), step=0.1,
                     )
                 with col_num2:
-                    occ_spec = occlusion_item_spec(device_model, min_press, max_press, press_unit)
+                    occ_spec = occlusion_item_spec(
+                        device_model, min_press, max_press, press_unit, occ_level,
+                    )
                     st.caption(occ_spec["caption"])
+                    if is_te131_pump(device_model):
+                        if "inp_occ_level" not in st.session_state:
+                            st.session_state["inp_occ_level"] = parse_te131_occ_level(occ_level)
+                        occ_level = st.selectbox(
+                            "閉塞圧レベル",
+                            options=list(TE131_OCC_LEVEL_SPECS.keys()),
+                            format_func=lambda lv: TE131_OCC_LEVEL_SPECS[lv]["option_label"],
+                            key="inp_occ_level",
+                            help="テルモ汎用／ポンプ専用輸液セット使用時の代表設定値",
+                        )
+                        min_press, max_press = te131_occ_press_range(occ_level)
                     st.info(f"基準値：{min_press} ～ {max_press} {press_unit}")
                     occ_press = st.number_input(
                         occ_spec["input_label"],
@@ -7811,6 +7923,7 @@ with tabs[1]:
             infusion_pump_checks=infusion_pump_checks,
             bubble_ad_water=bubble_ad_water, bubble_ad_dry=bubble_ad_dry,
             occ_time=occ_time,
+            occ_level=occ_level,
             incu_i_checks=incu_i_checks, incu_i_measurements=incu_i_measurements,
             vsm_checks=vsm_checks, vsm_measurements=vsm_measurements, vsm_meta=vsm_meta,
             ecg_checks=ecg_checks, ecg_measurements=ecg_measurements,
@@ -7838,6 +7951,7 @@ with tabs[1]:
                     bubble_ad_dry=bubble_ad_dry,
                     device_model=device_model,
                     occ_time=occ_time,
+                    occ_level=occ_level,
                     incu_i_checks=incu_i_checks,
                     incu_i_measurements=incu_i_measurements,
                     vsm_checks=vsm_checks,
@@ -7862,6 +7976,7 @@ with tabs[1]:
                     bubble_ad_dry=bubble_ad_dry,
                     device_model=device_model,
                     occ_time=occ_time,
+                    occ_level=occ_level,
                     incu_i_checks=incu_i_checks,
                     incu_i_measurements=incu_i_measurements,
                     vsm_checks=vsm_checks,
@@ -7918,6 +8033,7 @@ with tabs[1]:
             "chk_e1": chk_e1, "chk_e2": chk_e2, "chk_e3": chk_e3,
             "chk_e4": chk_e4, "chk_e5": chk_e5, "chk_e6": chk_e6, "chk_e7": chk_e7,
             "flow_acc": flow_acc, "occ_press": occ_press, "occ_time": occ_time,
+            "occ_level": occ_level,
             "min_flow": min_flow, "max_flow": max_flow,
             "min_press": min_press, "max_press": max_press,
             "flow_unit": flow_unit, "press_unit": press_unit,
