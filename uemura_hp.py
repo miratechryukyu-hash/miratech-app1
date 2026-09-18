@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-19a"
+APP_VERSION = "2026-09-19b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3701,6 +3701,12 @@ def _inspection_pdf_density_cfg(density="normal"):
             "header_gap_mm": 5, "section_title_gap_mm": 1.5, "two_col": False,
             "leading_extra": 2, "embed_section_title": False,
         },
+        "medium": {
+            "margin_mm": 12, "title": 13, "date": 9, "header": 8.5, "section": 9,
+            "item": 7.5, "note": 7, "pad": 2.4, "section_gap_mm": 2.4, "title_gap_mm": 3,
+            "header_gap_mm": 3.5, "section_title_gap_mm": 1.0, "two_col": False,
+            "leading_extra": 1.5, "embed_section_title": True,
+        },
         "compact": {
             "margin_mm": 10, "title": 12, "date": 8, "header": 8, "section": 8,
             "item": 7, "note": 6.5, "pad": 1.5, "section_gap_mm": 1.5, "title_gap_mm": 2,
@@ -3715,6 +3721,27 @@ def _inspection_pdf_density_cfg(density="normal"):
         },
     }
     return dict(presets.get(density) or presets["normal"])
+
+def _scale_inspection_pdf_spacing(cfg, scale):
+    out = dict(cfg)
+    out["pad"] = min(6.0, float(out["pad"]) * scale)
+    out["section_gap_mm"] = min(6.0, float(out["section_gap_mm"]) * scale)
+    out["title_gap_mm"] = min(7.0, float(out["title_gap_mm"]) * scale)
+    out["header_gap_mm"] = min(7.0, float(out["header_gap_mm"]) * scale)
+    out["section_title_gap_mm"] = min(3.0, float(out["section_title_gap_mm"]) * scale)
+    out["leading_extra"] = min(4.0, float(out["leading_extra"]) * scale)
+    return out
+
+def _inspection_pdf_flowables_height(story, width):
+    total = 0
+    for item in story:
+        _w, height = item.wrap(width, 4000)
+        total += height
+        if hasattr(item, "getSpaceBefore"):
+            total += item.getSpaceBefore()
+        if hasattr(item, "getSpaceAfter"):
+            total += item.getSpaceAfter()
+    return total
 
 def _inspection_pdf_paragraph(text, font_name, font_size, cfg, align=0):
     from reportlab.lib.styles import ParagraphStyle
@@ -3977,14 +4004,15 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
 
 def _render_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
                                         detail_text, memo, device_category, report_kind,
-                                        item_rows, check_type_label, report_sections, density):
+                                        item_rows, check_type_label, report_sections, density,
+                                        cfg=None):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas as pdfcanvas
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer
 
-    cfg = _inspection_pdf_density_cfg(density)
+    cfg = dict(cfg or _inspection_pdf_density_cfg(density))
     font_name = _daily_monthly_pdf_font()
     p = lambda text, size, align=0: _inspection_pdf_paragraph(text, font_name, size, cfg, align=align)
     usable_mm = 210 - 2 * cfg["margin_mm"]
@@ -4077,28 +4105,61 @@ def _render_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector
         f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')}　|　miratech 医療機器管理システム",
         7,
     ))
+    usable_width = A4[0] - 2 * cfg["margin_mm"] * mm
+    usable_height = A4[1] - 2 * cfg["margin_mm"] * mm
+    used_height = _inspection_pdf_flowables_height(story, usable_width)
     doc.build(story, canvasmaker=_CountingCanvas)
     pdf_bytes = buf.getvalue()
     pages = page_box["n"]
     if pages <= 0:
         pages = max(1, len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)))
-    return pdf_bytes, pages
+    return pdf_bytes, pages, used_height, usable_height
 
 def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
                                       detail_text="", memo="", device_category="",
                                       report_kind="定期点検", item_rows=None, check_type_label="",
                                       report_sections=None):
+    args = (
+        check_date, me_no, model_name, inspector, result,
+        detail_text, memo, device_category, report_kind,
+        item_rows, check_type_label, report_sections,
+    )
     last_bytes = b""
-    for density in ("normal", "compact", "tight"):
-        pdf_bytes, pages = _render_inspection_report_pdf_bytes(
-            check_date, me_no, model_name, inspector, result,
-            detail_text, memo, device_category, report_kind,
-            item_rows, check_type_label, report_sections, density,
+    chosen = None
+    for density in ("normal", "medium", "compact", "tight"):
+        pdf_bytes, pages, used_height, usable_height = _render_inspection_report_pdf_bytes(
+            *args, density,
         )
         last_bytes = pdf_bytes
         if pages <= 1:
-            return pdf_bytes
-    return last_bytes
+            chosen = (density, used_height, usable_height, pdf_bytes)
+            break
+    if not chosen:
+        return last_bytes
+
+    density, used_height, usable_height, pdf_bytes = chosen
+    if density == "normal" or used_height <= 0 or usable_height <= 0:
+        return pdf_bytes
+    leftover_ratio = 1.0 - (used_height / usable_height)
+    if leftover_ratio < 0.12:
+        return pdf_bytes
+
+    target_ratio = 0.90
+    scale = min(3.0, max(1.05, (usable_height * target_ratio) / used_height))
+    base_cfg = _inspection_pdf_density_cfg(density)
+    best_bytes = pdf_bytes
+    lo, hi = 1.0, scale
+    for _ in range(7):
+        mid = (lo + hi) / 2.0
+        trial_bytes, trial_pages, trial_used, trial_avail = _render_inspection_report_pdf_bytes(
+            *args, density, cfg=_scale_inspection_pdf_spacing(base_cfg, mid),
+        )
+        if trial_pages <= 1 and trial_used <= trial_avail:
+            best_bytes = trial_bytes
+            lo = mid
+        else:
+            hi = mid
+    return best_bytes
 
 def render_inspection_history_viewer(conn, df_master, df_history):
     """点検表履歴の一覧表示・報告書印刷（定期点検 / 修理・故障対応）"""
