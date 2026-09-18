@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18f"
+APP_VERSION = "2026-09-19a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -3693,89 +3693,215 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
     if memo and str(memo).strip():
         st.info(f"備考・報告欄:\n{memo}")
 
-def _append_inspection_sections_pdf(story, report_sections, font_name):
+def _inspection_pdf_density_cfg(density="normal"):
+    presets = {
+        "normal": {
+            "margin_mm": 14, "title": 14, "date": 10, "header": 9, "section": 10,
+            "item": 8, "note": 7, "pad": 3, "section_gap_mm": 3, "title_gap_mm": 4,
+            "header_gap_mm": 5, "section_title_gap_mm": 1.5, "two_col": False,
+            "leading_extra": 2, "embed_section_title": False,
+        },
+        "compact": {
+            "margin_mm": 10, "title": 12, "date": 8, "header": 8, "section": 8,
+            "item": 7, "note": 6.5, "pad": 1.5, "section_gap_mm": 1.5, "title_gap_mm": 2,
+            "header_gap_mm": 2.5, "section_title_gap_mm": 0.8, "two_col": False,
+            "leading_extra": 1, "embed_section_title": True,
+        },
+        "tight": {
+            "margin_mm": 8, "title": 11, "date": 8, "header": 7.5, "section": 8,
+            "item": 6.5, "note": 6, "pad": 1, "section_gap_mm": 1, "title_gap_mm": 1.5,
+            "header_gap_mm": 2, "section_title_gap_mm": 0.6, "two_col": True,
+            "leading_extra": 1, "embed_section_title": True,
+        },
+    }
+    return dict(presets.get(density) or presets["normal"])
+
+def _inspection_pdf_paragraph(text, font_name, font_size, cfg, align=0):
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    style = ParagraphStyle(
+        name=f"insp_pdf_{font_size}_{align}_{cfg.get('leading_extra', 2)}",
+        fontName=font_name,
+        fontSize=font_size,
+        leading=font_size + cfg.get("leading_extra", 2),
+        alignment=align,
+    )
+    safe_text = html.escape(str(text or "")).replace("\n", "<br/>")
+    return Paragraph(safe_text, style)
+
+def _inspection_pdf_judge_fill(judge):
+    from reportlab.lib import colors
+    sym = normalize_check_symbol(judge)
+    if sym == "×":
+        return colors.HexColor("#ffcdd2")
+    if sym == "〇":
+        return colors.HexColor("#c8e6c9")
+    if sym == "△":
+        return colors.HexColor("#fff9c4")
+    return None
+
+def _append_inspection_sections_pdf(story, report_sections, font_name, cfg=None):
     from reportlab.lib import colors
     from reportlab.lib.units import mm
     from reportlab.platypus import Table, TableStyle, Spacer
 
+    cfg = cfg or _inspection_pdf_density_cfg("normal")
+    usable_mm = 210 - 2 * cfg["margin_mm"]
+    p = lambda text, size=None, align=0: _inspection_pdf_paragraph(
+        text, font_name, cfg["item"] if size is None else size, cfg, align=align,
+    )
+
     for section in report_sections.get("sections", []):
-        story.append(_daily_monthly_pdf_paragraph(section.get("title", "点検項目"), font_name, 10))
-        story.append(Spacer(1, 1.5 * mm))
-        if section.get("kind") in ("measure", "mixed"):
-            table_data = [[
-                _daily_monthly_pdf_paragraph("点検・測定項目", font_name, 8),
-                _daily_monthly_pdf_paragraph("基準・備考", font_name, 8),
-                _daily_monthly_pdf_paragraph("実測値", font_name, 8),
-                _daily_monthly_pdf_paragraph("判定", font_name, 8),
-            ]]
+        kind = section.get("kind")
+        title = section.get("title", "点検項目")
+        items = section.get("items") or []
+        if kind not in ("measure", "mixed") and cfg.get("two_col"):
+            col_widths = [usable_mm * w / 100.0 * mm for w in (36, 14, 36, 14)]
+            table_data = []
+            header_row_idx = 0
+            if cfg.get("embed_section_title"):
+                table_data.append([p(title, cfg["section"]), "", "", ""])
+                header_row_idx = 1
+            table_data.append([
+                p("点検項目", cfg["item"]), p("判定", cfg["item"]),
+                p("点検項目", cfg["item"]), p("判定", cfg["item"]),
+            ])
+            judge_pairs = []
+            for idx in range(0, len(items), 2):
+                left = items[idx]
+                right = items[idx + 1] if idx + 1 < len(items) else {}
+                table_data.append([
+                    p(left.get("name", "")),
+                    p(left.get("judge") or left.get("result", "")),
+                    p(right.get("name", "")),
+                    p(right.get("judge") or right.get("result", "")),
+                ])
+                judge_pairs.append((left.get("judge") or left.get("result", ""),
+                                    right.get("judge") or right.get("result", "")))
+            detail_table = Table(table_data, colWidths=col_widths, repeatRows=0)
+            style_cmds = [
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.black),
+                ("BACKGROUND", (0, header_row_idx), (-1, header_row_idx), colors.HexColor("#e8e8e8")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), cfg["pad"]),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), cfg["pad"]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ]
+            if cfg.get("embed_section_title"):
+                style_cmds.extend([
+                    ("SPAN", (0, 0), (-1, 0)),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d6d6d6")),
+                ])
+            for row_idx, (left_j, right_j) in enumerate(judge_pairs, start=header_row_idx + 1):
+                left_fill = _inspection_pdf_judge_fill(left_j)
+                right_fill = _inspection_pdf_judge_fill(right_j)
+                if left_fill:
+                    style_cmds.append(("BACKGROUND", (1, row_idx), (1, row_idx), left_fill))
+                if right_fill:
+                    style_cmds.append(("BACKGROUND", (3, row_idx), (3, row_idx), right_fill))
+            detail_table.setStyle(TableStyle(style_cmds))
+            story.extend([detail_table, Spacer(1, cfg["section_gap_mm"] * mm)])
+            continue
+
+        if not cfg.get("embed_section_title"):
+            story.append(_inspection_pdf_paragraph(title, font_name, cfg["section"], cfg))
+            story.append(Spacer(1, cfg["section_title_gap_mm"] * mm))
+
+        if kind in ("measure", "mixed"):
+            table_data = []
+            header_row_idx = 0
+            if cfg.get("embed_section_title"):
+                table_data.append([p(title, cfg["section"]), "", "", ""])
+                header_row_idx = 1
+            table_data.append([
+                p("点検・測定項目", cfg["item"]),
+                p("基準・備考", cfg["item"]),
+                p("実測値", cfg["item"]),
+                p("判定", cfg["item"]),
+            ])
             judge_rows = []
-            for item in section.get("items", []):
+            for item in items:
                 if item.get("sub_items"):
+                    note = item.get("standard") or item.get("note", "") if cfg.get("embed_section_title") else _section_item_reference(item)
                     table_data.append([
-                        _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
-                        _daily_monthly_pdf_paragraph(_section_item_reference(item), font_name, 7),
-                        _daily_monthly_pdf_paragraph("", font_name, 8),
-                        _daily_monthly_pdf_paragraph("", font_name, 8),
+                        p(item.get("name", "")),
+                        _inspection_pdf_paragraph(note, font_name, cfg["note"], cfg),
+                        p(""),
+                        p(""),
                     ])
                     judge_rows.append("")
                     for sub in item["sub_items"]:
                         table_data.append([
-                            _daily_monthly_pdf_paragraph(f"  {sub.get('name', '')}", font_name, 8),
-                            _daily_monthly_pdf_paragraph(sub.get("standard", ""), font_name, 7),
-                            _daily_monthly_pdf_paragraph(sub.get("result", ""), font_name, 8),
-                            _daily_monthly_pdf_paragraph(sub.get("judge", ""), font_name, 8),
+                            p(f"  {sub.get('name', '')}"),
+                            _inspection_pdf_paragraph(sub.get("standard", ""), font_name, cfg["note"], cfg),
+                            p(sub.get("result", "")),
+                            p(sub.get("judge", "")),
                         ])
                         judge_rows.append(sub.get("judge", ""))
                 elif "standard" in item:
+                    note = item.get("standard") if cfg.get("embed_section_title") else _section_item_reference(item)
                     table_data.append([
-                        _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
-                        _daily_monthly_pdf_paragraph(_section_item_reference(item), font_name, 7),
-                        _daily_monthly_pdf_paragraph(item.get("result", ""), font_name, 8),
-                        _daily_monthly_pdf_paragraph(item.get("judge", ""), font_name, 8),
+                        p(item.get("name", "")),
+                        _inspection_pdf_paragraph(note, font_name, cfg["note"], cfg),
+                        p(item.get("result", "")),
+                        p(item.get("judge", "")),
                     ])
                     judge_rows.append(item.get("judge", ""))
                 else:
                     table_data.append([
-                        _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
-                        _daily_monthly_pdf_paragraph(item.get("note", ""), font_name, 7),
-                        _daily_monthly_pdf_paragraph(item.get("result", ""), font_name, 8),
-                        _daily_monthly_pdf_paragraph(item.get("judge", ""), font_name, 8),
+                        p(item.get("name", "")),
+                        _inspection_pdf_paragraph(item.get("note", ""), font_name, cfg["note"], cfg),
+                        p(item.get("result", "")),
+                        p(item.get("judge", "")),
                     ])
                     judge_rows.append(item.get("judge", ""))
-            col_widths = [40 * mm, 62 * mm, 28 * mm, 18 * mm]
+            col_widths = [usable_mm * w / 100.0 * mm for w in (30, 40, 18, 12)]
+            judge_cols = (3,)
         else:
-            table_data = [[
-                _daily_monthly_pdf_paragraph("点検項目", font_name, 8),
-                _daily_monthly_pdf_paragraph("結果", font_name, 8),
-                _daily_monthly_pdf_paragraph("判定", font_name, 8),
-            ]]
+            table_data = []
+            header_row_idx = 0
+            if cfg.get("embed_section_title"):
+                table_data.append([p(title, cfg["section"]), "", ""])
+                header_row_idx = 1
+            table_data.append([
+                p("点検項目", cfg["item"]),
+                p("結果", cfg["item"]),
+                p("判定", cfg["item"]),
+            ])
             judge_rows = []
-            for item in section.get("items", []):
+            for item in items:
                 table_data.append([
-                    _daily_monthly_pdf_paragraph(item.get("name", ""), font_name, 8),
-                    _daily_monthly_pdf_paragraph(item.get("result", ""), font_name, 8),
-                    _daily_monthly_pdf_paragraph(item.get("judge", ""), font_name, 8),
+                    p(item.get("name", "")),
+                    p(item.get("result", "")),
+                    p(item.get("judge", "")),
                 ])
                 judge_rows.append(item.get("judge", ""))
-            col_widths = [78 * mm, 48 * mm, 22 * mm]
+            col_widths = [usable_mm * w / 100.0 * mm for w in (55, 28, 17)]
+            judge_cols = (2,)
 
-        detail_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        detail_table = Table(table_data, colWidths=col_widths, repeatRows=0 if cfg.get("embed_section_title") else 1)
         style_cmds = [
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
+            ("GRID", (0, 0), (-1, -1), 0.35 if cfg.get("embed_section_title") else 0.4, colors.black),
+            ("BACKGROUND", (0, header_row_idx), (-1, header_row_idx), colors.HexColor("#e8e8e8")),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), cfg["pad"]),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), cfg["pad"]),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ]
-        judge_col = 3 if section.get("kind") in ("measure", "mixed") else 2
-        for row_idx, judge in enumerate(judge_rows, start=1):
-            sym = normalize_check_symbol(judge)
-            if sym == "×":
-                style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#ffcdd2")))
-            elif sym == "〇":
-                style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#c8e6c9")))
-            elif sym == "△":
-                style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), colors.HexColor("#fff9c4")))
+        if cfg.get("embed_section_title"):
+            style_cmds.extend([
+                ("SPAN", (0, 0), (-1, 0)),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d6d6d6")),
+            ])
+        for row_idx, judge in enumerate(judge_rows, start=header_row_idx + 1):
+            fill = _inspection_pdf_judge_fill(judge)
+            if fill:
+                for judge_col in judge_cols:
+                    style_cmds.append(("BACKGROUND", (judge_col, row_idx), (judge_col, row_idx), fill))
         detail_table.setStyle(TableStyle(style_cmds))
-        story.extend([detail_table, Spacer(1, 3 * mm)])
+        story.extend([detail_table, Spacer(1, cfg["section_gap_mm"] * mm)])
 
 def render_inspection_report(check_date, me_no, model_name, inspector, result, detail_text="", memo="",
                              device_category="", report_kind="定期点検", unique_key_suffix="",
@@ -3783,8 +3909,13 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     st.markdown("""
     <style>
     @media print {
-        header, [data-testid="stSidebar"], footer, .no-print { display: none !important; }
-        .block-container { max-width: 100% !important; padding-top: 0 !important; }
+        @page { size: A4 portrait; margin: 8mm; }
+        header, [data-testid="stSidebar"], [data-testid="stHeader"],
+        [data-testid="stToolbar"], footer, .no-print,
+        [data-testid="stDownloadButton"], [data-testid="stButton"] { display: none !important; }
+        .block-container { max-width: 100% !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+        table { font-size: 9px !important; }
+        h1, h2, h3 { font-size: 14px !important; margin: 4px 0 !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -3807,7 +3938,7 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
             key=pdf_key,
         )
     with col_hint:
-        st.caption("A4縦向きPDF。ブラウザの「印刷」→「PDFに保存」（Cmd/Ctrl + P）でも保存できます。")
+        st.caption("A4縦1枚のPDFです。ダウンロードして印刷してください。ブラウザ印刷（Cmd/Ctrl + P）でも保存できます。")
 
     title = report_sections.get("title") if report_sections else None
     title = title or inspection_report_title(report_kind)
@@ -3844,30 +3975,37 @@ def render_inspection_report(check_date, me_no, model_name, inspector, result, d
     if memo and str(memo).strip().lower() not in ("", "nan"):
         st.info(f"備考・処置内容:\n{memo}")
 
-def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
-                                      detail_text="", memo="", device_category="",
-                                      report_kind="定期点検", item_rows=None, check_type_label="",
-                                      report_sections=None):
+def _render_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
+                                        detail_text, memo, device_category, report_kind,
+                                        item_rows, check_type_label, report_sections, density):
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas as pdfcanvas
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer
 
+    cfg = _inspection_pdf_density_cfg(density)
     font_name = _daily_monthly_pdf_font()
+    p = lambda text, size, align=0: _inspection_pdf_paragraph(text, font_name, size, cfg, align=align)
+    usable_mm = 210 - 2 * cfg["margin_mm"]
     buf = BytesIO()
+    page_box = {"n": 0}
+
+    class _CountingCanvas(pdfcanvas.Canvas):
+        def showPage(self):
+            page_box["n"] += 1
+            super().showPage()
+
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=14 * mm, rightMargin=14 * mm,
-        topMargin=14 * mm, bottomMargin=14 * mm,
+        leftMargin=cfg["margin_mm"] * mm, rightMargin=cfg["margin_mm"] * mm,
+        topMargin=cfg["margin_mm"] * mm, bottomMargin=cfg["margin_mm"] * mm,
     )
     story = [
-        _daily_monthly_pdf_paragraph(
-            (report_sections.get("title") if report_sections else None)
-            or inspection_report_title(report_kind),
-            font_name, 14, align=1,
-        ),
-        _daily_monthly_pdf_paragraph(f"作業日: {check_date}", font_name, 10, align=1),
-        Spacer(1, 4 * mm),
+        p((report_sections.get("title") if report_sections else None)
+          or inspection_report_title(report_kind), cfg["title"], align=1),
+        p(f"作業日: {check_date}", cfg["date"], align=1),
+        Spacer(1, cfg["title_gap_mm"] * mm),
     ]
 
     header_rows = [
@@ -3881,72 +4019,86 @@ def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, 
     if check_type_label:
         header_rows.append(["作業区分", check_type_label, "", ""])
 
-    header_table_data = []
-    for row in header_rows:
-        header_table_data.append([
-            _daily_monthly_pdf_paragraph(cell, font_name, 9) for cell in row
-        ])
-    header_table = Table(header_table_data, colWidths=[32 * mm, 52 * mm, 32 * mm, 52 * mm])
+    header_table_data = [[p(cell, cfg["header"]) for cell in row] for row in header_rows]
+    header_w = usable_mm * mm / 4.0
+    header_table = Table(header_table_data, colWidths=[header_w] * 4)
     header_table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#e8e8e8")),
         ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#e8e8e8")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), cfg["pad"]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), cfg["pad"]),
     ]))
-    story.extend([header_table, Spacer(1, 5 * mm)])
+    story.extend([header_table, Spacer(1, cfg["header_gap_mm"] * mm)])
 
     if report_sections and report_sections.get("sections"):
-        _append_inspection_sections_pdf(story, report_sections, font_name)
+        _append_inspection_sections_pdf(story, report_sections, font_name, cfg=cfg)
     else:
         item_names, item_results, item_judges = resolve_inspection_table_rows(detail_text, item_rows)
         if item_names:
-            story.append(_daily_monthly_pdf_paragraph("点検・測定結果", font_name, 11))
-            story.append(Spacer(1, 2 * mm))
+            story.append(p("点検・測定結果", max(cfg["section"], 8)))
+            story.append(Spacer(1, 1.2 * mm))
             detail_table_data = [[
-                _daily_monthly_pdf_paragraph("点検・測定項目", font_name, 8),
-                _daily_monthly_pdf_paragraph("点検実測値 / 結果", font_name, 8),
-                _daily_monthly_pdf_paragraph("判定", font_name, 8),
+                p("点検・測定項目", cfg["item"]),
+                p("点検実測値 / 結果", cfg["item"]),
+                p("判定", cfg["item"]),
             ]]
             for name, res, judge in zip(item_names, item_results, item_judges):
                 detail_table_data.append([
-                    _daily_monthly_pdf_paragraph(name, font_name, 8),
-                    _daily_monthly_pdf_paragraph(res, font_name, 8),
-                    _daily_monthly_pdf_paragraph(judge, font_name, 8),
+                    p(name, cfg["item"]),
+                    p(res, cfg["item"]),
+                    p(judge, cfg["item"]),
                 ])
-            detail_table = Table(
-                detail_table_data,
-                colWidths=[62 * mm, 58 * mm, 28 * mm],
-                repeatRows=1,
-            )
+            col_widths = [usable_mm * w / 100.0 * mm for w in (42, 40, 18)]
+            detail_table = Table(detail_table_data, colWidths=col_widths, repeatRows=0)
             style_cmds = [
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.black),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.black),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e8e8")),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), cfg["pad"]),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), cfg["pad"]),
             ]
             for row_idx, judge in enumerate(item_judges, start=1):
-                sym = normalize_check_symbol(judge)
-                if sym == "×":
-                    style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#ffcdd2")))
-                elif sym == "〇":
-                    style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#c8e6c9")))
-                elif sym == "△":
-                    style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), colors.HexColor("#fff9c4")))
+                fill = _inspection_pdf_judge_fill(judge)
+                if fill:
+                    style_cmds.append(("BACKGROUND", (2, row_idx), (2, row_idx), fill))
             detail_table.setStyle(TableStyle(style_cmds))
-            story.extend([detail_table, Spacer(1, 4 * mm)])
+            story.extend([detail_table, Spacer(1, cfg["section_gap_mm"] * mm)])
 
     if memo and str(memo).strip().lower() not in ("", "nan"):
         story.extend([
-            _daily_monthly_pdf_paragraph("備考・処置内容", font_name, 10),
-            _daily_monthly_pdf_paragraph(memo, font_name, 9),
-            Spacer(1, 3 * mm),
+            p("備考・処置内容", cfg["section"]),
+            p(memo, max(cfg["note"], 7)),
+            Spacer(1, 2 * mm),
         ])
 
-    story.append(_daily_monthly_pdf_paragraph(
+    story.append(p(
         f"出力日時: {format_jst(fmt='%Y-%m-%d %H:%M')}　|　miratech 医療機器管理システム",
-        font_name, 7,
+        7,
     ))
-    doc.build(story)
-    return buf.getvalue()
+    doc.build(story, canvasmaker=_CountingCanvas)
+    pdf_bytes = buf.getvalue()
+    pages = page_box["n"]
+    if pages <= 0:
+        pages = max(1, len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes)))
+    return pdf_bytes, pages
+
+def build_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector, result,
+                                      detail_text="", memo="", device_category="",
+                                      report_kind="定期点検", item_rows=None, check_type_label="",
+                                      report_sections=None):
+    last_bytes = b""
+    for density in ("normal", "compact", "tight"):
+        pdf_bytes, pages = _render_inspection_report_pdf_bytes(
+            check_date, me_no, model_name, inspector, result,
+            detail_text, memo, device_category, report_kind,
+            item_rows, check_type_label, report_sections, density,
+        )
+        last_bytes = pdf_bytes
+        if pages <= 1:
+            return pdf_bytes
+    return last_bytes
 
 def render_inspection_history_viewer(conn, df_master, df_history):
     """点検表履歴の一覧表示・報告書印刷（定期点検 / 修理・故障対応）"""
