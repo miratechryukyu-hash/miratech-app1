@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-19b"
+APP_VERSION = "2026-09-19c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -4096,8 +4096,8 @@ def _render_inspection_report_pdf_bytes(check_date, me_no, model_name, inspector
 
     if memo and str(memo).strip().lower() not in ("", "nan"):
         story.extend([
-            p("備考・処置内容", cfg["section"]),
-            p(memo, max(cfg["note"], 7)),
+            p("備考・処置内容", max(cfg["section"], 10)),
+            p(memo, max(cfg["item"] + 2, 10)),
             Spacer(1, 2 * mm),
         ])
 
