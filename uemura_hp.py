@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18b"
+APP_VERSION = "2026-09-18c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -4907,7 +4907,7 @@ def execute_inspection_save(conn, final_me_no, final_sn, device_category, device
     )
     write_log(inspector, f"{final_me_no} の点検を登録")
     st.session_state["last_check_date"] = check_date
-    st.session_state["check_registered_msg"] = f"{final_me_no} の点検データを登録しました。"
+    st.session_state["check_registered_msg"] = "登録できました"
     return {
         "check_date": check_date,
         "final_me_no": final_me_no,
@@ -5373,6 +5373,7 @@ def attempt_inspection_save(conn, save_payload):
         delete_inspection_draft(conn, me_no)
         st.session_state.pop(f"inspection_draft_applied_{me_no}", None)
         st.session_state["inspection_saved_report"] = saved_report
+        st.session_state["show_registered_toast"] = True
         st.rerun()
     except Exception as e:
         store_pending_check_save(save_payload, reason="failed", error_msg=str(e))
@@ -7541,7 +7542,7 @@ with tabs[1]:
     </style>
     """, unsafe_allow_html=True)
 
-    if st.session_state.get("check_registered_msg"):
+    if st.session_state.get("check_registered_msg") and not st.session_state.get("inspection_saved_report"):
         st.success(st.session_state["check_registered_msg"])
 
     # エラー防止のためにすべての変数を初期化
@@ -7604,6 +7605,9 @@ with tabs[1]:
 
     if st.session_state.get("inspection_saved_report"):
         saved_inspection = st.session_state["inspection_saved_report"]
+        st.success("登録できました")
+        if st.session_state.pop("show_registered_toast", False):
+            st.toast("登録できました")
         st.markdown("---")
         st.subheader("点検報告書（印刷・PDF保存）")
         st.caption("Cmd/Ctrl + P で印刷、または「PDFをダウンロード」から保存できます。")
