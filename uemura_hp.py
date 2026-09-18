@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18d"
+APP_VERSION = "2026-09-18e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -172,6 +172,29 @@ INFUSION_PUMP_FUNCTION_ITEMS = [
 
 def default_infusion_pump_checks():
     return {label: "---" for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS}
+
+INFUSION_LEAKAGE_LIMITS = [
+    ("接地漏れ電流(正常)", 200, "正常200μA以下"),
+    ("接地漏れ電流(単一故障)", 500, "単一故障500μA以下"),
+    ("外装漏れ電流(正常)", 100, "正常100μA以下"),
+    ("外装漏れ電流(単一故障)", 500, "単一故障500μA以下"),
+]
+INFUSION_LEAKAGE_WIDGET_KEYS = {
+    "接地漏れ電流(正常)": "inp_leak_earth_n",
+    "接地漏れ電流(単一故障)": "inp_leak_earth_f",
+    "外装漏れ電流(正常)": "inp_leak_enc_n",
+    "外装漏れ電流(単一故障)": "inp_leak_enc_f",
+}
+
+def default_infusion_pump_measurements():
+    return {name: 0 for name, _, _ in INFUSION_LEAKAGE_LIMITS}
+
+def _validate_infusion_pump_leakage(measurements, ng_items):
+    m = measurements or default_infusion_pump_measurements()
+    for name, limit, _note in INFUSION_LEAKAGE_LIMITS:
+        val = leakage_ua_int(m.get(name, 0))
+        if val > limit:
+            ng_items.append(f"{name}（{val}μA）")
 
 TE131_OCC_TIME_MIN = 3.0
 TE131_OCC_TIME_MAX = 10.0
@@ -2805,13 +2828,30 @@ def _measured_item(name, note, standard, result, judge):
         "judge": judge,
     }
 
+def infusion_leakage_report_items(measurements):
+    m = measurements or default_infusion_pump_measurements()
+    items = []
+    for name, limit, note in INFUSION_LEAKAGE_LIMITS:
+        val = leakage_ua_int(m.get(name, 0))
+        items.append(_measured_item(
+            name, note, f"≤{limit}μA",
+            format_leakage_ua(val),
+            measure_judge(val <= limit),
+        ))
+    return items
+
 def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7,
                                         infusion_pump_checks, flow_acc, occ_press,
                                         min_flow, max_flow, min_press, max_press,
                                         flow_unit, press_unit, bubble_ad_water, bubble_ad_dry,
-                                        device_model="", occ_time=0.0, occ_level=None):
+                                        device_model="", occ_time=0.0, occ_level=None,
+                                        infusion_pump_measurements=None):
     """輸液ポンプ点検フォームと同一構成の印刷用セクションデータ"""
     infusion_pump_checks = infusion_pump_checks or {}
+    infusion_pump_measurements = {
+        **default_infusion_pump_measurements(),
+        **(infusion_pump_measurements or {}),
+    }
     appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
     min_press, max_press = resolve_infusion_occ_press_range(
         device_model, min_press, max_press, occ_level,
@@ -2904,6 +2944,11 @@ def build_infusion_pump_report_sections(chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, 
                 "kind": "measure",
                 "items": measure_items,
             },
+            {
+                "title": "5. 漏れ電流",
+                "kind": "measure",
+                "items": infusion_leakage_report_items(infusion_pump_measurements),
+            },
         ],
     }
 
@@ -2952,6 +2997,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                      flow_unit, press_unit,
                                      infusion_pump_checks=None,
+                                     infusion_pump_measurements=None,
                                      bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                      device_model="",
                                      occ_time=0.0,
@@ -2978,6 +3024,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             min_flow, max_flow, min_press, max_press,
             flow_unit, press_unit, bubble_ad_water, bubble_ad_dry,
             device_model=device_model, occ_time=occ_time, occ_level=occ_level,
+            infusion_pump_measurements=infusion_pump_measurements,
         )
     if device_category == "シリンジポンプ":
         return build_syringe_pump_report_sections(
@@ -3578,6 +3625,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
                                    flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                    flow_unit, press_unit,
                                    infusion_pump_checks=None,
+                                   infusion_pump_measurements=None,
                                    bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                    occ_time=0.0,
                                    occ_level=None,
@@ -3596,6 +3644,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
         flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
         flow_unit, press_unit,
         infusion_pump_checks=infusion_pump_checks,
+        infusion_pump_measurements=infusion_pump_measurements,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
@@ -4600,6 +4649,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                               flow_unit="ml", press_unit="kPa",
                               infusion_pump_checks=None,
+                              infusion_pump_measurements=None,
                               bubble_ad_water=0.0, bubble_ad_dry=0.0,
                               device_model="",
                               occ_time=0.0,
@@ -4653,6 +4703,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                         ng_items.append(f"気泡センサーAD値(水入り)（{bubble_ad_water}）")
                     if bubble_ad_dry > 10:
                         ng_items.append(f"気泡センサーAD値(水無し)（{bubble_ad_dry}）")
+                _validate_infusion_pump_leakage(infusion_pump_measurements, ng_items)
 
     elif device_category == "保育器":
         if is_v2100g_incubator(device_category, device_model):
@@ -4734,11 +4785,16 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                                flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                flow_unit, press_unit,
                                infusion_pump_checks=None,
+                               infusion_pump_measurements=None,
                                bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                device_model="", occ_time=0.0, occ_level=None):
     """点検報告書用の項目行 [(項目名, 結果, 判定), ...] を生成"""
     rows = []
     infusion_pump_checks = infusion_pump_checks or {}
+    infusion_pump_measurements = {
+        **default_infusion_pump_measurements(),
+        **(infusion_pump_measurements or {}),
+    }
 
     if check_type == "院内点検(miratech)":
         if device_category in ["輸液ポンプ", "シリンジポンプ"]:
@@ -4772,6 +4828,10 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                 dry_judge = measure_judge(bubble_ad_dry <= 10)
                 rows.append(("気泡センサーAD値(水入り)", str(bubble_ad_water), water_judge))
                 rows.append(("気泡センサーAD値(水無し)", str(bubble_ad_dry), dry_judge))
+            if device_category == "輸液ポンプ":
+                for name, limit, _note in INFUSION_LEAKAGE_LIMITS:
+                    val = leakage_ua_int(infusion_pump_measurements.get(name, 0))
+                    rows.append((name, format_leakage_ua(val), measure_judge(val <= limit)))
         elif device_category == "保育器":
             for label, val in inc_o_checks.items():
                 val_s = normalize_check_symbol(val) or "---"
@@ -4784,6 +4844,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
                                  flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                  flow_unit, press_unit,
                                  infusion_pump_checks=None,
+                                 infusion_pump_measurements=None,
                                  bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                  device_model="", occ_time=0.0, occ_level=None):
     rows = build_inspection_item_rows(
@@ -4792,6 +4853,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
         flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
         flow_unit, press_unit,
         infusion_pump_checks=infusion_pump_checks,
+        infusion_pump_measurements=infusion_pump_measurements,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
@@ -4826,6 +4888,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                                  flow_unit, press_unit,
                                  infusion_pump_checks=None,
+                                 infusion_pump_measurements=None,
                                  bubble_ad_water=0.0, bubble_ad_dry=0.0,
                                  device_model="",
                                  occ_time=0.0,
@@ -4850,6 +4913,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
         flow_unit, press_unit,
         infusion_pump_checks=infusion_pump_checks,
+        infusion_pump_measurements=infusion_pump_measurements,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
@@ -4875,6 +4939,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
         flow_unit, press_unit,
         infusion_pump_checks=infusion_pump_checks,
+        infusion_pump_measurements=infusion_pump_measurements,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
@@ -4889,6 +4954,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
         flow_unit, press_unit,
         infusion_pump_checks=infusion_pump_checks,
+        infusion_pump_measurements=infusion_pump_measurements,
         bubble_ad_water=bubble_ad_water,
         bubble_ad_dry=bubble_ad_dry,
         device_model=device_model,
@@ -5015,7 +5081,7 @@ def _deserialize_inspection_draft(raw_json):
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
         "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
-        "infusion_pump_checks", "resusciflow_checks", "resusciflow_measurements",
+        "infusion_pump_checks", "infusion_pump_measurements", "resusciflow_checks", "resusciflow_measurements",
         "resusciflow_meta", "resusciflow_parts",
     ):
         if dict_key in data and isinstance(data[dict_key], dict):
@@ -5058,13 +5124,15 @@ def inspection_draft_has_content(payload):
     for part in rf_parts.values():
         if isinstance(part, dict) and clean_data_str(part.get("判定", "")) == "要交換":
             return True
-    for dict_key in ("incu_i_measurements", "vsm_measurements", "ecg_measurements", "ox370_measurements"):
+    for dict_key in ("incu_i_measurements", "vsm_measurements", "ecg_measurements", "ox370_measurements",
+                     "infusion_pump_measurements"):
         m = payload.get(dict_key) or {}
         defaults = {
             "incu_i_measurements": default_incu_i_measurements(),
             "vsm_measurements": default_vsm_measurements(),
             "ecg_measurements": default_ecg_measurements(),
             "ox370_measurements": default_ox370_measurements(),
+            "infusion_pump_measurements": default_infusion_pump_measurements(),
         }.get(dict_key, {})
         for k, v in m.items():
             if k in defaults and v == defaults[k]:
@@ -5228,7 +5296,7 @@ def apply_inspection_draft_to_state(draft):
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
         "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
-        "infusion_pump_checks", "resusciflow_checks", "resusciflow_measurements",
+        "infusion_pump_checks", "infusion_pump_measurements", "resusciflow_checks", "resusciflow_measurements",
         "resusciflow_meta", "resusciflow_parts",
     ):
         if dict_key in draft and isinstance(draft[dict_key], dict):
@@ -5274,6 +5342,10 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
             _set_radio_session_key(f"inp_func_{label}", pump.get(label))
         if is_te131_pump(device_model) and draft.get("occ_level") is not None:
             st.session_state["inp_occ_level"] = parse_te131_occ_level(draft.get("occ_level"))
+        leak = draft.get("infusion_pump_measurements") or {}
+        for name, key in INFUSION_LEAKAGE_WIDGET_KEYS.items():
+            if leak.get(name) is not None:
+                st.session_state[key] = leakage_ua_int(leak.get(name))
     elif device_category == "保育器":
         if is_v2100g_incubator(device_category, device_model):
             for idx, label in enumerate(V2100G_APPEARANCE_ITEMS):
@@ -7580,6 +7652,7 @@ with tabs[1]:
     bubble_ad_water = 100.0
     bubble_ad_dry = 10.0
     infusion_pump_checks = default_infusion_pump_checks()
+    infusion_pump_measurements = default_infusion_pump_measurements()
 
     input_keyword = st.text_input(
         "管理番号・旧番号 または シリアルNo を入力して検索",
@@ -7603,6 +7676,8 @@ with tabs[1]:
         for label in INFUSION_PUMP_FUNCTION_ITEMS:
             st.session_state.pop(f"inp_func_{label}", None)
         st.session_state.pop("inp_occ_level", None)
+        for key in INFUSION_LEAKAGE_WIDGET_KEYS.values():
+            st.session_state.pop(key, None)
 
     master_row = None
     match_type = None
@@ -7717,6 +7792,10 @@ with tabs[1]:
             resusciflow_meta = {**default_resusciflow_meta(), **applied_draft.get("resusciflow_meta", {})}
             resusciflow_parts = {**default_resusciflow_parts(), **applied_draft.get("resusciflow_parts", {})}
             infusion_pump_checks = {**default_infusion_pump_checks(), **applied_draft.get("infusion_pump_checks", {})}
+            infusion_pump_measurements = {
+                **default_infusion_pump_measurements(),
+                **applied_draft.get("infusion_pump_measurements", {}),
+            }
             if applied_draft.get("check_date"):
                 st.session_state["last_check_date"] = applied_draft["check_date"]
             st.success("下書きを復元しました。内容を確認して保存してください。")
@@ -7833,6 +7912,36 @@ with tabs[1]:
                     with bubble_col2:
                         bubble_ad_dry = st.number_input("水無し", min_value=0.0, value=float(bubble_ad_dry), step=1.0)
 
+                st.write("**5. 漏れ電流**")
+                st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
+                leak_c1, leak_c2 = st.columns(2)
+                with leak_c1:
+                    infusion_pump_measurements["接地漏れ電流(正常)"] = _leakage_number_input(
+                        "接地漏れ電流 正常 (μA)",
+                        infusion_pump_measurements["接地漏れ電流(正常)"],
+                        INFUSION_LEAKAGE_WIDGET_KEYS["接地漏れ電流(正常)"],
+                    )
+                with leak_c2:
+                    infusion_pump_measurements["接地漏れ電流(単一故障)"] = _leakage_number_input(
+                        "接地漏れ電流 単一故障 (μA)",
+                        infusion_pump_measurements["接地漏れ電流(単一故障)"],
+                        INFUSION_LEAKAGE_WIDGET_KEYS["接地漏れ電流(単一故障)"],
+                    )
+                st.caption("外装漏れ電流: 正常100μA以下 / 単一故障500μA以下")
+                leak_c3, leak_c4 = st.columns(2)
+                with leak_c3:
+                    infusion_pump_measurements["外装漏れ電流(正常)"] = _leakage_number_input(
+                        "外装漏れ電流 正常 (μA)",
+                        infusion_pump_measurements["外装漏れ電流(正常)"],
+                        INFUSION_LEAKAGE_WIDGET_KEYS["外装漏れ電流(正常)"],
+                    )
+                with leak_c4:
+                    infusion_pump_measurements["外装漏れ電流(単一故障)"] = _leakage_number_input(
+                        "外装漏れ電流 単一故障 (μA)",
+                        infusion_pump_measurements["外装漏れ電流(単一故障)"],
+                        INFUSION_LEAKAGE_WIDGET_KEYS["外装漏れ電流(単一故障)"],
+                    )
+
             elif device_category == "シリンジポンプ":
                 st.write("**1. 外観・作動点検**")
                 app_keys = [f"inp_app_{idx}" for idx in range(len(INFUSION_PUMP_APPEARANCE_ITEMS))]
@@ -7934,6 +8043,7 @@ with tabs[1]:
             flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
             flow_unit, press_unit,
             infusion_pump_checks=infusion_pump_checks,
+            infusion_pump_measurements=infusion_pump_measurements,
             bubble_ad_water=bubble_ad_water, bubble_ad_dry=bubble_ad_dry,
             occ_time=occ_time,
             occ_level=occ_level,
@@ -7960,6 +8070,7 @@ with tabs[1]:
                     flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                     flow_unit, press_unit,
                     infusion_pump_checks=infusion_pump_checks,
+                    infusion_pump_measurements=infusion_pump_measurements,
                     bubble_ad_water=bubble_ad_water,
                     bubble_ad_dry=bubble_ad_dry,
                     device_model=device_model,
@@ -7985,6 +8096,7 @@ with tabs[1]:
                     flow_acc, occ_press, min_flow, max_flow, min_press, max_press,
                     flow_unit, press_unit,
                     infusion_pump_checks=infusion_pump_checks,
+                    infusion_pump_measurements=infusion_pump_measurements,
                     bubble_ad_water=bubble_ad_water,
                     bubble_ad_dry=bubble_ad_dry,
                     device_model=device_model,
@@ -8084,6 +8196,7 @@ with tabs[1]:
             "flow_unit": flow_unit, "press_unit": press_unit,
             "bubble_ad_water": bubble_ad_water, "bubble_ad_dry": bubble_ad_dry,
             "infusion_pump_checks": infusion_pump_checks,
+            "infusion_pump_measurements": infusion_pump_measurements,
             "incu_i_checks": incu_i_checks, "incu_i_measurements": incu_i_measurements,
             "vsm_checks": vsm_checks, "vsm_measurements": vsm_measurements, "vsm_meta": vsm_meta,
             "ecg_checks": ecg_checks, "ecg_measurements": ecg_measurements,
