@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18c"
+APP_VERSION = "2026-09-18d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -5360,7 +5360,7 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
         if meta.get("標準圧力計校正期限") is not None:
             st.session_state["rf_calibrator_cal"] = meta.get("標準圧力計校正期限", "")
 
-def attempt_inspection_save(conn, save_payload):
+def attempt_inspection_save(conn, save_payload, rerun=True):
     """点検をスプレッドシートへ保存。失敗しても payload を保持"""
     me_no = clean_data_str(save_payload.get("final_me_no", ""))
     clean_payload = {
@@ -5374,11 +5374,14 @@ def attempt_inspection_save(conn, save_payload):
         st.session_state.pop(f"inspection_draft_applied_{me_no}", None)
         st.session_state["inspection_saved_report"] = saved_report
         st.session_state["show_registered_toast"] = True
-        st.rerun()
+        if rerun:
+            st.rerun()
+        return True
     except Exception as e:
         store_pending_check_save(save_payload, reason="failed", error_msg=str(e))
         st.error(f"登録エラー: {e}")
         st.warning("入力内容は保持されています。下の「保存を再試行」から再度保存できます。")
+        return False
 
 def render_pending_check_save_recovery(conn):
     """未保存・保存失敗の点検データを復元して再試行"""
@@ -7542,9 +7545,6 @@ with tabs[1]:
     </style>
     """, unsafe_allow_html=True)
 
-    if st.session_state.get("check_registered_msg") and not st.session_state.get("inspection_saved_report"):
-        st.success(st.session_state["check_registered_msg"])
-
     # エラー防止のためにすべての変数を初期化
     final_me_no = ""
     final_sn = ""
@@ -7589,6 +7589,7 @@ with tabs[1]:
 
     if input_keyword != st.session_state.get("check_last_search_keyword", ""):
         st.session_state.pop("check_registered_msg", None)
+        st.session_state.pop("inspection_saved_report", None)
         st.session_state["check_last_search_keyword"] = input_keyword
 
     resolved_me = resolve_device_me_from_keyword(input_keyword, df_master_global)
@@ -7602,37 +7603,6 @@ with tabs[1]:
         for label in INFUSION_PUMP_FUNCTION_ITEMS:
             st.session_state.pop(f"inp_func_{label}", None)
         st.session_state.pop("inp_occ_level", None)
-
-    if st.session_state.get("inspection_saved_report"):
-        saved_inspection = st.session_state["inspection_saved_report"]
-        st.success("登録できました")
-        if st.session_state.pop("show_registered_toast", False):
-            st.toast("登録できました")
-        st.markdown("---")
-        st.subheader("点検報告書（印刷・PDF保存）")
-        st.caption("Cmd/Ctrl + P で印刷、または「PDFをダウンロード」から保存できます。")
-        render_inspection_report(
-            saved_inspection["check_date"],
-            saved_inspection["final_me_no"],
-            saved_inspection["model_name"],
-            saved_inspection["inspector"],
-            saved_inspection["result"],
-            saved_inspection.get("detail_text", ""),
-            saved_inspection.get("memo", ""),
-            device_category=saved_inspection.get("device_category", ""),
-            report_kind=saved_inspection.get("report_kind", "定期点検"),
-            unique_key_suffix="inspection_saved_session",
-            item_rows=saved_inspection.get("item_rows"),
-            check_type_label=saved_inspection.get("check_type", ""),
-            report_sections=saved_inspection.get("report_sections"),
-        )
-        st.markdown("---")
-        render_overdue_inspection_notice(conn)
-        if st.button("次の点検入力へ", type="primary", key="inspection_report_done"):
-            st.session_state.pop("inspection_saved_report", None)
-            st.session_state.pop("check_registered_msg", None)
-            st.rerun()
-        st.markdown("---")
 
     master_row = None
     match_type = None
@@ -8059,7 +8029,39 @@ with tabs[1]:
                 else:
                     if ng_items:
                         st.warning("問題項目: " + "、".join(ng_items))
-                    attempt_inspection_save(conn, save_payload)
+                    attempt_inspection_save(conn, save_payload, rerun=False)
+
+        if st.session_state.get("check_registered_msg"):
+            st.success("登録できました")
+            if st.session_state.pop("show_registered_toast", False):
+                st.toast("登録できました")
+
+        if st.session_state.get("inspection_saved_report"):
+            saved_inspection = st.session_state["inspection_saved_report"]
+            st.markdown("---")
+            st.subheader("点検報告書（印刷・PDF保存）")
+            st.caption("Cmd/Ctrl + P で印刷、または「PDFをダウンロード」から保存できます。")
+            render_inspection_report(
+                saved_inspection["check_date"],
+                saved_inspection["final_me_no"],
+                saved_inspection["model_name"],
+                saved_inspection["inspector"],
+                saved_inspection["result"],
+                saved_inspection.get("detail_text", ""),
+                saved_inspection.get("memo", ""),
+                device_category=saved_inspection.get("device_category", ""),
+                report_kind=saved_inspection.get("report_kind", "定期点検"),
+                unique_key_suffix="inspection_saved_session",
+                item_rows=saved_inspection.get("item_rows"),
+                check_type_label=saved_inspection.get("check_type", ""),
+                report_sections=saved_inspection.get("report_sections"),
+            )
+            st.markdown("---")
+            render_overdue_inspection_notice(conn)
+            if st.button("次の点検入力へ", type="primary", key="inspection_report_done"):
+                st.session_state.pop("inspection_saved_report", None)
+                st.session_state.pop("check_registered_msg", None)
+                st.rerun()
 
         draft_payload = {
             "final_me_no": final_me_no,
@@ -8091,7 +8093,8 @@ with tabs[1]:
             "resusciflow_meta": resusciflow_meta,
             "resusciflow_parts": resusciflow_parts,
         }
-        maybe_auto_save_inspection_draft(conn, draft_payload)
+        if not st.session_state.get("inspection_saved_report"):
+            maybe_auto_save_inspection_draft(conn, draft_payload)
     elif input_keyword:
         alert_device_not_registered()
 
