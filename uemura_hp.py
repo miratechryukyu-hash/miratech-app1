@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-18e"
+APP_VERSION = "2026-09-18f"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -6943,16 +6943,6 @@ def render_daily_report_tab(conn, facility_name):
     input_tab, history_tab = st.tabs(["日報入力", "履歴・PDF"])
 
     with input_tab:
-        if st.session_state.get("daily_report_saved"):
-            saved = st.session_state["daily_report_saved"]
-            st.success(f"{saved.get('日報日', '')} の日報を保存しました。")
-            render_daily_report_saved_pdf(saved, facility_name, key_suffix="saved_session")
-            if st.button("次の日報入力へ", type="primary", key="daily_report_next"):
-                st.session_state.pop("daily_report_saved", None)
-                st.session_state.pop("daily_report_time_rows", None)
-                st.rerun()
-            st.markdown("---")
-
         if "daily_report_date" not in st.session_state:
             st.session_state["daily_report_date"] = date.today()
         report_date = st.date_input("日報日", value=st.session_state["daily_report_date"], key="daily_report_date_input")
@@ -6986,9 +6976,17 @@ def render_daily_report_tab(conn, facility_name):
                         )
                     write_log(reporter.strip(), f"日報を登録 ({report_date})")
                     st.session_state["daily_report_saved"] = saved
-                    st.rerun()
                 except Exception as e:
                     st.error(f"保存エラー: {e}")
+
+        if st.session_state.get("daily_report_saved"):
+            saved = st.session_state["daily_report_saved"]
+            st.success(f"{saved.get('日報日', '')} の日報を保存しました。")
+            render_daily_report_saved_pdf(saved, facility_name, key_suffix="saved_session")
+            if st.button("次の日報入力へ", type="primary", key="daily_report_next"):
+                st.session_state.pop("daily_report_saved", None)
+                st.session_state.pop("daily_report_time_rows", None)
+                st.rerun()
 
     with history_tab:
         st.markdown("#### 日報履歴")
