@@ -80,7 +80,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-09-19c"
+APP_VERSION = "2026-10-13a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -4391,6 +4391,68 @@ def is_fault_pending(status_val):
     status = clean_data_str(status_val).lower()
     return status in ("", "未対応", "nan", "none")
 
+def _fault_report_date_str(val):
+    if isinstance(val, datetime):
+        return val.date().isoformat()
+    if isinstance(val, date):
+        return val.isoformat()
+    s = clean_data_str(val)
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", s)
+    if m:
+        return m.group(1)
+    try:
+        return pd.to_datetime(val).date().isoformat()
+    except (TypeError, ValueError):
+        return s
+
+def _fault_report_signature(report_date, occur_date, me_no, reporter, dept, symptom, status="未対応"):
+    return "|".join([
+        _fault_report_date_str(report_date),
+        _fault_report_date_str(occur_date),
+        clean_data_str(me_no),
+        clean_data_str(reporter),
+        clean_data_str(dept),
+        clean_data_str(symptom),
+        clean_data_str(status) or "未対応",
+    ])
+
+def save_fault_report_to_sheets(conn, report_date, occur_date, me_no, model_name, reporter, dept, symptom):
+    """故障報告を1件追加。同一内容の未対応行があれば追加しない。"""
+    new_row = {
+        "報告日": str(report_date),
+        "発生日": str(occur_date),
+        "管理番号": clean_data_str(me_no),
+        "機種": clean_data_str(model_name) or "不明な機器",
+        "報告者": clean_data_str(reporter),
+        "部署": clean_data_str(dept),
+        "症状": clean_data_str(symptom),
+        "対応状況": "未対応",
+    }
+    new_sig = _fault_report_signature(
+        new_row["報告日"], new_row["発生日"], new_row["管理番号"],
+        new_row["報告者"], new_row["部署"], new_row["症状"], new_row["対応状況"],
+    )
+    invalidate_sheet_read_cache("故障報告")
+    existing = safe_read_worksheet(conn, "故障報告", FAULT_REPORT_COLUMNS)
+    if existing is None or existing.empty:
+        existing = pd.DataFrame(columns=FAULT_REPORT_COLUMNS)
+    for col in FAULT_REPORT_COLUMNS:
+        if col not in existing.columns:
+            existing[col] = ""
+    for _, row in existing.iterrows():
+        row_sig = _fault_report_signature(
+            row.get("報告日"), row.get("発生日"), row.get("管理番号"),
+            row.get("報告者"), row.get("部署"), row.get("症状"),
+            row.get("対応状況") or "未対応",
+        )
+        if row_sig == new_sig:
+            return False
+    updated = pd.concat([existing, pd.DataFrame([new_row])], ignore_index=True)
+    extra_cols = [c for c in updated.columns if c not in FAULT_REPORT_COLUMNS]
+    updated = updated[FAULT_REPORT_COLUMNS + extra_cols]
+    conn.update(worksheet="故障報告", data=_sanitize_dataframe(updated))
+    return True
+
 def _fault_report_label(row):
     me = clean_data_str(row.get("管理番号", "不明"))
     model = clean_data_str(row.get("機種", "不明"))
@@ -7711,6 +7773,8 @@ if url_me_no:
     with qr_tab_fault:
         st.markdown("<h3 style='text-align: center;'>機器トラブル報告</h3>", unsafe_allow_html=True)
         st.success(f"対象機器: {url_me_no}")
+        if st.session_state.get("fault_report_saved_msg"):
+            st.success("報告を受け付けました。ご協力ありがとうございます。")
 
         with st.form("nurse_report_form"):
             rep_date = st.date_input("発生日", value=date.today(), min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
@@ -7741,43 +7805,40 @@ if url_me_no:
                 elif not symptom_str:
                     symptom_str = "記載なし"
 
-                try:
-                    existing_data = safe_read_worksheet(conn, "故障報告", ["報告日", "発生日", "管理番号", "機種", "報告者", "部署", "症状", "対応状況"])
+                report_date = str(date.today())
+                occur_date = str(rep_date)
+                sig = _fault_report_signature(
+                    report_date, occur_date, url_me_no, rep_name, rep_dept, symptom_str,
+                )
+                if st.session_state.get("last_fault_report_sig") == sig:
+                    st.session_state["fault_report_saved_msg"] = True
+                    st.rerun()
 
+                try:
                     master_info = lookup_device_for_sticker(df_master_global, url_me_no)
                     model_name = master_info.get("model_name") or "不明な機器"
-
-                    new_report = pd.DataFrame([{
-                        "報告日": str(date.today()),
-                        "発生日": str(rep_date),
-                        "管理番号": url_me_no,
-                        "機種": model_name,
-                        "報告者": rep_name,
-                        "部署": rep_dept,
-                        "症状": symptom_str,
-                        "対応状況": "未対応"
-                    }])
-
-                    updated_df = pd.concat([existing_data, new_report], ignore_index=True)
-                    conn.update(worksheet="故障報告", data=updated_df)
-
-                    line_ok, line_err = notify_fault_report_line(
-                        str(date.today()),
-                        str(rep_date),
-                        url_me_no,
-                        model_name,
-                        rep_name,
-                        rep_dept,
-                        symptom_str,
+                    created = save_fault_report_to_sheets(
+                        conn, report_date, occur_date, url_me_no, model_name,
+                        rep_name, rep_dept, symptom_str,
                     )
-                    if line_ok:
-                        write_log("LINE", f"故障報告通知送信: {url_me_no}")
-                    else:
-                        write_log("LINE", f"故障報告通知未送信: {line_err}")
-
-                    write_log(f"現場({rep_name})", f"{url_me_no} の故障報告を送信")
-
-                    st.success("報告を受け付けました。ご協力ありがとうございます。")
+                    st.session_state["last_fault_report_sig"] = sig
+                    st.session_state["fault_report_saved_msg"] = True
+                    if created:
+                        line_ok, line_err = notify_fault_report_line(
+                            report_date,
+                            occur_date,
+                            url_me_no,
+                            model_name,
+                            rep_name,
+                            rep_dept,
+                            symptom_str,
+                        )
+                        if line_ok:
+                            write_log("LINE", f"故障報告通知送信: {url_me_no}")
+                        else:
+                            write_log("LINE", f"故障報告通知未送信: {line_err}")
+                        write_log(f"現場({rep_name})", f"{url_me_no} の故障報告を送信")
+                    st.rerun()
                 except Exception as e:
                     st.error(f"保存エラー: {e}")
 
@@ -7789,6 +7850,20 @@ if url_me_no:
             form_key_prefix="qr_daily",
             locked_keyword=True,
         )
+
+    st.markdown(
+        """
+        <div style="margin-top: 28px; padding: 16px 12px 8px; text-align: center; border-top: 1px solid #e6e6e6;">
+            <span style="font-size: 16px; color: #333;">安富連絡先:</span>
+            <a href="tel:08098519023" style="
+                display: inline-block; margin-left: 6px; padding: 10px 16px; background: #0068c9;
+                color: #fff; border-radius: 10px; font-size: 18px; font-weight: 700;
+                letter-spacing: 0.4px; text-decoration: none;
+            ">08098519023</a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if st.button("ログアウト"):
         write_log(st.session_state["current_user_name"], "ログアウト")
