@@ -81,7 +81,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16d"
+APP_VERSION = "2026-10-16e"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -6409,7 +6409,6 @@ def render_overdue_category_cards(category_counts, total_devices=None, title="1�
 
 def render_annual_overdue_inspection_tab(conn, df_master=None):
     """定期点検の年間計画タブ"""
-    st.subheader("点検超過一覧（1年以上）")
     if df_master is None or df_master.empty:
         df_master = safe_read_worksheet(conn, "機器マスター")
     render_annual_inspection_plan_graph(df_master=df_master)
@@ -8065,10 +8064,10 @@ if st.sidebar.button("ログアウト"):
 st.markdown(f"### {facility_name}")
 st.title("医療機器点検・管理")
 
-tab_names = ["点検超過（1年）", "点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理", "日報"]
+tab_names = ["年間計画書", "点検入力", "マスター", "機器カルテ・実績", "管理番号シール", "新規機器登録", "修理故障・対応管理", "日報"]
 tabs = st.tabs(tab_names)
 
-# ====== タブ1：点検超過一覧 ======
+# ====== タブ1：年間計画書 ======
 with tabs[0]:
     render_annual_overdue_inspection_tab(conn, df_master_global)
 
