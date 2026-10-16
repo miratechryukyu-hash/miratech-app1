@@ -81,7 +81,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16e"
+APP_VERSION = "2026-10-16f"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -6015,6 +6015,13 @@ def get_annual_inspection_plan(year=2026):
             "model_tokens": ["TE-131"],
             "start": date(year, 9, 1),
             "end": date(year, 9, 26),
+        },
+        {
+            "label": "分娩監視装置",
+            "models": "MT-610",
+            "categories": ["分娩監視装置"],
+            "start": date(year, 10, 1),
+            "end": date(year, 11, 15),
         },
         {
             "label": "酸素モニター・ブレンダー",
