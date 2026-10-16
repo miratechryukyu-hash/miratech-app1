@@ -81,7 +81,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16b"
+APP_VERSION = "2026-10-16c"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -1787,7 +1787,7 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
         ],
     }
 
-# 分娩監視装置 MT-610 定期点検表（6か月点検 + 1ヵ年点検）
+# 分娩監視装置 MT-610 定期点検表（6か月点検 + 1年点検）
 MT610_SIX_MONTH_ITEMS = [
     "本体および架台のねじ類に、ゆるみや欠落はありませんか。",
     "トランスジューサ・コード類に欠損や断線はありませんか。",
@@ -1823,12 +1823,12 @@ def default_mt610_checks():
 def render_mt610_inspection_fields(mt610_checks):
     """MT-610 定期点検表の入力欄。合は〇、否は×。"""
     st.caption("対象機種: MT-610")
-    st.caption("点検表の合は〇、否は×で記録します。1ヵ年点検では6か月点検を同時に行ってください。")
+    st.caption("点検表の合は〇、否は×で記録します。1年点検では6か月点検を同時に行ってください。")
     st.caption(INSPECTION_CHECK_LEGEND)
     st.write("**6か月点検**")
     _render_inspection_check_grid(MT610_SIX_MONTH_ITEMS, mt610_checks, "mt610_6m", "6か月点検をすべて〇にする")
-    st.write("**1ヵ年点検**")
-    _render_inspection_check_grid(MT610_ANNUAL_ITEMS, mt610_checks, "mt610_1y", "1ヵ年点検をすべて〇にする")
+    st.write("**1年点検**")
+    _render_inspection_check_grid(MT610_ANNUAL_ITEMS, mt610_checks, "mt610_1y", "1年点検をすべて〇にする")
 
 def build_mt610_report_sections(mt610_checks):
     c = mt610_checks or default_mt610_checks()
@@ -1842,7 +1842,7 @@ def build_mt610_report_sections(mt610_checks):
                 "items": [_check_item(label, c.get(label, "---")) for label in MT610_SIX_MONTH_ITEMS],
             },
             {
-                "title": "1ヵ年点検",
+                "title": "1年点検",
                 "kind": "check",
                 "items": [_check_item(label, c.get(label, "---")) for label in MT610_ANNUAL_ITEMS],
             },
