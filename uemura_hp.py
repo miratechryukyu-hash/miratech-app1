@@ -1464,7 +1464,7 @@ def render_vsm_inspection_fields(vsm_checks, vsm_measurements, vsm_meta, device_
     with b2:
         vsm_measurements["バッテリサイクル数"] = st.number_input(
             "バッテリサイクル数 (回)",
-            value=int(vsm_measurements.get("バッテリサイクル数", 0)),
+            value=leakage_ua_int(vsm_measurements.get("バッテリサイクル数", 0)),
             min_value=0, step=1, key="vsm_bat_cycle",
         )
 
@@ -2645,6 +2645,33 @@ def get_master_device_note(row):
         return ""
     return clean_data_str(row.get("備考", ""))
 
+def master_manufacture_date(row):
+    """機器マスターの製造年月日。旧列「製造年」しか無い行も読む。"""
+    if row is None:
+        return ""
+    primary = clean_data_str(row.get("製造年月日", ""))
+    if primary:
+        return primary
+    return clean_data_str(row.get("製造年", ""))
+
+def unify_master_manufacture_date(df):
+    """製造年の値を製造年月日へ移し、製造年列を除く。変更が必要なら True。"""
+    if df is None or "製造年" not in df.columns:
+        return df, False
+    out = df.copy()
+    if "製造年月日" not in out.columns:
+        out["製造年月日"] = ""
+    for idx, row in out.iterrows():
+        if clean_data_str(row.get("製造年月日", "")):
+            continue
+        legacy = clean_data_str(row.get("製造年", ""))
+        if legacy:
+            out.at[idx, "製造年月日"] = legacy
+    year_idx = list(out.columns).index("製造年")
+    cols = [col for col in out.columns if col not in ("製造年", "製造年月日")]
+    cols.insert(min(year_idx, len(cols)), "製造年月日")
+    return out[cols], True
+
 def ensure_master_device_note_column(df):
     if df is None:
         return df
@@ -3311,10 +3338,23 @@ def _history_row_signature(row):
     )
 
 def _parse_history_date_value(val):
+    """履歴の日付を date にする。空欄は NaT（float の欠損）になるので今日に戻す。"""
+    parsed = parse_check_date_flexible(val)
+    if parsed is not None:
+        return parsed
     try:
-        return pd.to_datetime(val).date()
+        parsed_ts = pd.to_datetime(val, errors="coerce")
     except (TypeError, ValueError):
         return date.today()
+    if parsed_ts is None or pd.isna(parsed_ts):
+        return date.today()
+    try:
+        as_date = parsed_ts.date()
+    except (TypeError, ValueError):
+        return date.today()
+    if as_date is None or pd.isna(as_date):
+        return date.today()
+    return as_date
 
 def _deep_copy_report_sections(report_sections):
     if not report_sections:
@@ -4392,6 +4432,11 @@ def is_fault_pending(status_val):
     return status in ("", "未対応", "nan", "none")
 
 def _fault_report_date_str(val):
+    try:
+        if val is None or pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
     if isinstance(val, datetime):
         return val.date().isoformat()
     if isinstance(val, date):
@@ -4401,7 +4446,13 @@ def _fault_report_date_str(val):
     if m:
         return m.group(1)
     try:
-        return pd.to_datetime(val).date().isoformat()
+        parsed = pd.to_datetime(val, errors="coerce")
+        if parsed is None or pd.isna(parsed):
+            return s
+        as_date = parsed.date()
+        if as_date is None or pd.isna(as_date):
+            return s
+        return as_date.isoformat()
     except (TypeError, ValueError):
         return s
 
@@ -4509,7 +4560,7 @@ def save_repair_completion(conn, selected_idx, repair_date, inspection_content,
     if not m_row.empty:
         master_rec = m_row.iloc[0]
         device_category = clean_data_str(master_rec.get("カテゴリ", "その他"))
-        scan_year_val = clean_data_str(master_rec.get("製造年月日", ""))
+        scan_year_val = master_manufacture_date(master_rec)
         serial_no = clean_data_str(master_rec.get("シリアルNo", ""))
     legacy_me = ", ".join(_legacy_numbers_from_row(master_rec)) if not m_row.empty else ""
 
@@ -7764,6 +7815,13 @@ BASE_CATEGORIES = ["輸液ポンプ", "顕微鏡", "保育器", "分娩監視装
 try:
     conn = get_sheet_conn()
     df_master_global = safe_read_worksheet(conn, "機器マスター")
+    df_master_global, manufacture_date_unified = unify_master_manufacture_date(df_master_global)
+    if manufacture_date_unified and df_master_global is not None and "管理番号" in df_master_global.columns:
+        try:
+            _reject_incomplete_sheet_write("機器マスター", df_master_global)
+            conn.update(worksheet="機器マスター", data=_sanitize_dataframe(df_master_global))
+        except Exception as e:
+            st.warning(f"製造年を製造年月日へまとめる保存に失敗しました。表示は製造年月日を優先します。詳細: {e}")
 except Exception as e:
     st.error("Googleスプレッドシートに接続できません。Streamlit Cloud の Secrets 設定を確認してください。")
     st.caption(f"詳細: {e}")
@@ -8007,9 +8065,7 @@ with tabs[1]:
         final_sn = clean_data_str(master_row.get("シリアルNo", ""))
         device_category = clean_data_str(master_row.get("カテゴリ", "その他"))
         device_model = normalize_stored_model(device_category, master_row.get("機種", ""))
-        scan_year_val = clean_data_str(
-            master_row.get("製造年月日", "") or master_row.get("製造年", "")
-        )
+        scan_year_val = master_manufacture_date(master_row)
 
         sync_device_display_fields(
             "check", final_me_no, device_category, final_sn, device_model,
@@ -8659,7 +8715,7 @@ with tabs[2]:
                             value=clean_data_str(target_row.get("旧番号", "") or target_row.get("旧管理番号", "")),
                             placeholder="例: ME-123, OLD456",
                         )
-                        new_year = st.text_input("製造年月日", value=clean_data_str(target_row.get("製造年月日", "")))
+                        new_year = st.text_input("製造年月日", value=master_manufacture_date(target_row))
                         
                         new_location = st.text_input("設置場所", value=clean_data_str(target_row.get("設置場所", "")))
                         new_vendor = st.text_input("購入業者", value=clean_data_str(target_row.get("購入業者", "")))
@@ -8723,6 +8779,7 @@ with tabs[2]:
                             if "旧番号" not in df_master_edit.columns:
                                 df_master_edit["旧番号"] = ""
                             df_master_edit.loc[mask_m, "旧番号"] = clean_data_str(new_legacy)
+                            df_master_edit, _ = unify_master_manufacture_date(df_master_edit)
                             conn.update(worksheet="機器マスター", data=df_master_edit)
 
                             try:
@@ -9062,7 +9119,7 @@ with tabs[5]:
                                 "メーカー": man_maker,
                                 "機種": model_for_spreadsheet(man_model),
                                 "シリアルNo": protect_zeros(man_sn),
-                                "製造年": man_year,
+                                "製造年月日": man_year,
                                 "耐用年数": man_life,
                                 "設置場所": man_location,
                                 "購入業者": final_vendor,
@@ -9076,6 +9133,7 @@ with tabs[5]:
                                 [ensure_master_device_note_column(df_m_reg), new_master_row],
                                 ignore_index=True,
                             )
+                            updated_master_reg, _ = unify_master_manufacture_date(updated_master_reg)
                             conn.update(worksheet="機器マスター", data=updated_master_reg)
                             
                             write_log(st.session_state.get("current_user_name", "管理者"), f"{man_me_no} を新規登録")
