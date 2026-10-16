@@ -81,12 +81,24 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16c"
+APP_VERSION = "2026-10-16d"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
 INSPECTION_CHECK_LEGEND = "判定: 〇=良好 / △=修理検討 / ×=不合格 / ---=機能なし"
 INCU_I_CHECK_OPTIONS = INSPECTION_CHECK_OPTIONS
+INHOUSE_CHECK_LABEL = "院内点検(miratech琉球)"
+_LEGACY_INHOUSE_CHECK_LABEL = "院内点検(miratech)"
+
+def is_inhouse_inspection(check_type):
+    text = clean_data_str(check_type)
+    return text in (INHOUSE_CHECK_LABEL, _LEGACY_INHOUSE_CHECK_LABEL)
+
+def normalize_check_type_label(check_type):
+    text = clean_data_str(check_type)
+    if text == _LEGACY_INHOUSE_CHECK_LABEL:
+        return INHOUSE_CHECK_LABEL
+    return text
 
 def render_all_ok_button(session_keys, key, label="この区分をすべて〇にする"):
     """チェック項目をまとめて 〇 にする"""
@@ -3106,7 +3118,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      resusciflow_measurements=None,
                                      resusciflow_meta=None,
                                      resusciflow_parts=None):
-    if check_type != "院内点検(miratech)":
+    if not is_inhouse_inspection(check_type):
         return None
     if device_category == "輸液ポンプ":
         return build_infusion_pump_report_sections(
@@ -3372,7 +3384,7 @@ def _resolve_history_report_payload(report_row, target_me, default_model="", dev
         "device_category": clean_data_str(report_row.get("カテゴリ", device_category)),
         "report_kind": report_kind,
         "item_rows": report_items,
-        "check_type_label": report_check_type,
+        "check_type_label": normalize_check_type_label(report_check_type),
         "report_sections": report_sections,
     }
 
@@ -3782,7 +3794,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
         "機種(型式)": device_model,
         "点検実施者": inspector or "（未入力）",
         "総合評価": result,
-        "作業区分": check_type,
+        "作業区分": normalize_check_type_label(check_type),
     }
     if device_category:
         info_rows["機器種類"] = device_category
@@ -5067,7 +5079,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
     incomplete_items = []
     infusion_pump_checks = infusion_pump_checks or {}
 
-    if check_type != "院内点検(miratech)":
+    if not is_inhouse_inspection(check_type):
         return ng_items, incomplete_items
 
     if device_category in ["輸液ポンプ", "シリンジポンプ"]:
@@ -5196,7 +5208,7 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
         **(infusion_pump_measurements or {}),
     }
 
-    if check_type == "院内点検(miratech)":
+    if is_inhouse_inspection(check_type):
         if device_category in ["輸液ポンプ", "シリンジポンプ"]:
             appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
             for label, val in zip(INFUSION_PUMP_APPEARANCE_ITEMS, appearance_vals):
@@ -5267,7 +5279,7 @@ def build_inspection_detail_text(check_type, device_category, result, inc_o_chec
         else:
             parts_list.append(f"{name}:{result_val}")
 
-    if check_type == "院内点検(miratech)" and device_category in ["輸液ポンプ", "シリンジポンプ"]:
+    if is_inhouse_inspection(check_type) and device_category in ["輸液ポンプ", "シリンジポンプ"]:
         min_press, max_press = resolve_infusion_occ_press_range(
             device_model, min_press, max_press, occ_level,
         )
@@ -8258,8 +8270,9 @@ with tabs[1]:
         def _didx(val):
             return _radio_index_from_value(val) if use_draft_idx else None
 
-        check_type_options = ["院内点検(miratech)", "メーカー点検", "メーカー修理・校正"]
-        check_type_idx = _choice_index(check_type_options, applied_draft.get("check_type")) if applied_draft else None
+        check_type_options = [INHOUSE_CHECK_LABEL, "メーカー点検", "メーカー修理・校正"]
+        draft_check_type = normalize_check_type_label(applied_draft.get("check_type")) if applied_draft else None
+        check_type_idx = _choice_index(check_type_options, draft_check_type) if applied_draft else None
         check_type = st.radio(
             "点検区分", check_type_options, horizontal=True,
             index=check_type_idx if check_type_idx is not None else 0,
@@ -8274,7 +8287,7 @@ with tabs[1]:
         )
         st.caption("入力内容は自動で下書き保存されます（約15分の中断後も「下書きを復元」から続きを再開できます）")
 
-        if check_type == "院内点検(miratech)":
+        if is_inhouse_inspection(check_type):
             st.caption(INSPECTION_CHECK_LEGEND)
             if device_category == "輸液ポンプ":
                 st.write("**1. 外観・作動点検**")
