@@ -8671,12 +8671,30 @@ with tabs[2]:
                         
                         new_price = st.text_input("購入金額(円)", value=clean_data_str(target_row.get("購入金額", "")))
 
-                        saved_delivery_str = clean_data_str(target_row.get("納入日", ""))
-                        try:
-                            saved_delivery_date = pd.to_datetime(saved_delivery_str).date()
-                        except:
+                        saved_delivery_date = parse_check_date_flexible(target_row.get("納入日", ""))
+                        if saved_delivery_date is None:
+                            saved_delivery_text = clean_data_str(target_row.get("納入日", ""))
+                            if saved_delivery_text:
+                                try:
+                                    parsed_delivery = pd.to_datetime(saved_delivery_text, errors="coerce")
+                                    if not pd.isna(parsed_delivery):
+                                        saved_delivery_date = parsed_delivery.date()
+                                except (TypeError, ValueError):
+                                    saved_delivery_date = None
+                        if saved_delivery_date is None or pd.isna(saved_delivery_date):
                             saved_delivery_date = date.today()
-                        new_delivery = st.date_input("購入日", value=saved_delivery_date, min_value=date(1950, 1, 1), max_value=date(2100, 12, 31))
+                        min_delivery = date(1950, 1, 1)
+                        max_delivery = date(2100, 12, 31)
+                        if saved_delivery_date < min_delivery:
+                            saved_delivery_date = min_delivery
+                        elif saved_delivery_date > max_delivery:
+                            saved_delivery_date = max_delivery
+                        new_delivery = st.date_input(
+                            "購入日",
+                            value=saved_delivery_date,
+                            min_value=min_delivery,
+                            max_value=max_delivery,
+                        )
                         elapsed_label = format_elapsed_years_label(get_master_purchase_date(target_row))
                         st.caption(
                             f"経過年数（本日 {format_jst(fmt='%Y-%m-%d')} 時点）: **{elapsed_label}**"
