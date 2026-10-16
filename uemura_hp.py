@@ -18,6 +18,7 @@ import base64
 import time
 import html
 import hashlib
+import unicodedata
 from pathlib import Path
 import calendar
 
@@ -80,7 +81,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16a"
+APP_VERSION = "2026-10-16b"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -1786,6 +1787,68 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
         ],
     }
 
+# 分娩監視装置 MT-610 定期点検表（6か月点検 + 1ヵ年点検）
+MT610_SIX_MONTH_ITEMS = [
+    "本体および架台のねじ類に、ゆるみや欠落はありませんか。",
+    "トランスジューサ・コード類に欠損や断線はありませんか。",
+    "タッチパネルは動作しますか。",
+    "付属品類に欠品はありませんか。",
+    "表示器に表示欠けはありませんか。",
+    "日付および時刻は合っていますか。",
+    "音量レベルは適量ですか。",
+    "ドプラトランスジューサが正しく動作し、ドプラ音が聞こえますか。",
+    "外測陣痛トランスジューサの感圧部を押すと、陣痛レベル表示が変化しますか。",
+    "リモートマーカースイッチは正しく動作しますか。",
+    "胎児心拍数アラームは正しく動作しますか。",
+]
+MT610_ANNUAL_ITEMS = [
+    "6か月点検を行い、異常はありませんか。",
+    "レコーダ異常はありませんか。サーマルヘッドに汚れはありませんか。",
+]
+
+def is_mt610_fetal_monitor(device_category, device_model):
+    """分娩監視装置 MT-610"""
+    if clean_data_str(device_category) != "分娩監視装置":
+        return False
+    text = unicodedata.normalize("NFKC", clean_data_str(device_model)).upper()
+    compact = re.sub(r"[\s\-_]", "", text)
+    return "MT610" in compact
+
+def _mt610_all_check_labels():
+    return MT610_SIX_MONTH_ITEMS + MT610_ANNUAL_ITEMS
+
+def default_mt610_checks():
+    return {label: "---" for label in _mt610_all_check_labels()}
+
+def render_mt610_inspection_fields(mt610_checks):
+    """MT-610 定期点検表の入力欄。合は〇、否は×。"""
+    st.caption("対象機種: MT-610")
+    st.caption("点検表の合は〇、否は×で記録します。1ヵ年点検では6か月点検を同時に行ってください。")
+    st.caption(INSPECTION_CHECK_LEGEND)
+    st.write("**6か月点検**")
+    _render_inspection_check_grid(MT610_SIX_MONTH_ITEMS, mt610_checks, "mt610_6m", "6か月点検をすべて〇にする")
+    st.write("**1ヵ年点検**")
+    _render_inspection_check_grid(MT610_ANNUAL_ITEMS, mt610_checks, "mt610_1y", "1ヵ年点検をすべて〇にする")
+
+def build_mt610_report_sections(mt610_checks):
+    c = mt610_checks or default_mt610_checks()
+    return {
+        "form": "mt610_fetal_monitor",
+        "title": "分娩監視装置 MT-610 定期点検表",
+        "sections": [
+            {
+                "title": "6か月点検",
+                "kind": "check",
+                "items": [_check_item(label, c.get(label, "---")) for label in MT610_SIX_MONTH_ITEMS],
+            },
+            {
+                "title": "1ヵ年点検",
+                "kind": "check",
+                "items": [_check_item(label, c.get(label, "---")) for label in MT610_ANNUAL_ITEMS],
+            },
+        ],
+    }
+
 # ATOM流量計付ブレンダ OX-370 定期点検表
 OX370_APPEARANCE_ITEMS = [
     "本体外装部に劣化・破損はないか",
@@ -3036,6 +3099,7 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
                                      vsm_meta=None,
                                      ecg_checks=None,
                                      ecg_measurements=None,
+                                     mt610_checks=None,
                                      ox370_checks=None,
                                      ox370_measurements=None,
                                      resusciflow_checks=None,
@@ -3090,6 +3154,8 @@ def build_inspection_report_sections(check_type, device_category, inc_o_checks,
             ecg_checks or default_ecg_checks(),
             ecg_measurements or default_ecg_measurements(),
         )
+    if is_mt610_fetal_monitor(device_category, device_model):
+        return build_mt610_report_sections(mt610_checks or default_mt610_checks())
     if is_ox370_blender(device_category, device_model):
         return build_ox370_report_sections(
             ox370_checks or default_ox370_checks(),
@@ -3672,6 +3738,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
                                    incu_i_checks=None, incu_i_measurements=None,
                                    vsm_checks=None, vsm_measurements=None, vsm_meta=None,
                                    ecg_checks=None, ecg_measurements=None,
+                                   mt610_checks=None,
                                    ox370_checks=None, ox370_measurements=None,
                                    resusciflow_checks=None, resusciflow_measurements=None,
                                    resusciflow_meta=None, resusciflow_parts=None):
@@ -3697,6 +3764,7 @@ def render_inspection_live_preview(check_type, check_date, final_me_no, device_m
         vsm_meta=vsm_meta,
         ecg_checks=ecg_checks,
         ecg_measurements=ecg_measurements,
+        mt610_checks=mt610_checks,
         ox370_checks=ox370_checks,
         ox370_measurements=ox370_measurements,
         resusciflow_checks=resusciflow_checks,
@@ -4987,6 +5055,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
                               vsm_meta=None,
                                  ecg_checks=None,
                                  ecg_measurements=None,
+                                 mt610_checks=None,
                                  ox370_checks=None,
                                  ox370_measurements=None,
                                  resusciflow_checks=None,
@@ -5076,6 +5145,11 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             _validate_ecg_measurements(
                 ecg_measurements or default_ecg_measurements(), ng_items,
             )
+
+    elif is_mt610_fetal_monitor(device_category, device_model):
+        _validate_check_dict(
+            mt610_checks or default_mt610_checks(), ng_items, incomplete_items,
+        )
 
     elif is_ox370_blender(device_category, device_model):
         _validate_check_dict(
@@ -5226,6 +5300,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
                                  vsm_meta=None,
                                  ecg_checks=None,
                                  ecg_measurements=None,
+                                 mt610_checks=None,
                                  ox370_checks=None,
                                  ox370_measurements=None,
                                  resusciflow_checks=None,
@@ -5252,6 +5327,7 @@ def build_inspection_save_bundle(check_type, device_category, result, inc_o_chec
         vsm_meta=vsm_meta,
         ecg_checks=ecg_checks,
         ecg_measurements=ecg_measurements,
+        mt610_checks=mt610_checks,
         ox370_checks=ox370_checks,
         ox370_measurements=ox370_measurements,
         resusciflow_checks=resusciflow_checks,
@@ -5406,7 +5482,7 @@ def _deserialize_inspection_draft(raw_json):
     for dict_key in (
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
-        "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
+        "ecg_checks", "ecg_measurements", "mt610_checks", "ox370_checks", "ox370_measurements",
         "infusion_pump_checks", "infusion_pump_measurements", "resusciflow_checks", "resusciflow_measurements",
         "resusciflow_meta", "resusciflow_parts",
     ):
@@ -5441,7 +5517,7 @@ def inspection_draft_has_content(payload):
             return True
     for dict_key in (
         "inc_o_checks", "incu_i_checks", "vsm_checks", "infusion_pump_checks",
-        "ecg_checks", "ox370_checks", "resusciflow_checks",
+        "ecg_checks", "mt610_checks", "ox370_checks", "resusciflow_checks",
     ):
         for v in (payload.get(dict_key) or {}).values():
             if v not in (None, "", "--", "---"):
@@ -5621,7 +5697,7 @@ def apply_inspection_draft_to_state(draft):
     for dict_key in (
         "inc_o_checks", "incu_i_checks", "incu_i_measurements",
         "vsm_checks", "vsm_measurements", "vsm_meta",
-        "ecg_checks", "ecg_measurements", "ox370_checks", "ox370_measurements",
+        "ecg_checks", "ecg_measurements", "mt610_checks", "ox370_checks", "ox370_measurements",
         "infusion_pump_checks", "infusion_pump_measurements", "resusciflow_checks", "resusciflow_measurements",
         "resusciflow_meta", "resusciflow_parts",
     ):
@@ -5735,6 +5811,14 @@ def prime_inspection_widgets_from_draft(draft, device_category, device_model):
         ):
             for idx, label in enumerate(items):
                 _set_radio_session_key(f"{prefix}_{idx}", ecg.get(label))
+    elif is_mt610_fetal_monitor(device_category, device_model):
+        mt610 = draft.get("mt610_checks") or {}
+        for prefix, items in (
+            ("mt610_6m", MT610_SIX_MONTH_ITEMS),
+            ("mt610_1y", MT610_ANNUAL_ITEMS),
+        ):
+            for idx, label in enumerate(items):
+                _set_radio_session_key(f"{prefix}_{idx}", mt610.get(label))
     elif is_ox370_blender(device_category, device_model):
         ox = draft.get("ox370_checks") or {}
         for prefix, items in (
@@ -8008,6 +8092,7 @@ with tabs[1]:
     vsm_meta = default_vsm_meta()
     ecg_checks = default_ecg_checks()
     ecg_measurements = default_ecg_measurements()
+    mt610_checks = default_mt610_checks()
     ox370_checks = default_ox370_checks()
     ox370_measurements = default_ox370_measurements()
     resusciflow_checks = default_resusciflow_checks()
@@ -8152,6 +8237,7 @@ with tabs[1]:
             vsm_meta = {**default_vsm_meta(), **applied_draft.get("vsm_meta", {})}
             ecg_checks = {**default_ecg_checks(), **applied_draft.get("ecg_checks", {})}
             ecg_measurements = {**default_ecg_measurements(), **applied_draft.get("ecg_measurements", {})}
+            mt610_checks = {**default_mt610_checks(), **applied_draft.get("mt610_checks", {})}
             ox370_checks = {**default_ox370_checks(), **applied_draft.get("ox370_checks", {})}
             ox370_measurements = {**default_ox370_measurements(), **applied_draft.get("ox370_measurements", {})}
             resusciflow_checks = {**default_resusciflow_checks(), **applied_draft.get("resusciflow_checks", {})}
@@ -8383,6 +8469,9 @@ with tabs[1]:
             elif device_category == "心電計":
                 render_ecg_inspection_fields(ecg_checks, ecg_measurements)
 
+            elif is_mt610_fetal_monitor(device_category, device_model):
+                render_mt610_inspection_fields(mt610_checks)
+
             elif is_ox370_blender(device_category, device_model):
                 render_ox370_inspection_fields(ox370_checks, ox370_measurements)
 
@@ -8417,6 +8506,7 @@ with tabs[1]:
             incu_i_checks=incu_i_checks, incu_i_measurements=incu_i_measurements,
             vsm_checks=vsm_checks, vsm_measurements=vsm_measurements, vsm_meta=vsm_meta,
             ecg_checks=ecg_checks, ecg_measurements=ecg_measurements,
+            mt610_checks=mt610_checks,
             ox370_checks=ox370_checks, ox370_measurements=ox370_measurements,
             resusciflow_checks=resusciflow_checks,
             resusciflow_measurements=resusciflow_measurements,
@@ -8450,6 +8540,7 @@ with tabs[1]:
                     vsm_meta=vsm_meta,
                     ecg_checks=ecg_checks,
                     ecg_measurements=ecg_measurements,
+                    mt610_checks=mt610_checks,
                     ox370_checks=ox370_checks,
                     ox370_measurements=ox370_measurements,
                     resusciflow_checks=resusciflow_checks,
@@ -8476,6 +8567,7 @@ with tabs[1]:
                     vsm_meta=vsm_meta,
                     ecg_checks=ecg_checks,
                     ecg_measurements=ecg_measurements,
+                    mt610_checks=mt610_checks,
                     ox370_checks=ox370_checks,
                     ox370_measurements=ox370_measurements,
                     resusciflow_checks=resusciflow_checks,
@@ -8567,6 +8659,7 @@ with tabs[1]:
             "incu_i_checks": incu_i_checks, "incu_i_measurements": incu_i_measurements,
             "vsm_checks": vsm_checks, "vsm_measurements": vsm_measurements, "vsm_meta": vsm_meta,
             "ecg_checks": ecg_checks, "ecg_measurements": ecg_measurements,
+            "mt610_checks": mt610_checks,
             "ox370_checks": ox370_checks, "ox370_measurements": ox370_measurements,
             "resusciflow_checks": resusciflow_checks,
             "resusciflow_measurements": resusciflow_measurements,
