@@ -5834,52 +5834,114 @@ def get_annual_inspection_plan(year=2026):
         {
             "label": "保育器(閉鎖式)",
             "models": "V-2100G, 102, Rabee incu i",
+            "matcher": "closed_incubator",
             "start": date(year, 8, 3),
             "end": date(year, 8, 29),
         },
         {
             "label": "レサシフロー",
             "models": "",
+            "matcher": "resusciflow",
             "start": date(year, 8, 3),
             "end": date(year, 8, 14),
         },
         {
             "label": "生体情報モニタ",
             "models": "PVM-2701, PVM-4761, BP-88S, WEP-1200",
+            "categories": ["生体情報モニタ"],
+            "model_tokens": ["PVM-2701", "PVM-4761", "BP-88S", "WEP-1200"],
             "start": date(year, 8, 24),
             "end": date(year, 8, 29),
         },
         {
             "label": "心電計",
             "models": "cardiofax M",
+            "categories": ["心電計"],
+            "model_tokens": ["cardiofax"],
             "start": date(year, 8, 24),
             "end": date(year, 8, 29),
         },
         {
             "label": "輸液ポンプ",
             "models": "TE-131A",
+            "categories": ["輸液ポンプ"],
+            "model_tokens": ["TE-131"],
             "start": date(year, 9, 1),
             "end": date(year, 9, 26),
         },
         {
             "label": "酸素モニター・ブレンダー",
             "models": "EO-220G, OX-370",
+            "categories": ["酸素モニタ", "酸素ブレンダ"],
+            "model_tokens": ["EO-220G", "OX-370"],
             "start": date(year, 10, 19),
             "end": date(year, 10, 31),
         },
         {
             "label": "パルスオキシメーター",
             "models": "Rad-8, WEC-7201, LKL2800ma, OXY max N-65, ライトテック DP1",
+            "categories": ["パルスオキシメーター"],
+            "model_tokens": ["Rad-8", "WEC-7201", "LKL2800", "OXY max", "N-65", "ライトテック", "DP1"],
             "start": date(year, 10, 19),
             "end": date(year, 10, 31),
         },
         {
             "label": "フットポンプ",
             "models": "SCD700",
+            "categories": ["フットポンプ"],
+            "model_tokens": ["SCD700"],
             "start": date(year, 11, 9),
             "end": date(year, 11, 21),
         },
     ]
+
+def _compact_plan_model(value):
+    return re.sub(r"[\s\-_　./]+", "", clean_data_str(value)).lower()
+
+def device_matches_annual_plan_item(category, model, item):
+    """計画行に含まれる機器か（カテゴリと型式で判定）"""
+    matcher = item.get("matcher")
+    if matcher == "closed_incubator":
+        return is_v2100g_incubator(category, model) or is_incu_i_incubator(category, model)
+    if matcher == "resusciflow":
+        return is_resusciflow(category, model)
+    categories = item.get("categories") or []
+    tokens = item.get("model_tokens") or []
+    cat_ok = clean_data_str(category) in categories
+    model_name = normalize_stored_model(category, model) or clean_data_str(model)
+    model_c = _compact_plan_model(model_name)
+    if not tokens:
+        return cat_ok
+    for token in tokens:
+        token_c = _compact_plan_model(token)
+        if not model_c or not token_c or token_c not in model_c:
+            continue
+        if len(token_c) < 5 and categories and not cat_ok:
+            continue
+        return True
+    return False
+
+def count_annual_plan_progress(df_master, plan_items, year):
+    """計画の各機器について、保有台数と当該年の点検済台数を数える"""
+    progress = {item["label"]: {"total": 0, "done": 0} for item in plan_items}
+    if df_master is None or df_master.empty or "管理番号" not in df_master.columns:
+        return progress
+    for _, row in df_master.iterrows():
+        if not clean_data_str(row.get("管理番号", "")):
+            continue
+        category = row.get("カテゴリ", "")
+        model = row.get("機種", "")
+        last_check = parse_check_date_flexible(row.get("最終点検日", ""))
+        inspected = last_check is not None and last_check.year == year
+        for item in plan_items:
+            if not device_matches_annual_plan_item(category, model, item):
+                continue
+            bucket = progress[item["label"]]
+            bucket["total"] += 1
+            if inspected:
+                bucket["done"] += 1
+            break
+    return progress
 
 def format_plan_date_label(plan_date):
     """計画日を「2026年8月3日(月)」形式で表示"""
@@ -5892,7 +5954,7 @@ def format_plan_period_compact(start_date, end_date):
         f"～{end_date.month}/{end_date.day}({WEEKDAY_JA[end_date.weekday()]})"
     )
 
-def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=None):
+def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=None, progress=None):
     """年間計画のガント風タイムライン HTML"""
     if not plan_items:
         return ""
@@ -5942,6 +6004,12 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
         period_compact = format_plan_period_compact(item["start"], item["end"])
         models = clean_data_str(item.get("models", ""))
         models_html = f"<div class='plan-row-models'>{html.escape(models)}</div>" if models else ""
+        count_html = ""
+        if progress and item["label"] in progress:
+            counts = progress[item["label"]]
+            count_html = (
+                f"<div class='plan-row-count'>{counts['total']}台　点検済 {counts['done']}台</div>"
+            )
         today_line_html = ""
         if today_pct is not None:
             today_line_html = (
@@ -5951,7 +6019,7 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
         rows_html.append(
             f"<div class='plan-row'>"
             f"<div class='plan-row-label'>{html.escape(item['label'])}"
-            f"{models_html}</div>"
+            f"{models_html}{count_html}</div>"
             f"<div class='plan-row-track'>"
             f"{today_line_html}"
             f"<div class='plan-bar' style='left:{left_pct:.2f}%;width:{width_pct:.2f}%;background:{color};' "
@@ -5960,6 +6028,15 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
             f"</div>"
             f"</div>"
             f"</div>"
+        )
+
+    summary_html = ""
+    if progress:
+        total_devices = sum(item["total"] for item in progress.values())
+        done_devices = sum(item["done"] for item in progress.values())
+        summary_html = (
+            f"<div class='plan-chart-summary'>対象機器 合計 {total_devices}台　"
+            f"点検済 {done_devices}台</div>"
         )
 
     return f"""
@@ -5972,6 +6049,12 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 .plan-chart-title {{
     font-size: 16px;
     font-weight: 700;
+    margin-bottom: 4px;
+}}
+.plan-chart-summary {{
+    font-size: 15px;
+    font-weight: 700;
+    color: #14532d;
     margin-bottom: 12px;
 }}
 .plan-axis-wrap {{
@@ -6047,6 +6130,12 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
     font-weight: 400;
     margin-top: 2px;
 }}
+.plan-row-count {{
+    font-size: 12px;
+    color: #14532d;
+    font-weight: 700;
+    margin-top: 3px;
+}}
 .plan-row-track {{
     position: relative;
     height: 34px;
@@ -6090,6 +6179,7 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 </style>
 <div class="plan-chart-wrap">
     <div class="plan-chart-title">{year}年 定期点検予定</div>
+    {summary_html}
     <div class="plan-axis-wrap">
         <div class="plan-today-axis">{today_label_html}</div>
         <div class="plan-axis">{''.join(month_labels)}</div>
@@ -6098,15 +6188,21 @@ def build_annual_inspection_plan_chart_html(plan_items, year, reference_date=Non
 </div>
 """
 
-def render_annual_inspection_plan_graph(reference_date=None, plan_year=None):
+def render_annual_inspection_plan_graph(reference_date=None, plan_year=None, df_master=None):
     """年間計画グラフ"""
     today = reference_date or now_jst().date()
     year = plan_year or today.year
     plan_items = get_annual_inspection_plan(year)
+    progress = count_annual_plan_progress(df_master, plan_items, year) if df_master is not None else None
     with st.container(border=True):
         st.markdown("#### 定期点検 年間計画")
-        st.caption(f"{year}年の点検予定期間を一覧表示します。赤線は本日（{format_plan_date_label(today)}）です。")
-        chart_html = build_annual_inspection_plan_chart_html(plan_items, year, reference_date=today)
+        st.caption(
+            f"{year}年の点検予定期間を一覧表示します。赤線は本日（{format_plan_date_label(today)}）です。"
+            f"点検済は、{year}年に最終点検日がある台数です。"
+        )
+        chart_html = build_annual_inspection_plan_chart_html(
+            plan_items, year, reference_date=today, progress=progress,
+        )
         st.markdown(chart_html, unsafe_allow_html=True)
 
 def compute_overdue_inspection_counts(df_master, reference_date=None):
@@ -6164,83 +6260,12 @@ def render_overdue_category_cards(category_counts, total_devices=None, title="1�
                         st.caption(category)
                         st.markdown(f"**{count} 台**")
 
-def render_overdue_device_groups(devices):
-    """機器一覧をカテゴリごとの囲いで表示"""
-    if not devices:
-        return
-    by_category = {}
-    for device in devices:
-        by_category.setdefault(device["カテゴリ"], []).append(device)
-    for category in sorted(by_category.keys()):
-        cat_devices = by_category[category]
-        with st.container(border=True):
-            st.markdown(f"**{category}**　{len(cat_devices)} 台")
-            display_df = pd.DataFrame([
-                {k: v for k, v in device.items() if not k.startswith("_")} for device in cat_devices
-            ])
-            display_dataframe(display_df, hide_index=True, use_container_width=True)
-
-def list_annual_overdue_devices(df_master, reference_date=None):
-    """1年以上点検していない機器の一覧"""
-    devices = []
-    if df_master is None or df_master.empty:
-        return devices
-    today = reference_date or now_jst().date()
-    for _, row in df_master.iterrows():
-        me_no = clean_data_str(row.get("管理番号", ""))
-        if not me_no:
-            continue
-        category = clean_data_str(row.get("カテゴリ", "")) or "その他"
-        last_check = parse_check_date_flexible(row.get("最終点検日", ""))
-        if last_check is None:
-            days_since = None
-            is_overdue = True
-        else:
-            days_since = (today - last_check).days
-            is_overdue = days_since >= ANNUAL_INSPECTION_OVERDUE_DAYS
-        if not is_overdue:
-            continue
-        devices.append({
-            "管理番号": me_no,
-            "カテゴリ": category,
-            "機種": normalize_stored_model(category, row.get("機種", "")),
-            "シリアルNo": clean_data_str(row.get("シリアルNo", "")),
-            "最終点検日": clean_data_str(row.get("最終点検日", "")) or "未点検",
-            "経過日数": f"{days_since}日" if days_since is not None else "-",
-            "_sort_days": days_since if days_since is not None else 999999,
-        })
-    devices.sort(key=lambda d: (-d["_sort_days"], d["カテゴリ"], d["管理番号"]))
-    return devices
-
 def render_annual_overdue_inspection_tab(conn, df_master=None):
-    """1年超過点検の一覧タブ"""
+    """定期点検の年間計画タブ"""
     st.subheader("点検超過一覧（1年以上）")
-    render_annual_inspection_plan_graph()
-    st.markdown("---")
-    st.markdown("#### 1年以上点検していない機器")
-    st.caption("最終点検日から1年以上経過している機器、または点検記録がない機器を表示します。")
-    if st.button("最新のデータを読み込む", key="refresh_overdue_tab"):
-        invalidate_sheet_read_cache()
-        st.rerun()
     if df_master is None or df_master.empty:
         df_master = safe_read_worksheet(conn, "機器マスター")
-    devices = list_annual_overdue_devices(df_master)
-    if not devices:
-        with st.container(border=True):
-            st.success("1年以上点検していない機器はありません。")
-        return
-    annual_counts = {}
-    for device in devices:
-        cat = device["カテゴリ"]
-        annual_counts[cat] = annual_counts.get(cat, 0) + 1
-    render_overdue_category_cards(annual_counts, total_devices=len(devices))
-    categories = sorted({device["カテゴリ"] for device in devices})
-    filter_cat = st.selectbox("カテゴリで絞り込み", ["すべて"] + categories, key="overdue_cat_filter")
-    filtered = devices if filter_cat == "すべて" else [
-        device for device in devices if device["カテゴリ"] == filter_cat
-    ]
-    st.markdown("#### 機器一覧")
-    render_overdue_device_groups(filtered)
+    render_annual_inspection_plan_graph(df_master=df_master)
 
 def render_overdue_inspection_notice(conn, df_master=None, reference_date=None):
     """定期点検保存後などに、点検期限超過の台数サマリーを表示"""
