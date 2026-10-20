@@ -81,7 +81,7 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-16f"
+APP_VERSION = "2026-10-20a"
 
 # 全点検表共通の判定記号
 INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
@@ -1413,17 +1413,23 @@ def default_vsm_measurements():
 def default_vsm_meta():
     return {"設置病棟": "", "チャンネル番号": ""}
 
-def _render_inspection_check_grid(items, checks, key_prefix, all_ok_label="この区分をすべて〇にする"):
-    opts = INSPECTION_CHECK_OPTIONS
+def _render_inspection_check_grid(items, checks, key_prefix, all_ok_label="この区分をすべて〇にする", dash_labels=None):
+    dash_labels = set(dash_labels or [])
     keys = [f"{key_prefix}_{idx}" for idx in range(len(items))]
     render_all_ok_button(keys, f"{key_prefix}_all_ok", all_ok_label)
     c1, c2 = st.columns(2)
     for idx, label in enumerate(items):
+        opts = ECG_DASH_OPTIONS if label in dash_labels else INSPECTION_CHECK_OPTIONS
+        widget_key = keys[idx]
+        if label in dash_labels and st.session_state.get(widget_key) in (None, "", "--", "---"):
+            st.session_state[widget_key] = "ー"
         with (c1 if idx % 2 == 0 else c2):
-            checks[label] = st.radio(
-                label, opts, horizontal=True, index=None,
-                key=keys[idx],
-            )
+            if widget_key in st.session_state:
+                checks[label] = st.radio(label, opts, horizontal=True, key=widget_key)
+            else:
+                checks[label] = st.radio(
+                    label, opts, horizontal=True, index=None, key=widget_key,
+                )
 
 def _validate_leakage_currents(measurements, ng_items):
     m = measurements
@@ -1656,12 +1662,31 @@ ECG_FUNCTION_ITEMS = [
     "磁気カードリーダの確認",
     "設置およびネットワーク接続状態の再確認",
 ]
+ECG_DASH_ITEMS = [
+    "ネットワーク接続の確認",
+    "バーコードリーダまたは二次元コードリーダの確認",
+    "磁気カードリーダの確認",
+    "設置およびネットワーク接続状態の再確認",
+]
+ECG_DASH_OPTIONS = ["〇", "△", "×", "ー"]
 
 def _ecg_all_check_labels():
     return ECG_APPEARANCE_ITEMS + ECG_POWER_CORD_ITEMS + ECG_FUNCTION_ITEMS
 
 def default_ecg_checks():
-    return {label: "---" for label in _ecg_all_check_labels()}
+    checks = {label: "---" for label in _ecg_all_check_labels()}
+    for label in ECG_DASH_ITEMS:
+        checks[label] = "ー"
+    return checks
+
+def ecg_check_symbol(checks, label):
+    """記号がないネットワーク等は ー として記録する。"""
+    val = (checks or {}).get(label)
+    if label in ECG_DASH_ITEMS and val in (None, "", "--", "---"):
+        return "ー"
+    if val in (None, ""):
+        return "---"
+    return val
 
 def default_ecg_measurements():
     return {
@@ -1702,7 +1727,8 @@ def render_ecg_inspection_fields(ecg_checks, ecg_measurements):
     _render_inspection_check_grid(ECG_POWER_CORD_ITEMS, ecg_checks, "ecg_pwr")
 
     st.write("**3. 機能点検**")
-    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func")
+    st.caption("ネットワーク・バーコードリーダ・磁気カードリーダが無いときは ー です。")
+    _render_inspection_check_grid(ECG_FUNCTION_ITEMS, ecg_checks, "ecg_func", dash_labels=ECG_DASH_ITEMS)
 
     st.write("**4. 安全性のチェック（漏れ電流）**")
     st.caption("接地漏れ電流: 正常200μA以下 / 単一故障500μA以下")
@@ -1764,7 +1790,7 @@ def build_ecg_report_sections(ecg_checks, ecg_measurements):
             {
                 "title": "3. 機能点検",
                 "kind": "check",
-                "items": [_check_item(l, c.get(l, "---")) for l in ECG_FUNCTION_ITEMS],
+                "items": [_check_item(l, ecg_check_symbol(c, l)) for l in ECG_FUNCTION_ITEMS],
             },
             {
                 "title": "4. 安全性のチェック（漏れ電流）",
@@ -5150,9 +5176,10 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
             )
 
     elif device_category == "心電計":
-        _validate_check_dict(
-            ecg_checks or default_ecg_checks(), ng_items, incomplete_items,
-        )
+        ecg_for_validate = dict(ecg_checks or default_ecg_checks())
+        for label in ECG_DASH_ITEMS:
+            ecg_for_validate[label] = ecg_check_symbol(ecg_for_validate, label)
+        _validate_check_dict(ecg_for_validate, ng_items, incomplete_items)
         if result == "使用可":
             _validate_ecg_measurements(
                 ecg_measurements or default_ecg_measurements(), ng_items,
@@ -5734,7 +5761,7 @@ def _choice_index(options, value):
 
 def _set_radio_session_key(key, val):
     sym = normalize_check_symbol(val) if val not in (None, "", "--") else None
-    if sym in INSPECTION_CHECK_OPTIONS:
+    if sym in INSPECTION_CHECK_OPTIONS or sym == "ー":
         st.session_state[key] = sym
 
 def prime_inspection_widgets_from_draft(draft, device_category, device_model):
@@ -7692,7 +7719,7 @@ def write_log(user_name, action):
         updated_logs = pd.concat([df_logs, new_log], ignore_index=True)
         conn.update(worksheet="アクセスログ", data=updated_logs)
     except Exception:
-        pass 
+        pass
 
 # ==========================================
 # ログインセッション（Cookie で保持）
@@ -7720,8 +7747,17 @@ def save_auth_cookie(user_id, user_name):
 
 def clear_auth_cookie():
     cm = get_cookie_manager()
-    cm.delete(AUTH_COOKIE_NAME, key="clear_auth_cookie")
-    cm.delete(LAST_ACTIVE_COOKIE, key="clear_last_active_cookie")
+    cookies = cm.cookies if isinstance(cm.cookies, dict) else {}
+    for name, key in (
+        (AUTH_COOKIE_NAME, "clear_auth_cookie"),
+        (LAST_ACTIVE_COOKIE, "clear_last_active_cookie"),
+    ):
+        if name not in cookies:
+            continue
+        try:
+            cm.delete(name, key=key)
+        except KeyError:
+            pass
     st.session_state.pop("last_activity", None)
 
 def _get_last_activity():
@@ -7777,9 +7813,13 @@ def restore_auth_from_cookie(cookies):
         return False
 
 def logout_user():
+    """ログアウトする。Cookie の削除は画面より遅れるため、復元を止める印を残す。"""
+    st.session_state["auth_logged_out"] = True
     st.session_state["logged_in_facility"] = None
     st.session_state["current_user_name"] = None
     st.session_state.pop("current_user_id", None)
+    st.session_state.pop("last_activity", None)
+    st.session_state.pop("_activity_cookie_touched", None)
     clear_auth_cookie()
 
 # ==========================================
@@ -7791,15 +7831,26 @@ def check_auth():
     if "current_user_name" not in st.session_state:
         st.session_state["current_user_name"] = None
 
-    if st.session_state["logged_in_facility"] is not None:
+    if st.session_state.get("auth_logged_out"):
+        st.session_state["logged_in_facility"] = None
+        st.session_state["current_user_name"] = None
+        st.session_state.pop("current_user_id", None)
+        st.session_state.pop("last_activity", None)
+        st.session_state.pop("_activity_cookie_touched", None)
+        cookies = read_browser_cookies()
+        if isinstance(cookies, dict) and (
+            cookies.get(AUTH_COOKIE_NAME) or cookies.get(LAST_ACTIVE_COOKIE)
+        ):
+            clear_auth_cookie()
+    elif st.session_state["logged_in_facility"] is not None:
         return True
+    else:
+        cookies = read_browser_cookies()
+        if cookies is None:
+            st.stop()
 
-    cookies = read_browser_cookies()
-    if cookies is None:
-        st.stop()
-
-    if restore_auth_from_cookie(cookies):
-        return True
+        if restore_auth_from_cookie(cookies):
+            return True
 
     if st.session_state.get("auto_logout_msg"):
         st.warning(st.session_state.pop("auto_logout_msg"))
@@ -7839,6 +7890,7 @@ def check_auth():
                         
                         if saved_pass == clean_pass:
                             if saved_status == "OK":
+                                st.session_state.pop("auth_logged_out", None)
                                 st.session_state["logged_in_facility"] = "miratech 琉球 管理センター"
                                 st.session_state["current_user_name"] = clean_data_str(user_info["名前"])
                                 st.session_state["current_user_id"] = clean_id
@@ -9281,3 +9333,4 @@ with tabs[6]:
 # ====== タブ8：日報 ======
 with tabs[7]:
     render_daily_report_tab(conn, facility_name)
+
