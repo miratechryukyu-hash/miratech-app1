@@ -81,11 +81,11 @@ except Exception:
 # 設定
 # ==========================================
 APP_URL = "https://miratech-app1-dzi7pmrrt5nzqt6be6swzn.streamlit.app/"
-APP_VERSION = "2026-10-20b"
+APP_VERSION = "2026-10-22a"
 
 # 全点検表共通の判定記号
-INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "---"]
-INSPECTION_CHECK_LEGEND = "判定: 〇=良好 / △=修理検討 / ×=不合格 / ---=機能なし"
+INSPECTION_CHECK_OPTIONS = ["〇", "△", "×", "ー"]
+INSPECTION_CHECK_LEGEND = "判定: 〇=良好 / △=修理検討 / ×=不合格 / ー=機能なし"
 INCU_I_CHECK_OPTIONS = INSPECTION_CHECK_OPTIONS
 INHOUSE_CHECK_LABEL = "院内点検(miratech琉球)"
 _LEGACY_INHOUSE_CHECK_LABEL = "院内点検(miratech)"
@@ -120,7 +120,15 @@ def normalize_check_symbol(val):
         return "〇"
     if v == "NG":
         return "×"
+    if v == "---":
+        return "ー"
     return v
+
+def migrate_legacy_check_symbols():
+    """以前選んだ「---」を、いまの選択肢「ー」に合わせる。"""
+    for key, val in list(st.session_state.items()):
+        if val == "---":
+            st.session_state[key] = "ー"
 
 def is_check_incomplete(val):
     return val in (None, "", "--")
@@ -154,7 +162,7 @@ def check_cell_style_class(cell):
         return "ok"
     if sym == "△":
         return "warn"
-    if sym == "---":
+    if sym == "ー":
         return "na"
     return ""
 
@@ -428,7 +436,7 @@ def _render_incu_i_optional_test_block(
     fields,
     key_prefix,
 ):
-    """機能なし(---)対応の判定＋数値入力ブロック"""
+    """機能なし(ー)対応の判定＋数値入力ブロック"""
     opts = INSPECTION_CHECK_OPTIONS
     if title:
         st.write(title)
@@ -440,9 +448,9 @@ def _render_incu_i_optional_test_block(
         horizontal=True,
         index=None,
         key=f"{key_prefix}_check",
-        help="機能がない機器は「---（機能なし）」を選択してください。",
+        help="機能がない機器は「ー（機能なし）」を選択してください。",
     )
-    if _incu_i_optional_check_status(incu_i_checks, check_label) == "---":
+    if _incu_i_optional_check_status(incu_i_checks, check_label) == "ー":
         st.caption("機能なしのため、数値入力は不要です。")
         return
     cols = st.columns(len(fields))
@@ -615,13 +623,13 @@ def render_incu_i_inspection_fields(incu_i_checks, incu_i_measurements):
         )
 
 def _incu_i_optional_test_report_items(check_label, incu_i_checks, incu_i_measurements, measured_specs):
-    """判定＋数値項目の報告書行（--- のとき数値は省略表示）"""
+    """判定＋数値項目の報告書行（ー のとき数値は省略表示）"""
     m = incu_i_measurements
-    status = _incu_i_optional_check_status(incu_i_checks, check_label) or "---"
+    status = _incu_i_optional_check_status(incu_i_checks, check_label) or "ー"
     items = [_check_item(check_label, status)]
-    if status == "---":
+    if status == "ー":
         for spec in measured_specs:
-            items.append(_measured_item(spec["name"], spec["note"], spec["standard"], "-", "---"))
+            items.append(_measured_item(spec["name"], spec["note"], spec["standard"], "-", "ー"))
         return items
     for spec in measured_specs:
         val = m[spec["meas_key"]]
@@ -1419,7 +1427,7 @@ def _render_inspection_check_grid(items, checks, key_prefix, all_ok_label="こ�
     render_all_ok_button(keys, f"{key_prefix}_all_ok", all_ok_label)
     c1, c2 = st.columns(2)
     for idx, label in enumerate(items):
-        opts = ECG_DASH_OPTIONS if label in dash_labels else INSPECTION_CHECK_OPTIONS
+        opts = INSPECTION_CHECK_OPTIONS
         widget_key = keys[idx]
         if label in dash_labels and st.session_state.get(widget_key) in (None, "", "--", "---"):
             st.session_state[widget_key] = "ー"
@@ -1668,7 +1676,7 @@ ECG_DASH_ITEMS = [
     "磁気カードリーダの確認",
     "設置およびネットワーク接続状態の再確認",
 ]
-ECG_DASH_OPTIONS = ["〇", "△", "×", "ー"]
+ECG_DASH_OPTIONS = INSPECTION_CHECK_OPTIONS
 
 def _ecg_all_check_labels():
     return ECG_APPEARANCE_ITEMS + ECG_POWER_CORD_ITEMS + ECG_FUNCTION_ITEMS
@@ -2944,7 +2952,7 @@ def parse_detail_text_to_table(detail_text):
 INSPECTION_DETAIL_JSON_VERSION = 2
 
 def _check_item(name, val):
-    val_s = normalize_check_symbol(val) or "---"
+    val_s = normalize_check_symbol(val) or "ー"
     return {"name": name, "result": val_s, "judge": val_s}
 
 def _measured_item(name, note, standard, result, judge):
@@ -3470,7 +3478,7 @@ def _render_report_sections_editor(report_sections, key_suffix):
     sections = _deep_copy_report_sections(report_sections)
     if not sections:
         return None
-    check_opts = INSPECTION_CHECK_OPTIONS + ["ー"]
+    check_opts = INSPECTION_CHECK_OPTIONS
     judge_opts = ["〇", "×", "-"]
     for s_idx, section in enumerate(sections.get("sections", [])):
         st.markdown(f"**{section.get('title', '点検項目')}**")
@@ -3508,7 +3516,7 @@ def _render_report_sections_editor(report_sections, key_suffix):
                     key=f"{base_key}_judge",
                 )
             else:
-                cur = normalize_check_symbol(item.get("result", "")) or "---"
+                cur = normalize_check_symbol(item.get("result", "")) or "ー"
                 copts = check_opts if cur in check_opts else [cur] + check_opts
                 val = st.selectbox(
                     item.get("name", ""),
@@ -3516,7 +3524,7 @@ def _render_report_sections_editor(report_sections, key_suffix):
                     index=copts.index(cur),
                     key=f"{base_key}_check",
                 )
-                sym = normalize_check_symbol(val) or "---"
+                sym = normalize_check_symbol(val) or "ー"
                 item["result"] = sym
                 item["judge"] = sym
     return sections
@@ -3574,7 +3582,7 @@ def update_inspection_history_record(conn, row_idx, original_signature, updates)
 
 def _render_flat_inspection_items_editor(item_rows, key_suffix):
     """項目行だけの履歴を、記号または実測値として訂正する"""
-    symbol_opts = ["〇", "△", "×", "ー", "---"]
+    symbol_opts = INSPECTION_CHECK_OPTIONS
     judge_opts = ["〇", "×", "ー", "-"]
     edited = []
     for i, row in enumerate(item_rows):
@@ -3585,7 +3593,7 @@ def _render_flat_inspection_items_editor(item_rows, key_suffix):
         judge = clean_data_str(row[2]) or result
         sym = normalize_check_symbol(result)
         if sym in symbol_opts or result in ("", "---", "ー"):
-            cur = sym if sym in symbol_opts else "---"
+            cur = sym if sym in symbol_opts else "ー"
             val = st.selectbox(
                 name or f"項目{i + 1}",
                 symbol_opts,
@@ -5283,7 +5291,7 @@ def validate_inspection_items(device_category, check_type, result, inc_o_checks,
     return ng_items, incomplete_items
 
 def is_unselected(val):
-    """後方互換。未選択のみ判定（---=機能なしは選択済み扱い）"""
+    """後方互換。未選択のみ判定（ー=機能なしは選択済み扱い）"""
     return is_check_incomplete(val)
 
 def build_inspection_item_rows(check_type, device_category, result, inc_o_checks,
@@ -5306,11 +5314,11 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
         if device_category in ["輸液ポンプ", "シリンジポンプ"]:
             appearance_vals = [chk_e1, chk_e2, chk_e3, chk_e4, chk_e5, chk_e6, chk_e7]
             for label, val in zip(INFUSION_PUMP_APPEARANCE_ITEMS, appearance_vals):
-                val_s = normalize_check_symbol(val) or "---"
+                val_s = normalize_check_symbol(val) or "ー"
                 rows.append((label, val_s, val_s))
             if device_category == "輸液ポンプ":
                 for label in INFUSION_PUMP_ALARM_ITEMS + INFUSION_PUMP_FUNCTION_ITEMS:
-                    val_s = normalize_check_symbol(infusion_pump_checks.get(label, "---")) or "---"
+                    val_s = normalize_check_symbol(infusion_pump_checks.get(label, "ー")) or "ー"
                     rows.append((label, val_s, val_s))
             min_press, max_press = resolve_infusion_occ_press_range(
                 device_model, min_press, max_press, occ_level,
@@ -5340,7 +5348,7 @@ def build_inspection_item_rows(check_type, device_category, result, inc_o_checks
                     rows.append((name, format_leakage_ua(val), measure_judge(val <= limit)))
         elif device_category == "保育器":
             for label, val in inc_o_checks.items():
-                val_s = normalize_check_symbol(val) or "---"
+                val_s = normalize_check_symbol(val) or "ー"
                 rows.append((label, val_s, val_s))
 
     return rows
@@ -5740,7 +5748,7 @@ def maybe_auto_save_inspection_draft(conn, payload):
 def _radio_index_from_value(val):
     if val in (None, "", "--"):
         return None
-    sym = normalize_check_symbol(val) or "---"
+    sym = normalize_check_symbol(val) or "ー"
     if sym in INSPECTION_CHECK_OPTIONS:
         return INSPECTION_CHECK_OPTIONS.index(sym)
     return None
@@ -7018,7 +7026,7 @@ def build_monthly_daily_table_rows(device_category, month_df, year, month):
                 detail = parse_daily_detail_to_dict(by_day[day].get("詳細データ", ""))
                 val = detail.get(label, "")
                 sym = normalize_check_symbol(val)
-                row.append(sym if sym in ("〇", "△", "×", "---") else "")
+                row.append(sym if sym in INSPECTION_CHECK_OPTIONS else "")
             else:
                 row.append("")
         rows.append(row)
@@ -8022,6 +8030,8 @@ def check_auth():
 
 if not check_auth():
     st.stop()
+
+migrate_legacy_check_symbols()
 
 enforce_idle_timeout()
 
